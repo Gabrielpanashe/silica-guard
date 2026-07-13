@@ -207,7 +207,7 @@ CREATE TABLE screenings (
     channel TEXT,                 -- 'APP', 'USSD', 'WHATSAPP'
     risk_level TEXT,              -- 'LOW', 'WATCH', 'REFER_NOW'
     risk_confidence REAL,         -- 0.0 to 1.0
-    ai_explanation_shona TEXT,
+    ai_explanation_shona TEXT,    -- currently unpopulated (NULL) — Risk Engine is English-only, see Section 9.1
     ai_explanation_english TEXT,
     ai_contributing_factors TEXT, -- JSON array
     fallback_used INTEGER DEFAULT 0,  -- 1 if offline rule-based was used
@@ -278,7 +278,8 @@ POST /api/screen
         stats, but does NOT change how the result is computed: POST /api/screen always calls
         Claude live and that result is the authoritative record, whether the call happens in
         the field or later on sync when connectivity returns. There is no separate sync route.
-  Returns: { risk_level, confidence, explanation_shona, explanation_english, contributing_factors }
+  Returns: { risk_level, confidence, explanation_english, contributing_factors }
+  Note: English only — see the Section 9.1 scope decision. No explanation_shona field.
 
 POST /api/miners
   Body: { name, phone, mine_site }
@@ -483,12 +484,22 @@ OUTPUT FORMAT — respond ONLY with valid JSON, no other text:
   "risk_level": "LOW" | "WATCH" | "REFER_NOW",
   "confidence": 0.0-1.0,
   "contributing_factors": ["factor 1 in simple English", "factor 2", "factor 3"],
-  "explanation_english": "2-3 plain sentences explaining the result. No jargon. Write as if speaking to a community health worker.",
-  "explanation_shona": "Same explanation in Shona. Natural, spoken Shona. Not translated word-for-word."
+  "explanation_english": "2-3 plain sentences explaining the result. No jargon. Write as if speaking to a trained clinician or hospital dashboard user."
 }
 
-LANGUAGE: All text in explanation fields must be appropriate for a health worker to read aloud to a miner. Simple words. No medical jargon.
+LANGUAGE: English only. This output is read by trained medical personnel (hospital
+staff, Cimas), not directly by the miner — miner-facing language (Shona, Ndebele)
+is handled separately by the WhatsApp agent and by fixed, doctor-written USSD text,
+not by this engine. Keep it precise and clinical, but jargon-free.
 ```
+
+> **Scope decision (2026-07-14):** The Risk Engine deliberately does not produce Shona or
+> Ndebele text. Its audience is trained medical personnel (dashboard, hospital staff) who
+> read English. Multilingual support for miners lives only in the WhatsApp agent (Section
+> 9.2), and USSD result screens use short, fixed, doctor-written Shona sentences (not this
+> engine's live output) — see Section 7's USSD note. This also sidesteps a real gap: nobody
+> on the team can currently validate AI-generated Ndebele for naturalness/clinical accuracy,
+> so it's better not to surface unvalidated Ndebele text anywhere yet.
 
 ### 9.2 WhatsApp Agent System Prompt
 
@@ -764,4 +775,4 @@ They have heard a doctor open with the story of Tendai Moyo — the Kwekwe miner
 
 ---
 
-*End of SILICAGUARD.md — Version 1.1 — July 2026*
+*End of SILICAGUARD.md — Version 1.2 — July 2026*

@@ -34,7 +34,6 @@ class ScreeningCreate(BaseModel):
 class ScreeningResult(BaseModel):
     risk_level: str
     confidence: float
-    explanation_shona: str
     explanation_english: str
     contributing_factors: List[str]
 

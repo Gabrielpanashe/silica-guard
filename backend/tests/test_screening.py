@@ -5,7 +5,6 @@ FAKE_RESULT = {
     "confidence": 0.82,
     "contributing_factors": ["test factor one", "test factor two"],
     "explanation_english": "test explanation in english",
-    "explanation_shona": "tsanangudzo yekuedza muchishona",
 }
 
 

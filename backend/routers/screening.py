@@ -80,13 +80,11 @@ def screen_miner(payload: ScreeningCreate):
         conn.execute(
             """UPDATE screenings SET
                  risk_level = ?, risk_confidence = ?,
-                 ai_explanation_shona = ?, ai_explanation_english = ?,
-                 ai_contributing_factors = ?
+                 ai_explanation_english = ?, ai_contributing_factors = ?
                WHERE id = ?""",
             (
                 result["risk_level"],
                 result["confidence"],
-                result["explanation_shona"],
                 result["explanation_english"],
                 json.dumps(result["contributing_factors"]),
                 screening_id,
@@ -97,7 +95,6 @@ def screen_miner(payload: ScreeningCreate):
         return ScreeningResult(
             risk_level=result["risk_level"],
             confidence=result["confidence"],
-            explanation_shona=result["explanation_shona"],
             explanation_english=result["explanation_english"],
             contributing_factors=result["contributing_factors"],
         )

@@ -28,8 +28,10 @@ OUTPUT FORMAT — respond ONLY with valid JSON, no other text:
   "risk_level": "LOW" | "WATCH" | "REFER_NOW",
   "confidence": 0.0-1.0,
   "contributing_factors": ["factor 1 in simple English", "factor 2", "factor 3"],
-  "explanation_english": "2-3 plain sentences explaining the result. No jargon. Write as if speaking to a community health worker.",
-  "explanation_shona": "Same explanation in Shona. Natural, spoken Shona. Not translated word-for-word."
+  "explanation_english": "2-3 plain sentences explaining the result. No jargon. Write as if speaking to a trained clinician or hospital dashboard user."
 }
 
-LANGUAGE: All text in explanation fields must be appropriate for a health worker to read aloud to a miner. Simple words. No medical jargon.
+LANGUAGE: English only. This output is read by trained medical personnel (hospital
+staff, Cimas), not directly by the miner — miner-facing language (Shona, Ndebele)
+is handled separately by the WhatsApp agent and by fixed, doctor-written USSD text,
+not by this engine. Keep it precise and clinical, but jargon-free.
