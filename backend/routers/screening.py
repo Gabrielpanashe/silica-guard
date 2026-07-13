@@ -68,7 +68,14 @@ def screen_miner(payload: ScreeningCreate):
             )
         conn.commit()
 
-        result = assess_risk(payload.answers)
+        try:
+            result = assess_risk(payload.answers)
+        except Exception:
+            # screening_id + answers are already saved for audit purposes;
+            # risk fields stay NULL until a retry succeeds.
+            raise HTTPException(
+                status_code=502, detail="AI risk engine unavailable, please retry"
+            )
 
         conn.execute(
             """UPDATE screenings SET
@@ -96,3 +103,5 @@ def screen_miner(payload: ScreeningCreate):
         )
     finally:
         conn.close()
+
+

@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MinerCreate(BaseModel):
@@ -25,7 +25,7 @@ class ScreeningAnswerIn(BaseModel):
 
 class ScreeningCreate(BaseModel):
     miner_id: int
-    answers: List[ScreeningAnswerIn]
+    answers: List[ScreeningAnswerIn] = Field(..., min_length=1)
     channel: str = "APP"
     screened_by: Optional[str] = None
     offline_fallback_used: bool = False

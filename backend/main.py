@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -6,9 +8,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import auth, screening
+from routers import auth, dashboard, screening
 
-app = FastAPI(title="SilicaGuard API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="SilicaGuard API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,11 +28,7 @@ app.add_middleware(
 
 app.include_router(screening.router)
 app.include_router(auth.router)
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
+app.include_router(dashboard.router)
 
 
 @app.get("/api/health")
