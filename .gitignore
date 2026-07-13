@@ -1,0 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+backend/.env
+backend/data/*.db
+
+# Office lock files
+~$*.docx
+~$*.xlsx
+~$*.pptx
+
+# Flutter (future)
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+
+# React/Node (future)
+dashboard/node_modules/
+dashboard/dist/
+
+# OS
+.DS_Store
+Thumbs.db
