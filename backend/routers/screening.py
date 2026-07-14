@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from database import get_connection
 from models import MinerCreate, MinerOut, ScreeningCreate, ScreeningResult
 from services.ai_risk_engine import assess_risk
+from services.referrals import GENERIC_REFER_NOW_SHONA_MESSAGE, create_referral_and_notify
 
 router = APIRouter(prefix="/api", tags=["screening"])
 
@@ -91,6 +92,23 @@ def screen_miner(payload: ScreeningCreate):
             ),
         )
         conn.commit()
+
+        if result["risk_level"] == "REFER_NOW":
+            miner = conn.execute(
+                "SELECT name, phone, mine_site FROM miners WHERE id = ?",
+                (payload.miner_id,),
+            ).fetchone()
+            create_referral_and_notify(
+                conn,
+                screening_id=screening_id,
+                miner_id=payload.miner_id,
+                miner_name=miner["name"],
+                phone_number=miner["phone"],
+                mine_site=miner["mine_site"],
+                risk_level=result["risk_level"],
+                shona_message=GENERIC_REFER_NOW_SHONA_MESSAGE,
+                contributing_factors=result["contributing_factors"],
+            )
 
         return ScreeningResult(
             risk_level=result["risk_level"],

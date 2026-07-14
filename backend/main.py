@@ -1,14 +1,16 @@
+import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import auth, dashboard, screening
+from routers import auth, dashboard, screening, ussd
 
 
 @asynccontextmanager
@@ -29,6 +31,7 @@ app.add_middleware(
 app.include_router(screening.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
+app.include_router(ussd.router)
 
 
 @app.get("/api/health")

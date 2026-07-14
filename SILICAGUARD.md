@@ -292,6 +292,14 @@ POST /api/ussd
   Body: Africa's Talking format — sessionId, phoneNumber, serviceCode, text
   Returns: CON <menu text> or END <final message>
   Note: Must respond within 10 seconds. Pure decision tree, no Claude call.
+  Implementation: services/ussd_handler.py, session state as a Python dict keyed
+    by sessionId (no Redis). Walks all 10 Section 8 questions, one per screen, in
+    Shona. Classification mirrors the offline Dart fallback engine's logic and
+    fixed Shona/English text exactly (Section 10) — same score thresholds, same
+    safety-override triggers, confidence fixed at 0.75, fallback_used=1. Miner is
+    auto-found-or-created by phone number (screened_by='USSD_SELF', channel='USSD').
+    A background WhatsApp follow-up (per Demo Scenario 2) is not implemented yet —
+    the full result currently only lands in the database, not on the miner's phone.
 ```
 
 ### WhatsApp
@@ -775,4 +783,71 @@ They have heard a doctor open with the story of Tendai Moyo — the Kwekwe miner
 
 ---
 
-*End of SILICAGUARD.md — Version 1.2 — July 2026*
+## 17. Follow-Up & Case Management (Post-MVP Roadmap — NOT YET BUILT)
+
+**The problem this solves:** as of this write-up, a screening is a one-shot event. A miner
+scores REFER_NOW, gets a referral row and a (currently stubbed) SMS, and then nothing else
+happens — no one checks whether they actually went to hospital, and a WATCH-tier miner who
+keeps working without a mask has no mechanism prompting them to re-screen or change behavior.
+For a disease that's only manageable through early, sustained intervention, a single screening
+without follow-through doesn't change outcomes.
+
+**This section is a design sketch only** — captured now so the idea isn't lost, but explicitly
+deferred past Demo Day per the team's own prioritization. Nothing below has been implemented;
+the live database schema has NOT been changed.
+
+### Proposed new table: `follow_ups`
+
+```sql
+CREATE TABLE follow_ups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    miner_id INTEGER REFERENCES miners(id),
+    screening_id INTEGER REFERENCES screenings(id),
+    referral_id INTEGER REFERENCES referrals(id),   -- nullable; only set for REFER_NOW cases
+    risk_level_at_trigger TEXT,     -- 'WATCH' or 'REFER_NOW'
+    follow_up_type TEXT,            -- 'SAFETY_EDUCATION', 'RE_SCREEN_REMINDER', 'REFERRAL_CHECK'
+    due_date DATE,
+    status TEXT DEFAULT 'PENDING',  -- 'PENDING', 'DONE', 'MISSED'
+    notes TEXT,
+    completed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Trigger rules
+
+- **WATCH screening** → two follow-ups created automatically:
+  - `SAFETY_EDUCATION`, due immediately — a low-cost, high-value message (dust-safety tips,
+    correct PPE use) sent right away, reusing the notification stub pattern from
+    `services/notifications.py`.
+  - `RE_SCREEN_REMINDER`, due +30 days — prompts the miner (or a VHW passing through their
+    site) to re-screen and check whether risk has changed.
+- **REFER_NOW screening** → one follow-up created, tied to the `referrals` row:
+  - `REFERRAL_CHECK`, due +7 days. If the linked referral's `status` is still not `COMPLETE`
+    by the due date, this surfaces on a "needs follow-up" list for a VHW or hospital outreach
+    worker to actively chase — someone calls the miner rather than assuming they showed up.
+    If the referral does reach `COMPLETE` before the due date, this follow-up auto-resolves.
+
+### How it would surface to a human (MVP-appropriate, no new infra)
+
+Rather than building real push reminders first, start with a simple `GET /api/follow-ups/due`
+endpoint (JWT-protected, same pattern as `/api/referrals`) returning everything with
+`status='PENDING' AND due_date <= today`. This becomes a "Today's Follow-Ups" list on the
+hospital/Cimas dashboard — a human works the list. Actual outbound SMS/WhatsApp reminders to
+miners are a later layer on top, once real messaging (Section 9.2/notifications) exists —
+don't build automated reminder delivery before the manual list view proves the workflow.
+
+### Open questions for the team before building this
+
+- Who owns actioning `REFERRAL_CHECK` follow-ups — Kwekwe District Hospital outreach staff,
+  or the VHWs who did the original screening? This determines who the dashboard list is for.
+  Not yet decided by the team, and without a named owner the list is just data that no one
+  is obligated to act on.
+- Is +30 days the right re-screen cadence for WATCH, or should it depend on the specific
+  contributing factors (e.g. a driller with no PPE re-screens sooner than someone with only
+  moderate exposure)? The Dart fallback / USSD decision tree currently treats all WATCH cases
+  identically.
+
+---
+
+*End of SILICAGUARD.md — Version 1.4 — July 2026*

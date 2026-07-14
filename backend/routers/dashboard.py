@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from database import get_connection
+from models import ReferralOut, ReferralStatusUpdate
 from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
+
+_VALID_REFERRAL_STATUSES = {"PENDING", "XRAY_UPLOADED", "COMPLETE"}
 
 
 @router.get("/dashboard/week")
@@ -43,5 +46,65 @@ def dashboard_week(user: dict = Depends(get_current_user)):
             "ai_narrative": "Weekly AI narrative not yet implemented.",
             "site_breakdown": site_breakdown,
         }
+    finally:
+        conn.close()
+
+
+@router.get("/referrals", response_model=list[ReferralOut])
+def list_referrals(user: dict = Depends(get_current_user)):
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT r.id, m.name AS miner_name, m.mine_site, s.risk_level,
+                      r.status, r.created_at
+               FROM referrals r
+               JOIN miners m ON m.id = r.miner_id
+               JOIN screenings s ON s.id = r.screening_id
+               ORDER BY r.created_at DESC"""
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@router.patch("/referrals/{referral_id}", response_model=ReferralOut)
+def update_referral_status(
+    referral_id: int,
+    payload: ReferralStatusUpdate,
+    user: dict = Depends(get_current_user),
+):
+    if payload.status not in _VALID_REFERRAL_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"status must be one of {sorted(_VALID_REFERRAL_STATUSES)}",
+        )
+
+    conn = get_connection()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM referrals WHERE id = ?", (referral_id,)
+        ).fetchone()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Referral not found")
+
+        completed_at_clause = (
+            ", completed_at = CURRENT_TIMESTAMP" if payload.status == "COMPLETE" else ""
+        )
+        conn.execute(
+            f"UPDATE referrals SET status = ?{completed_at_clause} WHERE id = ?",
+            (payload.status, referral_id),
+        )
+        conn.commit()
+
+        row = conn.execute(
+            """SELECT r.id, m.name AS miner_name, m.mine_site, s.risk_level,
+                      r.status, r.created_at
+               FROM referrals r
+               JOIN miners m ON m.id = r.miner_id
+               JOIN screenings s ON s.id = r.screening_id
+               WHERE r.id = ?""",
+            (referral_id,),
+        ).fetchone()
+        return dict(row)
     finally:
         conn.close()

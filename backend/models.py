@@ -38,6 +38,19 @@ class ScreeningResult(BaseModel):
     contributing_factors: List[str]
 
 
+class ReferralOut(BaseModel):
+    id: int
+    miner_name: str
+    mine_site: Optional[str] = None
+    risk_level: str
+    status: str
+    created_at: str
+
+
+class ReferralStatusUpdate(BaseModel):
+    status: str
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str
