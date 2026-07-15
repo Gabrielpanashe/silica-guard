@@ -15,6 +15,19 @@ os.environ.setdefault("CIMAS_PASSWORD", "cimas123")
 
 import database  # noqa: E402
 import main  # noqa: E402
+from services import notifications  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _mock_notifications(monkeypatch):
+    """services/notifications.py sends real SMS via Africa's Talking. Tests
+    must never hit that live API — costs real quota, is non-deterministic,
+    and would silently fail without a registered sandbox simulator number
+    anyway. Every test gets this mocked automatically."""
+    monkeypatch.setattr(notifications, "send_miner_result", lambda *a, **k: None)
+    monkeypatch.setattr(
+        notifications, "send_hospital_prealert", lambda *a, **k: True
+    )
 
 
 @pytest.fixture

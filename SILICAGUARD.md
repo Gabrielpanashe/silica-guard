@@ -72,7 +72,7 @@ SilicaGuard is a four-interface platform sharing a single AI-powered backend:
 ### AI Services
 | Service | Technology | Model | Notes |
 |---|---|---|---|
-| Risk Engine | Google Gemini API *(temporary — see note below)* | gemini-2.5-flash | Free tier, no billing set up yet |
+| Risk Engine | Google Gemini API *(temporary — see note below)* | gemini-flash-latest | Free tier, no billing set up yet |
 | WhatsApp Agent | Anthropic Claude API | claude-haiku-4-5 | Same API key |
 | Dashboard Narrative | Anthropic Claude API | claude-haiku-4-5 | Weekly cron call |
 | X-Ray Classifier | PyTorch + DenseNet-121 | Custom fine-tuned | Runs locally on Render server |
@@ -89,9 +89,24 @@ SilicaGuard is a four-interface platform sharing a single AI-powered backend:
 ### External Integrations
 | Service | Provider | Plan | Notes |
 |---|---|---|---|
-| WhatsApp | Meta WhatsApp Cloud API | Free sandbox (1,000 conv/month) | apply at developers.facebook.com |
+| WhatsApp | Meta WhatsApp Cloud API | Free sandbox (1,000 conv/month) | apply at developers.facebook.com — not set up yet |
 | USSD | Africa's Talking | Free sandbox | account.africastalking.com |
+| SMS (referral pre-alerts) | Africa's Talking | Free sandbox | Same account as USSD. **Live and working** — see Section 17 note below |
 | Dev Tunnel | ngrok | Free tier (1 tunnel) | Exposes localhost for webhooks |
+
+> **SMS implementation note (2026-07-15):** `services/notifications.py` sends real SMS via
+> Africa's Talking's REST API using `httpx` directly, **not** the official `africastalking`
+> Python SDK. The SDK is built on `requests`/`urllib3`, which failed with
+> `SSLError: WRONG_VERSION_NUMBER` against Africa's Talking's API in the dev environment —
+> confirmed as environment-specific (plain `curl` and `httpx` both connect fine; only
+> `requests`-based clients failed), likely local network/security software fingerprinting
+> TLS connections differently per HTTP client library. If this recurs on another machine,
+> try the same diagnostic: test the same URL with `curl`, `httpx`, and `requests`
+> independently before assuming the API itself is unreachable.
+>
+> `HOSPITAL_NURSE_PHONE` (Section 14) must be a number registered as a "Simulator Number" in
+> the Africa's Talking sandbox dashboard to actually receive anything — sandbox mode silently
+> accepts (200/201) sends to unregistered numbers without delivering them.
 
 ### Cost Summary
 | Item | Cost |
@@ -737,9 +752,10 @@ WHATSAPP_TOKEN=EAAj...        # Bearer token from Meta developer console
 WHATSAPP_PHONE_ID=1234...     # Your WhatsApp Business phone number ID
 WHATSAPP_VERIFY_TOKEN=silicaguard_verify_2026  # Any string you choose
 
-# Africa's Talking (USSD)
+# Africa's Talking (USSD + SMS)
 AT_API_KEY=atsk_...
 AT_USERNAME=sandbox           # Use 'sandbox' for development
+HOSPITAL_NURSE_PHONE=+263...  # Must be registered as an AT sandbox Simulator Number to receive anything
 
 # App Config
 DATABASE_URL=./data/silicaguard.db
@@ -786,8 +802,9 @@ They have heard a doctor open with the story of Tendai Moyo — the Kwekwe miner
 ## 17. Follow-Up & Case Management (Post-MVP Roadmap — NOT YET BUILT)
 
 **The problem this solves:** as of this write-up, a screening is a one-shot event. A miner
-scores REFER_NOW, gets a referral row and a (currently stubbed) SMS, and then nothing else
-happens — no one checks whether they actually went to hospital, and a WATCH-tier miner who
+scores REFER_NOW, gets a referral row and a real SMS (miner result + hospital pre-alert, both
+sent via Africa's Talking — see Section 4/14), and then nothing else happens — no one checks
+whether they actually went to hospital, and a WATCH-tier miner who
 keeps working without a mask has no mechanism prompting them to re-screen or change behavior.
 For a disease that's only manageable through early, sustained intervention, a single screening
 without follow-through doesn't change outcomes.
@@ -850,4 +867,4 @@ don't build automated reminder delivery before the manual list view proves the w
 
 ---
 
-*End of SILICAGUARD.md — Version 1.4 — July 2026*
+*End of SILICAGUARD.md — Version 1.6 — July 2026*

@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 google-genai
+httpx
 python-jose[cryptography]
 python-dotenv
 python-multipart

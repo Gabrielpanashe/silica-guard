@@ -1,30 +1,72 @@
 """
-STUBBED — no Africa's Talking SMS account or WhatsApp Cloud API sandbox is set
-up yet. Every function here logs what it *would* send instead of sending it.
+Sends real SMS via Africa's Talking (same account/sandbox as USSD, different
+product). WhatsApp Cloud API is not set up yet, so everything currently goes
+out as SMS regardless of whether the number has WhatsApp — matches the "miner
+might not have a smartphone or data" reasoning from the team.
 
-Once real credentials exist (AT_API_KEY + SMS product enabled, or
-WHATSAPP_TOKEN + WHATSAPP_PHONE_ID), replace the body of each function with a
-real API call — the call sites in routers/screening.py and
-services/ussd_handler.py don't need to change, since they only care that these
-functions exist and don't raise.
+In sandbox mode, Africa's Talking only delivers to phone numbers registered
+as "Simulator Numbers" in the sandbox dashboard — sending to an arbitrary
+real number will appear to succeed (the API call returns 201) but nothing
+actually arrives on an unregistered phone.
+
+Calls the Africa's Talking REST API directly with httpx rather than the
+`africastalking` SDK — the SDK is built on `requests`/`urllib3`, which fails
+with SSLError: WRONG_VERSION_NUMBER against this API in this environment
+(likely local network/security software fingerprinting differently per HTTP
+client). httpx and plain curl both connect fine; this was confirmed by
+testing all three directly before deciding to bypass the SDK.
+
+Failures are logged, not raised — a notification failing should never break
+the referral/screening transaction that triggered it.
 """
 
 import logging
+import os
+
+import httpx
 
 logger = logging.getLogger("silicaguard.notifications")
 
+# Doctor-approved facility info, copied verbatim from SILICAGUARD.md Section 9.2
+# (WhatsApp Agent prompt's KWEKWE FACILITIES block) — not invented here.
+HOSPITAL_INFO_EN = (
+    "Kwekwe District Hospital: Corner Robert Mugabe / Sixth Ave. Tel: 055-24000."
+)
 
-def send_miner_result(phone_number: str, risk_level: str, shona_message: str) -> None:
-    """TODO: send via WhatsApp Cloud API if the number has WhatsApp, else SMS
-    via Africa's Talking. Must end with the hospital address/phone and the
-    line 'Show this message to the nurse when you arrive.' per the doctor's
-    guidance — do not invent that wording here, get it from the doctor."""
-    logger.info(
-        "[STUB] would message miner %s (risk=%s): %s",
-        phone_number,
-        risk_level,
-        shona_message,
+_AT_SMS_URL = "https://api.sandbox.africastalking.com/version1/messaging"
+
+
+def _send_sms(to: str, message: str) -> bool:
+    headers = {
+        "apiKey": os.getenv("AT_API_KEY"),
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+    }
+    data = {
+        "username": os.getenv("AT_USERNAME", "sandbox"),
+        "to": to,
+        "message": message,
+    }
+    try:
+        response = httpx.post(_AT_SMS_URL, headers=headers, data=data, timeout=10)
+        response.raise_for_status()
+        logger.info("SMS to %s: %s", to, response.text)
+        return True
+    except Exception:
+        logger.exception("Failed to send SMS to %s", to)
+        return False
+
+
+def send_miner_result(phone_number: str, risk_level: str, shona_message: str) -> bool:
+    """Doctor-approved Shona explanation (shona_message) + English facility info
+    (from Section 9.2, not invented) + a line telling the miner what to do with
+    this message at the hospital."""
+    body = (
+        f"{shona_message}\n\n"
+        f"{HOSPITAL_INFO_EN}\n"
+        "Show this message to the nurse when you arrive."
     )
+    return _send_sms(phone_number, body)
 
 
 def send_hospital_prealert(
@@ -33,15 +75,18 @@ def send_hospital_prealert(
     mine_site: str | None,
     risk_level: str,
     contributing_factors_summary: str,
-) -> None:
-    """TODO: send via SMS/WhatsApp to the outreach nurse's number (needs a new
-    env var, e.g. HOSPITAL_NURSE_PHONE, once real sending is wired in)."""
-    logger.info(
-        "[STUB] would pre-alert hospital: New %s from screening. "
-        "Miner %s, phone %s, %s. Factors: %s",
-        risk_level,
-        miner_name,
-        phone_number,
-        mine_site or "mine site unknown",
-        contributing_factors_summary,
+) -> bool:
+    """Returns True only if the SMS API call succeeded, so the caller can set
+    referrals.pre_alert_sent accurately instead of assuming success."""
+    nurse_phone = os.getenv("HOSPITAL_NURSE_PHONE")
+    if not nurse_phone:
+        logger.warning(
+            "HOSPITAL_NURSE_PHONE not set — skipping hospital pre-alert SMS"
+        )
+        return False
+    body = (
+        f"New {risk_level} referral from SilicaGuard screening. "
+        f"Miner: {miner_name}, Phone: {phone_number}, "
+        f"Site: {mine_site or 'unknown'}. Factors: {contributing_factors_summary}"
     )
+    return _send_sms(nurse_phone, body)
