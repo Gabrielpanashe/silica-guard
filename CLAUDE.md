@@ -70,14 +70,17 @@ Copied verbatim from the reference document's implementation map. These are not 
 
 ## Current sprint status
 
-Last updated: 2 August 2026 (sprint Day 2).
+Last updated: 2 August 2026 (sprint Day 2). Branch `be/phase-a-schema-migration`, not yet merged to `main` — awaiting review.
 
-**What exists today** (pre-v4.0 shape, confirmed by audit — see `docs/API_CONTRACT.md` for the LIVE vs TARGET split):
-- FastAPI backend with a working 3-tier risk engine (`LOW`/`WATCH`/`REFER_NOW` — not yet the required 4-tier GREEN/YELLOW/ORANGE/RED), USSD self-screening (pure decision tree, no LLM in-session — correct per the non-negotiable rule), SMS dispatch via raw `httpx` against Africa's Talking (correct per the documented Windows SSL workaround), JWT auth with `hospital`/`cimas` demo roles, and a 27-test pytest suite.
-- Dead schema left over from earlier versions (`xray_results` table, `whatsapp_messages` table, `referrals.xray_completed`/`XRAY_UPLOADED`) not yet removed.
-- No personalised advice line, no deterioration detection, no `employers`/`campaigns`/`outreach_visits`/`facilities` tables, no Outreach Planner, no enterprise endpoints, no Population Health Intelligence (dashboard narrative is a placeholder string) — all MISSING per the v4.0 spec, not yet started.
-- No `mobile/` or `dashboard/` folders yet.
+**Phase A (schema migration) complete on its branch:**
+- `screenings.risk_level` renamed to `tier`, now four values (`GREEN`/`YELLOW`/`ORANGE`/`RED`, CHECK-constrained) instead of the old three (`LOW`/`WATCH`/`REFER_NOW`). The old REFER_NOW bucket was mechanically split into RED (a hard safety trigger fired — severe breathlessness/chest pain, current TB, prior lung diagnosis) vs ORANGE (score-only, no trigger) — **this split reuses existing logic, not new clinical judgment, and still needs an explicit Clinical Lead pass**, especially the ORANGE Shona/English copy, which is reused verbatim from the old REFER_NOW text and still reads as more urgent ("today") than a 14-day window warrants.
+- Added `screenings.previous_screening_id` (populated — every screening links to the worker's most recent prior one), `advice_line` (column exists, always `null` — personalised advice generation isn't built), `provisional` (mirrors `offline_fallback_used`).
+- `xray_results` and `whatsapp_messages` tables dropped, along with `referrals.xray_completed`.
+- Added `employers`, `campaigns`, `outreach_visits`, `facilities` tables (schema only — no endpoints read/write them yet; seed script populates one row each).
+- `referrals` status is now `open → pre_alerted → reminded → attended → closed → escalated` (was `PENDING`/`XRAY_UPLOADED`/`COMPLETE`); `deadline` is set on creation (RED = 48h, ORANGE = 14 days, per the doc's fixed windows); `attended_at`/`closed_at` replace the old single `completed_at`. Status auto-advances to `pre_alerted` when the hospital SMS succeeds. `reminded`/`escalated` exist in the schema but nothing sets them yet — the reminder/escalation scheduler (Smart Referral Router) isn't built.
+- All 32 tests pass (was 28); `docs/API_CONTRACT.md` and `backend/scripts/seed_demo_data.py` updated to match.
+- No ALTER-based migration — this was a from-empty schema rewrite (`CREATE TABLE IF NOT EXISTS`), per the documented SQLite/MVP-stage approach in `SKILL.md`. Any existing local `backend/data/silicaguard.db` needs deleting and re-seeding.
 
-**Not yet started**: the 4-tier schema/engine migration, hard-coded safety overrides in Python (currently only in the Gemini prompt text — a rule violation until fixed), Teach Mode, Outreach Planner, enterprise CSV upload, the employer-privacy-boundary test.
+**Still not started**: hard-coded safety overrides living in Python outside the model call (currently still only in the Gemini prompt text — a non-negotiable-rule violation), Longitudinal Deterioration Detection logic (the link exists, the comparison doesn't), Smart Referral Router (facility matching, reminder cascade, escalation task — only the initial deadline is set), personalised advice generation, Teach Mode, Outreach Planner endpoints, enterprise CSV upload, employer role + the employer-privacy-boundary test.
 
 Update this section at the end of each session.

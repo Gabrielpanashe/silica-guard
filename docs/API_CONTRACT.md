@@ -115,9 +115,7 @@ Look up a worker by phone number, returning their full screening history — thi
 
 ## Screening
 
-### `POST /api/screen` — LIVE (shape will change)
-
-**Currently live:**
+### `POST /api/screen` — LIVE (four-tier)
 
 **Request**
 ```json
@@ -135,33 +133,28 @@ Look up a worker by phone number, returning their full screening history — thi
 **Response 200**
 ```json
 {
-  "risk_level": "WATCH",
+  "tier": "YELLOW",
   "confidence": 0.82,
   "explanation_english": "Significant drilling exposure with no symptoms yet...",
-  "contributing_factors": ["10+ years underground", "inconsistent PPE use"]
+  "contributing_factors": ["10+ years underground", "inconsistent PPE use"],
+  "advice_line": null,
+  "previous_screening_id": 88,
+  "provisional": false
 }
 ```
 
-**Errors**: `404` unknown `miner_id`; `422` empty `answers`; `502` AI risk engine unavailable (screening + answers are still persisted for retry/audit — only the risk fields stay null).
+**Errors**: `404` unknown `miner_id`; `422` empty `answers`; `502` AI risk engine unavailable (screening + answers are still persisted for retry/audit — only the tier fields stay null).
 
-`risk_level` is currently one of `LOW`, `WATCH`, `REFER_NOW` (3-tier). **This is a known gap** — the v4.0 spec requires four tiers.
+`tier` is one of `GREEN`, `YELLOW`, `ORANGE`, `RED` (Phase A schema migration, previously 3-tier `LOW`/`WATCH`/`REFER_NOW`). `previous_screening_id` links to this worker's most recent prior screening if one exists — it's just the link; comparing the two (Longitudinal Deterioration Detection) isn't built yet. `provisional` mirrors `offline_fallback_used` from the request. `advice_line` is always `null` for now — personalised advice generation (drawn from the miner's weakest answer) is not built yet; the column and field exist so the shape is stable when it lands.
 
-**Target v4.0 shape** — four-tier `tier` field, personalised advice line, deterioration comparison against the previous screening:
+**Still TARGET, not in this response yet**: `explanation_shona`, a populated `advice_line`, and a `deterioration` object comparing this screening against `previous_screening_id`:
 ```json
 {
-  "tier": "YELLOW",
-  "confidence": 0.82,
-  "explanation_english": "...",
-  "explanation_shona": "...",
-  "contributing_factors": ["10+ years underground", "inconsistent PPE use"],
-  "advice_line": "Your biggest risk is working without a respirator. Ask your site for an N95, or buy one before your next shift.",
-  "previous_screening_id": 88,
   "deterioration": {
     "compared_to_screening_id": 88,
     "changed": true,
     "summary": "Breathlessness moved from Grade 0 to Grade 1 since your last screening."
-  },
-  "provisional": false
+  }
 }
 ```
 
@@ -192,7 +185,7 @@ CON Une kuhema (cough) inoenderera kupfuura mavhiki matatu here?
 
 ## Referrals
 
-### `GET /api/referrals` — LIVE (shape will change)
+### `GET /api/referrals` — LIVE (four-tier, new status lifecycle)
 
 Requires `Authorization: Bearer <token>`.
 
@@ -203,55 +196,43 @@ Requires `Authorization: Bearer <token>`.
     "id": 7,
     "miner_name": "Tendai Moyo",
     "mine_site": "Sherwood Mine",
-    "risk_level": "REFER_NOW",
-    "status": "PENDING",
-    "created_at": "2026-08-02T09:15:00Z"
+    "tier": "RED",
+    "status": "pre_alerted",
+    "deadline": "2026-08-04 09:15:00",
+    "pre_alert_sent": true,
+    "attended_at": null,
+    "closed_at": null,
+    "created_at": "2026-08-02 09:15:00"
   }
 ]
 ```
 
 **Errors**: `401` missing/invalid token.
 
-**Target v4.0 shape** adds facility, urgency window and deadline (currently every referral goes to a single hardcoded hospital with no deadline):
-```json
-{
-  "id": 7,
-  "worker_name": "Tendai Moyo",
-  "site": "Sherwood Mine",
-  "tier": "RED",
-  "facility_name": "Kwekwe District Hospital",
-  "urgency": "48h",
-  "deadline": "2026-08-04T09:15:00Z",
-  "status": "open",
-  "pre_alert_sent": true,
-  "attended_at": null,
-  "closed_at": null,
-  "created_at": "2026-08-02T09:15:00Z"
-}
-```
+`deadline` is set on creation from the fixed urgency windows in `SILICAGUARD.md` Section 7 Pillar 2 (RED = created_at + 48h, ORANGE = created_at + 14 days) — this is Phase A schema migration, not the full Smart Referral Router. **Still TARGET, not built yet**: facility matching (every referral still goes to a single hardcoded `Kwekwe District Hospital` string, no `facility_id`/`facility_name` field), the day-3/day-7 reminder cascade (`status: "reminded"` exists in the schema but nothing sets it), and day-14 escalation (`status: "escalated"` likewise unreached by any code path yet).
 
-### `PATCH /api/referrals/{referral_id}` — LIVE (shape will change)
+### `PATCH /api/referrals/{referral_id}` — LIVE (new status lifecycle)
 
 Requires `Authorization: Bearer <token>`.
 
 **Request**
 ```json
-{ "status": "COMPLETE" }
+{ "status": "closed" }
 ```
-Currently valid statuses: `PENDING`, `XRAY_UPLOADED`, `COMPLETE`. **`XRAY_UPLOADED` is a leftover from the removed chest X-ray feature and will be deleted** — don't build UI depending on it.
+Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escalated` (Phase A schema migration, replacing the old `PENDING`/`XRAY_UPLOADED`/`COMPLETE`; `XRAY_UPLOADED` is gone — it was a leftover from the removed chest X-ray feature). Setting `status` to `attended` stamps `attended_at`; setting it to `closed` stamps `closed_at`. A referral moves to `pre_alerted` automatically when the hospital pre-alert SMS succeeds — `reminded` and `escalated` aren't reachable yet since the reminder/escalation scheduler isn't built.
 
 **Response 200**
 ```json
-{ "id": 7, "miner_name": "Tendai Moyo", "mine_site": "Sherwood Mine", "risk_level": "REFER_NOW", "status": "COMPLETE", "created_at": "2026-08-02T09:15:00Z" }
+{ "id": 7, "miner_name": "Tendai Moyo", "mine_site": "Sherwood Mine", "tier": "RED", "status": "closed", "deadline": "2026-08-04 09:15:00", "pre_alert_sent": true, "attended_at": null, "closed_at": "2026-08-02 10:00:00", "created_at": "2026-08-02 09:15:00" }
 ```
 
 **Errors**: `401` missing/invalid token; `404` unknown referral; `422` invalid status value.
 
-**Target v4.0** valid statuses: `open`, `attended`, `closed`, `escalated`, with `attended_at`/`closed_at` timestamps recorded on the relevant transition instead of a single `completed_at`.
-
 ---
 
 ## Outreach
+
+The underlying `outreach_visits`, `employers`, `campaigns` and `facilities` tables exist in the database as of the Phase A schema migration, but no route reads or writes them yet — the routes below are still TARGET.
 
 ### `POST /api/outreach` — TARGET (not yet built)
 
@@ -302,7 +283,7 @@ Requires `Authorization: Bearer <token>`.
 
 **Errors**: `401` missing/invalid token.
 
-`ai_narrative` is currently a hardcoded placeholder string. **Population Health Intelligence (the weekly job that should generate this) is not built yet.** Target: a real plain-language narrative describing what changed and where outreach should go next, produced by a scheduled job — this is one of the four AI modules.
+`high_risk_count` counts screenings with `tier IN ('ORANGE', 'RED')`. `ai_narrative` is currently a hardcoded placeholder string. **Population Health Intelligence (the weekly job that should generate this) is not built yet.** Target: a real plain-language narrative describing what changed and where outreach should go next, produced by a scheduled job — this is one of the four AI modules.
 
 ---
 
@@ -345,10 +326,10 @@ Aggregate-only workforce risk view for an employer. **Must never return an indiv
 | `/api/auth/me` | GET | LIVE (dev helper) |
 | `/api/miners` → `/api/workers` | POST | LIVE (rename + reshape pending) |
 | `/api/workers/{phone}` | GET | TARGET |
-| `/api/screen` | POST | LIVE (3-tier → 4-tier pending) |
-| `/api/ussd` | POST | LIVE |
-| `/api/referrals` | GET | LIVE (shape will change) |
-| `/api/referrals/{id}` | PATCH | LIVE (shape will change) |
+| `/api/screen` | POST | LIVE (four-tier) |
+| `/api/ussd` | POST | LIVE (four-tier) |
+| `/api/referrals` | GET | LIVE (new status lifecycle; facility matching pending) |
+| `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |
 | `/api/outreach` | POST, GET | TARGET |
 | `/api/dashboard/week` | GET | LIVE (narrative is a placeholder) |
 | `/api/enterprise/workforce` | POST | TARGET |
