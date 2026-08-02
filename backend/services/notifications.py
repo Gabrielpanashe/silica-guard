@@ -56,10 +56,9 @@ def _send_sms(to: str, message: str) -> bool:
         return False
 
 
-def send_miner_result(phone_number: str, risk_level: str, shona_message: str) -> bool:
+def send_miner_result(phone_number: str, tier: str, shona_message: str) -> bool:
     """Doctor-approved Shona explanation (shona_message) + English facility info
-    (from Section 9.2, not invented) + a line telling the miner what to do with
-    this message at the hospital."""
+    + a line telling the miner what to do with this message at the hospital."""
     body = (
         f"{shona_message}\n\n"
         f"{HOSPITAL_INFO_EN}\n"
@@ -72,7 +71,7 @@ def send_hospital_prealert(
     miner_name: str,
     phone_number: str,
     mine_site: str | None,
-    risk_level: str,
+    tier: str,
     contributing_factors_summary: str,
 ) -> bool:
     """Returns True only if the SMS API call succeeded, so the caller can set
@@ -84,7 +83,7 @@ def send_hospital_prealert(
         )
         return False
     body = (
-        f"New {risk_level} referral from SilicaGuard screening. "
+        f"New {tier} referral from SilicaGuard screening. "
         f"Miner: {miner_name}, Phone: {phone_number}, "
         f"Site: {mine_site or 'unknown'}. Factors: {contributing_factors_summary}"
     )

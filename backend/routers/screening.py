@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from database import get_connection
 from models import MinerCreate, MinerOut, ScreeningCreate, ScreeningResult
 from services.ai_risk_engine import assess_risk
-from services.referrals import GENERIC_REFER_NOW_SHONA_MESSAGE, create_referral_and_notify
+from services.referrals import GENERIC_REFERRAL_SHONA_MESSAGE, create_referral_and_notify
 
 router = APIRouter(prefix="/api", tags=["screening"])
 
@@ -42,14 +42,28 @@ def screen_miner(payload: ScreeningCreate):
         if miner_row is None:
             raise HTTPException(status_code=404, detail="Miner not found")
 
+        # Most recent prior screening for this worker, if any — just the link;
+        # actual trajectory comparison (Longitudinal Deterioration Detection)
+        # is not built yet.
+        previous_row = conn.execute(
+            """SELECT id FROM screenings WHERE miner_id = ?
+               ORDER BY created_at DESC, id DESC LIMIT 1""",
+            (payload.miner_id,),
+        ).fetchone()
+        previous_screening_id = previous_row["id"] if previous_row else None
+        provisional = 1 if payload.offline_fallback_used else 0
+
         cur = conn.execute(
-            """INSERT INTO screenings (miner_id, screened_by, channel, fallback_used)
-               VALUES (?, ?, ?, ?)""",
+            """INSERT INTO screenings
+                 (miner_id, previous_screening_id, screened_by, channel, fallback_used, provisional)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 payload.miner_id,
+                previous_screening_id,
                 payload.screened_by,
                 payload.channel,
                 1 if payload.offline_fallback_used else 0,
+                provisional,
             ),
         )
         screening_id = cur.lastrowid
@@ -80,11 +94,11 @@ def screen_miner(payload: ScreeningCreate):
 
         conn.execute(
             """UPDATE screenings SET
-                 risk_level = ?, risk_confidence = ?,
+                 tier = ?, risk_confidence = ?,
                  ai_explanation_english = ?, ai_contributing_factors = ?
                WHERE id = ?""",
             (
-                result["risk_level"],
+                result["tier"],
                 result["confidence"],
                 result["explanation_english"],
                 json.dumps(result["contributing_factors"]),
@@ -93,7 +107,7 @@ def screen_miner(payload: ScreeningCreate):
         )
         conn.commit()
 
-        if result["risk_level"] == "REFER_NOW":
+        if result["tier"] in ("ORANGE", "RED"):
             miner = conn.execute(
                 "SELECT name, phone, mine_site FROM miners WHERE id = ?",
                 (payload.miner_id,),
@@ -105,16 +119,19 @@ def screen_miner(payload: ScreeningCreate):
                 miner_name=miner["name"],
                 phone_number=miner["phone"],
                 mine_site=miner["mine_site"],
-                risk_level=result["risk_level"],
-                shona_message=GENERIC_REFER_NOW_SHONA_MESSAGE,
+                tier=result["tier"],
+                shona_message=GENERIC_REFERRAL_SHONA_MESSAGE,
                 contributing_factors=result["contributing_factors"],
             )
 
         return ScreeningResult(
-            risk_level=result["risk_level"],
+            tier=result["tier"],
             confidence=result["confidence"],
             explanation_english=result["explanation_english"],
             contributing_factors=result["contributing_factors"],
+            advice_line=None,
+            previous_screening_id=previous_screening_id,
+            provisional=bool(provisional),
         )
     finally:
         conn.close()

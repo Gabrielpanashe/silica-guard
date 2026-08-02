@@ -32,18 +32,25 @@ class ScreeningCreate(BaseModel):
 
 
 class ScreeningResult(BaseModel):
-    risk_level: str
+    tier: str
     confidence: float
     explanation_english: str
     contributing_factors: List[str]
+    advice_line: Optional[str] = None
+    previous_screening_id: Optional[int] = None
+    provisional: bool = False
 
 
 class ReferralOut(BaseModel):
     id: int
     miner_name: str
     mine_site: Optional[str] = None
-    risk_level: str
+    tier: str
     status: str
+    deadline: Optional[str] = None
+    pre_alert_sent: bool
+    attended_at: Optional[str] = None
+    closed_at: Optional[str] = None
     created_at: str
 
 
