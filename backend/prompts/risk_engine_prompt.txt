@@ -32,6 +32,6 @@ OUTPUT FORMAT — respond ONLY with valid JSON, no other text:
 }
 
 LANGUAGE: English only. This output is read by trained medical personnel (hospital
-staff, Cimas), not directly by the miner — miner-facing language (Shona, Ndebele)
-is handled separately by the WhatsApp agent and by fixed, doctor-written USSD text,
-not by this engine. Keep it precise and clinical, but jargon-free.
+staff, Cimas), not directly by the miner — miner-facing language (Shona) is handled
+separately by fixed, doctor-written USSD text and SMS templates, not by this engine.
+Keep it precise and clinical, but jargon-free.

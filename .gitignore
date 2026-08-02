@@ -10,13 +10,13 @@ backend/data/*.db
 ~$*.xlsx
 ~$*.pptx
 
-# Flutter (future)
-mobile/build/
-mobile/.dart_tool/
-mobile/.flutter-plugins
-mobile/.flutter-plugins-dependencies
+# React Native / Expo (future — mobile/)
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
 
-# React/Node (future)
+# React/Node (future — dashboard/)
 dashboard/node_modules/
 dashboard/dist/
 

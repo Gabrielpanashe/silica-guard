@@ -1,8 +1,8 @@
 """
 Sends real SMS via Africa's Talking (same account/sandbox as USSD, different
-product). WhatsApp Cloud API is not set up yet, so everything currently goes
-out as SMS regardless of whether the number has WhatsApp — matches the "miner
-might not have a smartphone or data" reasoning from the team.
+product). SMS is the only notification channel in this project (see
+CLAUDE.md) — it reaches a miner regardless of whether he has a smartphone or
+data.
 
 In sandbox mode, Africa's Talking only delivers to phone numbers registered
 as "Simulator Numbers" in the sandbox dashboard — sending to an arbitrary
@@ -27,8 +27,7 @@ import httpx
 
 logger = logging.getLogger("silicaguard.notifications")
 
-# Doctor-approved facility info, copied verbatim from SILICAGUARD.md Section 9.2
-# (WhatsApp Agent prompt's KWEKWE FACILITIES block) — not invented here.
+# Doctor-approved facility info — not invented here.
 HOSPITAL_INFO_EN = (
     "Kwekwe District Hospital: Corner Robert Mugabe / Sixth Ave. Tel: 055-24000."
 )

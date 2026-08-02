@@ -2,12 +2,12 @@ from typing import List, Optional
 
 from services import notifications
 
-# The AI Risk Engine (/api/screen) is English-only (see SILICAGUARD.md Section
-# 9.1 scope decision) so it has no Shona of its own to relay to the miner.
-# Rather than invent new Shona text, reuse the doctor-approved fixed REFER_NOW
-# message from Section 10 (offline Dart fallback engine) as a generic
-# "you're being referred" SMS for any REFER_NOW referral that didn't come
-# through USSD's own decision tree (which already has its own Shona message).
+# The AI Risk Engine (/api/screen) is English-only (see CLAUDE.md) so it has
+# no Shona of its own to relay to the miner. Rather than invent new Shona
+# text, reuse the doctor-approved fixed REFER_NOW message from the USSD
+# decision tree (services/ussd_handler.py) as a generic "you're being
+# referred" SMS for any REFER_NOW referral that didn't come through USSD
+# itself (which already has its own Shona message).
 GENERIC_REFER_NOW_SHONA_MESSAGE = (
     "Zvakafanana nemamiriro ane njodzi. Enda kuchipatara Kwekwe nhasi kuti upiwe X-ray."
 )
@@ -24,10 +24,9 @@ def create_referral_and_notify(
     shona_message: str,
     contributing_factors: Optional[List[str]] = None,
 ) -> None:
-    """Only acts on REFER_NOW. Creates the referrals row that Section 6's
-    schema already had a place for, then sends real SMS via Africa's Talking.
-    pre_alert_sent reflects the actual hospital SMS API call result, not just
-    an attempted/logged intent."""
+    """Only acts on REFER_NOW. Creates the referrals row, then sends real SMS
+    via Africa's Talking. pre_alert_sent reflects the actual hospital SMS API
+    call result, not just an attempted/logged intent."""
     if risk_level != "REFER_NOW":
         return
 

@@ -21,7 +21,7 @@ def get_current_user(
     """Reusable dependency — import this into any router that needs a logged-in
     hospital/cimas user (e.g. future dashboard endpoints in routers/dashboard.py).
     Screening/miner endpoints stay unauthenticated on purpose: they're called by
-    VHWs in the field, USSD, and WhatsApp, none of which hold a dashboard login."""
+    VHWs in the field and by USSD, neither of which holds a dashboard login."""
     try:
         payload = jwt.decode(
             credentials.credentials,

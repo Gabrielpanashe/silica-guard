@@ -10,11 +10,10 @@ from services.referrals import create_referral_and_notify
 # if this ever needs to run for weeks without a restart.
 _sessions: Dict[str, dict] = {}
 
-# Doctor-approved fixed Shona/English result text, copied verbatim from
-# SILICAGUARD.md Section 10 (the offline Dart fallback engine). USSD uses the
-# same decision-tree logic and the same wording — no live AI call, no
-# auto-translation. Confidence is fixed at 0.75, same convention as the Dart
-# fallback, to mark this as rule-based rather than AI-derived.
+# Doctor-approved fixed Shona/English result text. USSD uses its own
+# decision-tree logic and wording — no live AI call, no auto-translation.
+# Confidence is fixed at 0.75 to mark this as rule-based rather than
+# AI-derived.
 _DANGEROUS_TRIGGERS = {
     ("BREATHLESSNESS", "severe"),
     ("CHEST_PAIN", "severe"),
@@ -138,8 +137,8 @@ def _save_screening(
 
 def handle_ussd(session_id: str, phone_number: str, text: str) -> str:
     """Pure decision tree — no AI call, must return in milliseconds per the
-    Africa's Talking 10-second hard limit. Mirrors the offline Dart fallback
-    engine's scoring logic exactly (Section 10)."""
+    Africa's Talking 10-second hard limit (non-negotiable rule, see
+    CLAUDE.md)."""
     session = _sessions.setdefault(session_id, _new_session())
     last_input = text.split("*")[-1] if text else ""
     pending_index = session["pending_index"]
