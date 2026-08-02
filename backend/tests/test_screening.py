@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 FAKE_RESULT = {
-    "risk_level": "WATCH",
+    "tier": "YELLOW",
     "confidence": 0.82,
     "contributing_factors": ["test factor one", "test factor two"],
     "explanation_english": "test explanation in english",
@@ -48,9 +48,42 @@ def test_screen_miner_persists_and_returns_result(client):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["risk_level"] == "WATCH"
+    assert body["tier"] == "YELLOW"
     assert body["confidence"] == 0.82
     assert body["contributing_factors"] == FAKE_RESULT["contributing_factors"]
+    assert body["previous_screening_id"] is None
+    assert body["provisional"] is False
+
+
+def test_second_screening_links_previous_screening_id(client):
+    miner_id = _register_miner(client, phone="+263700000009")
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        first = client.post(
+            "/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()}
+        ).json()
+        second = client.post(
+            "/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()}
+        ).json()
+
+    assert first["previous_screening_id"] is None
+    assert second["previous_screening_id"] is not None
+
+
+def test_offline_fallback_used_marks_screening_provisional(client):
+    miner_id = _register_miner(client, phone="+263700000010")
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        resp = client.post(
+            "/api/screen",
+            json={
+                "miner_id": miner_id,
+                "answers": _ten_answers(),
+                "offline_fallback_used": True,
+            },
+        )
+
+    assert resp.json()["provisional"] is True
 
 
 def test_screen_unknown_miner_returns_404(client):
