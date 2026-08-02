@@ -6,7 +6,22 @@ from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
-_VALID_REFERRAL_STATUSES = {"PENDING", "XRAY_UPLOADED", "COMPLETE"}
+_VALID_REFERRAL_STATUSES = {"open", "pre_alerted", "reminded", "attended", "closed", "escalated"}
+
+
+def _referral_row_to_dict(row) -> dict:
+    return {
+        "id": row["id"],
+        "miner_name": row["miner_name"],
+        "mine_site": row["mine_site"],
+        "tier": row["tier"],
+        "status": row["status"],
+        "deadline": row["deadline"],
+        "pre_alert_sent": bool(row["pre_alert_sent"]),
+        "attended_at": row["attended_at"],
+        "closed_at": row["closed_at"],
+        "created_at": row["created_at"],
+    }
 
 
 @router.get("/dashboard/week")
@@ -18,12 +33,12 @@ def dashboard_week(user: dict = Depends(get_current_user)):
     try:
         total_screened = conn.execute("SELECT COUNT(*) FROM screenings").fetchone()[0]
         high_risk_count = conn.execute(
-            "SELECT COUNT(*) FROM screenings WHERE risk_level = 'REFER_NOW'"
+            "SELECT COUNT(*) FROM screenings WHERE tier IN ('ORANGE', 'RED')"
         ).fetchone()[0]
 
         total_referrals = conn.execute("SELECT COUNT(*) FROM referrals").fetchone()[0]
         completed_referrals = conn.execute(
-            "SELECT COUNT(*) FROM referrals WHERE status = 'COMPLETE'"
+            "SELECT COUNT(*) FROM referrals WHERE status = 'closed'"
         ).fetchone()[0]
         referral_completion_rate = (
             completed_referrals / total_referrals if total_referrals else 0.0
@@ -55,14 +70,15 @@ def list_referrals(user: dict = Depends(get_current_user)):
     conn = get_connection()
     try:
         rows = conn.execute(
-            """SELECT r.id, m.name AS miner_name, m.mine_site, s.risk_level,
-                      r.status, r.created_at
+            """SELECT r.id, m.name AS miner_name, m.mine_site, s.tier,
+                      r.status, r.deadline, r.pre_alert_sent, r.attended_at,
+                      r.closed_at, r.created_at
                FROM referrals r
                JOIN miners m ON m.id = r.miner_id
                JOIN screenings s ON s.id = r.screening_id
                ORDER BY r.created_at DESC"""
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [_referral_row_to_dict(row) for row in rows]
     finally:
         conn.close()
 
@@ -87,24 +103,27 @@ def update_referral_status(
         if existing is None:
             raise HTTPException(status_code=404, detail="Referral not found")
 
-        completed_at_clause = (
-            ", completed_at = CURRENT_TIMESTAMP" if payload.status == "COMPLETE" else ""
-        )
+        timestamp_clause = ""
+        if payload.status == "attended":
+            timestamp_clause = ", attended_at = CURRENT_TIMESTAMP"
+        elif payload.status == "closed":
+            timestamp_clause = ", closed_at = CURRENT_TIMESTAMP"
         conn.execute(
-            f"UPDATE referrals SET status = ?{completed_at_clause} WHERE id = ?",
+            f"UPDATE referrals SET status = ?{timestamp_clause} WHERE id = ?",
             (payload.status, referral_id),
         )
         conn.commit()
 
         row = conn.execute(
-            """SELECT r.id, m.name AS miner_name, m.mine_site, s.risk_level,
-                      r.status, r.created_at
+            """SELECT r.id, m.name AS miner_name, m.mine_site, s.tier,
+                      r.status, r.deadline, r.pre_alert_sent, r.attended_at,
+                      r.closed_at, r.created_at
                FROM referrals r
                JOIN miners m ON m.id = r.miner_id
                JOIN screenings s ON s.id = r.screening_id
                WHERE r.id = ?""",
             (referral_id,),
         ).fetchone()
-        return dict(row)
+        return _referral_row_to_dict(row)
     finally:
         conn.close()

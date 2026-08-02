@@ -44,32 +44,42 @@ def test_invalid_choice_reshows_same_question(client):
     assert "Makangoshanda mangani emakore" in reply  # still on Q1, not advanced
 
 
-def test_full_session_low_risk(client):
+def test_full_session_green_low_risk(client):
     # under_2 years, surface job, always wet, always N95, no symptoms at all
     reply = _walk_session(
         client, "s3", "+263770000003", ["1", "4", "1", "1", "1", "1", "1", "1", "1", "1"]
     )
     assert reply.startswith("END ")
-    assert "Njodzi yako iri pasi" in reply  # LOW-risk fixed Shona message
+    assert "Njodzi yako iri pasi" in reply  # GREEN fixed Shona message
 
 
-def test_full_session_refer_now_via_safety_trigger(client):
-    # severe breathlessness alone should force REFER_NOW regardless of other answers
+def test_full_session_red_via_safety_trigger(client):
+    # severe breathlessness alone should force RED regardless of other answers
     reply = _walk_session(
         client, "s4", "+263770000004", ["1", "4", "1", "1", "1", "3", "1", "1", "1", "1"]
     )
     assert reply.startswith("END ")
-    assert "njodzi yakakwira" in reply  # REFER_NOW dangerous-trigger Shona message
+    assert "njodzi yakakwira" in reply  # RED dangerous-trigger Shona message
 
 
-def test_full_session_watch_via_score(client):
+def test_full_session_yellow_via_score(client):
     # 2-5 years (score2) + loading job (score3) + sometimes wet (score2) = 7 total,
-    # no dangerous triggers -> should land in the WATCH band (6-11)
+    # no dangerous triggers -> should land in the YELLOW band (6-11)
     reply = _walk_session(
         client, "s5", "+263770000005", ["2", "2", "2", "1", "1", "1", "1", "1", "1", "1"]
     )
     assert reply.startswith("END ")
-    assert "njodzi yakati wandei" in reply  # WATCH fixed Shona message
+    assert "njodzi yakati wandei" in reply  # YELLOW fixed Shona message
+
+
+def test_full_session_orange_via_score_no_trigger(client):
+    # over_10 years (5) + drilling (5) + never wet (4) = 14 total, no dangerous
+    # triggers touched -> should land in ORANGE (score >= 12, no safety trigger)
+    reply = _walk_session(
+        client, "s5b", "+263770000015", ["4", "1", "3", "1", "1", "1", "1", "1", "1", "1"]
+    )
+    assert reply.startswith("END ")
+    assert "Zvakafanana nemamiriro ane njodzi" in reply  # ORANGE score-based Shona message
 
 
 def test_completed_session_persists_to_database(client):
@@ -87,7 +97,7 @@ def test_completed_session_persists_to_database(client):
     assert row is not None
     assert row["channel"] == "USSD"
     assert row["screened_by"] == "USSD_SELF"
-    assert row["risk_level"] == "LOW"
+    assert row["tier"] == "GREEN"
     assert row["fallback_used"] == 1
 
     answer_count = conn.execute(

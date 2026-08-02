@@ -10,11 +10,10 @@ from services.referrals import create_referral_and_notify
 # if this ever needs to run for weeks without a restart.
 _sessions: Dict[str, dict] = {}
 
-# Doctor-approved fixed Shona/English result text, copied verbatim from
-# SILICAGUARD.md Section 10 (the offline Dart fallback engine). USSD uses the
-# same decision-tree logic and the same wording — no live AI call, no
-# auto-translation. Confidence is fixed at 0.75, same convention as the Dart
-# fallback, to mark this as rule-based rather than AI-derived.
+# Doctor-approved fixed Shona/English result text. USSD uses its own
+# decision-tree logic and wording — no live AI call, no auto-translation.
+# Confidence is fixed at 0.75 to mark this as rule-based rather than
+# AI-derived.
 _DANGEROUS_TRIGGERS = {
     ("BREATHLESSNESS", "severe"),
     ("CHEST_PAIN", "severe"),
@@ -40,6 +39,15 @@ def _render_question(index: int) -> str:
 
 
 def _classify(answers: List[dict]) -> Tuple[str, str, str]:
+    """Four-tier split (GREEN/YELLOW/ORANGE/RED). The dangerous-trigger vs.
+    score>=12 branches map 1:1 onto the pre-v4.0 REFER_NOW logic, now split
+    into RED (a hard safety trigger fired) vs ORANGE (score alone crossed
+    the threshold, no trigger) rather than one merged bucket — see
+    services/referrals.py for the same RED/ORANGE urgency split. All four
+    messages below are reused verbatim from the pre-v4.0 doctor-approved
+    text, not reworded; the ORANGE message in particular still reads as
+    urgent ("today") inherited from the old REFER_NOW copy and should get an
+    explicit Clinical Lead pass for its new 14-day-window tier."""
     total_score = sum(a["answer_score"] for a in answers)
     is_dangerous = any(
         (a["question_code"], a["answer_value"]) in _DANGEROUS_TRIGGERS
@@ -48,24 +56,24 @@ def _classify(answers: List[dict]) -> Tuple[str, str, str]:
 
     if is_dangerous:
         return (
-            "REFER_NOW",
+            "RED",
             "Matiripo ako aratidza njodzi yakakwira. Enda kuchipatara Kwekwe nhasi.",
             "Your answers show serious warning signs. Please go to Kwekwe District Hospital today.",
         )
     if total_score >= 12:
         return (
-            "REFER_NOW",
+            "ORANGE",
             "Zvakafanana nemamiriro ane njodzi. Enda kuchipatara Kwekwe nhasi kuti upiwe X-ray.",
             "Your exposure and symptoms suggest high risk. Go to Kwekwe District Hospital for a chest X-ray.",
         )
     if total_score >= 6:
         return (
-            "WATCH",
+            "YELLOW",
             "Une njodzi yakati wandei. Enda kuchipatara mumwedzi uno.",
             "You have moderate risk. Visit a clinic within the next 4 weeks.",
         )
     return (
-        "LOW",
+        "GREEN",
         "Njodzi yako iri pasi. Ramba uchipfeka mask yako nguva dzose.",
         "Your risk appears low. Keep wearing your mask and stay safe.",
     )
@@ -88,7 +96,7 @@ def _find_or_create_miner(conn, phone_number: str) -> int:
 def _save_screening(
     phone_number: str,
     answers: List[dict],
-    risk_level: str,
+    tier: str,
     shona: str,
     english: str,
 ) -> None:
@@ -97,10 +105,10 @@ def _save_screening(
         miner_id = _find_or_create_miner(conn, phone_number)
         cur = conn.execute(
             """INSERT INTO screenings
-               (miner_id, screened_by, channel, risk_level, risk_confidence,
+               (miner_id, screened_by, channel, tier, risk_confidence,
                 ai_explanation_shona, ai_explanation_english, fallback_used)
                VALUES (?, 'USSD_SELF', 'USSD', ?, 0.75, ?, ?, 1)""",
-            (miner_id, risk_level, shona, english),
+            (miner_id, tier, shona, english),
         )
         screening_id = cur.lastrowid
         for answer in answers:
@@ -118,7 +126,7 @@ def _save_screening(
             )
         conn.commit()
 
-        if risk_level == "REFER_NOW":
+        if tier in ("ORANGE", "RED"):
             miner = conn.execute(
                 "SELECT name, mine_site FROM miners WHERE id = ?", (miner_id,)
             ).fetchone()
@@ -129,7 +137,7 @@ def _save_screening(
                 miner_name=miner["name"],
                 phone_number=phone_number,
                 mine_site=miner["mine_site"],
-                risk_level=risk_level,
+                tier=tier,
                 shona_message=shona,
             )
     finally:
@@ -138,8 +146,8 @@ def _save_screening(
 
 def handle_ussd(session_id: str, phone_number: str, text: str) -> str:
     """Pure decision tree — no AI call, must return in milliseconds per the
-    Africa's Talking 10-second hard limit. Mirrors the offline Dart fallback
-    engine's scoring logic exactly (Section 10)."""
+    Africa's Talking 10-second hard limit (non-negotiable rule, see
+    CLAUDE.md)."""
     session = _sessions.setdefault(session_id, _new_session())
     last_input = text.split("*")[-1] if text else ""
     pending_index = session["pending_index"]
@@ -165,10 +173,10 @@ def handle_ussd(session_id: str, phone_number: str, text: str) -> str:
         session["pending_index"] = next_index
         return _render_question(next_index)
 
-    risk_level, shona, english = _classify(session["answers"])
+    tier, shona, english = _classify(session["answers"])
     answers = session["answers"]
     del _sessions[session_id]
 
-    _save_screening(phone_number, answers, risk_level, shona, english)
+    _save_screening(phone_number, answers, tier, shona, english)
 
     return f"END {shona}"
