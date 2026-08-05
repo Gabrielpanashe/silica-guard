@@ -63,52 +63,44 @@ Requires `Authorization: Bearer <token>`. Returns the decoded token claims. Usef
 
 ## Workers
 
-### `POST /api/workers` — LIVE (shape will change; currently `POST /api/miners`)
+### `POST /api/workers` — LIVE
 
-**Currently live as `POST /api/miners`:**
+Replaces the old `POST /api/miners` (removed 5 August 2026 — that route now 404s).
 
 **Request**
 ```json
-{ "name": "Tendai Moyo", "phone": "+263771234567", "mine_site": "Sherwood Mine" }
+{ "name": "Tendai Moyo", "phone": "+263771234567", "site": "Sherwood Mine" }
 ```
 
 **Response 200**
 ```json
-{ "id": 14, "name": "Tendai Moyo", "phone": "+263771234567", "mine_site": "Sherwood Mine" }
+{ "id": 14, "name": "Tendai Moyo", "phone": "+263771234567", "site": "Sherwood Mine" }
 ```
 
 **Errors**: `409` if `phone` is already registered (phone is the persistent worker identity).
 
-**Target v4.0 shape** — route renamed `/api/workers`, adds job role, matching the `workers` register table (`site`, `job_role`):
-```json
-{
-  "name": "Tendai Moyo",
-  "phone": "+263771234567",
-  "site": "Sherwood Mine",
-  "job_role": "drilling"
-}
-```
+**Still TARGET, not in this shape yet**: `job_role`, `employer_id` (the latter is moot post-pivot — see `SILICAGUARD.md` Section 13 — and won't be added). No `workers` schema column exists for `job_role` yet either; don't build UI against it until it lands.
 
-### `GET /api/workers/{phone}` — TARGET (not yet built)
+### `GET /api/workers/{phone}` — LIVE
 
-Look up a worker by phone number, returning their full screening history — this is what turns a visit into a re-screen. Not yet implemented; today there is no lookup-by-phone endpoint at all.
+Look up a worker by phone number, returning their full screening history — this is what turns a visit into a re-screen. **Unauthenticated**, same deliberate precedent as `POST /api/screen` (VHWs in the field / USSD hold no dashboard login) — flagged explicitly since this route returns clinical history (tier, advice_line) by phone number alone, a bigger exposure than the write-only route it sits next to.
 
-**Target response 200**
+**Response 200**
 ```json
 {
   "id": 14,
   "name": "Tendai Moyo",
   "phone": "+263771234567",
   "site": "Sherwood Mine",
-  "job_role": "drilling",
   "screenings": [
-    { "id": 101, "tier": "YELLOW", "created_at": "2026-08-02T09:15:00Z", "advice_line": "..." },
-    { "id": 88, "tier": "GREEN", "created_at": "2025-11-10T08:00:00Z", "advice_line": "..." }
+    { "id": 101, "tier": "YELLOW", "created_at": "2026-08-02 09:15:00", "advice_line": "Wear your N95 mask every time you drill or crush, not just sometimes." },
+    { "id": 88, "tier": "GREEN", "created_at": "2025-11-10 08:00:00", "advice_line": "Keep doing what you're doing — always wear your N95 mask and ask for wet drilling whenever it's available." }
   ]
 }
 ```
+`screenings` is ordered most-recent-first. Empty array for a worker with no screenings yet, not an error.
 
-**Target errors**: `404` if no worker with that phone exists.
+**Errors**: `404` if no worker with that phone exists.
 
 ---
 
@@ -186,7 +178,7 @@ CON Une kuhema (cough) inoenderera kupfuura mavhiki matatu here?
 
 ## Referrals
 
-### `GET /api/referrals` — LIVE (four-tier, new status lifecycle)
+### `GET /api/referrals` — LIVE (Smart Referral Router: facility matching + reminder/escalation cascade)
 
 Requires `Authorization: Bearer <token>`.
 
@@ -201,6 +193,9 @@ Requires `Authorization: Bearer <token>`.
     "status": "pre_alerted",
     "deadline": "2026-08-04 09:15:00",
     "pre_alert_sent": true,
+    "facility_id": 1,
+    "facility_name": "Kwekwe District Hospital",
+    "reminder_stage": 0,
     "attended_at": null,
     "closed_at": null,
     "created_at": "2026-08-02 09:15:00"
@@ -210,7 +205,11 @@ Requires `Authorization: Bearer <token>`.
 
 **Errors**: `401` missing/invalid token.
 
-`deadline` is set on creation from the fixed urgency windows in `SILICAGUARD.md` Section 7 Pillar 2 (RED = created_at + 48h, ORANGE = created_at + 14 days) — this is Phase A schema migration, not the full Smart Referral Router. **Still TARGET, not built yet**: facility matching (every referral still goes to a single hardcoded `Kwekwe District Hospital` string, no `facility_id`/`facility_name` field), the day-3/day-7 reminder cascade (`status: "reminded"` exists in the schema but nothing sets it), and day-14 escalation (`status: "escalated"` likewise unreached by any code path yet).
+`deadline` is set on creation from the fixed urgency windows in `SILICAGUARD.md` Section 7 Pillar 2 (RED = created_at + 48h, ORANGE = created_at + 14 days).
+
+`facility_id`/`facility_name` (new) are matched by `backend/services/facility_matching.py`: RED always matches a `district_hospital`-level facility, regardless of `mine_site` — the 48h window is too tight to risk a lower-acuity facility. ORANGE tries to match a `clinic`-level facility whose name plausibly serves the worker's site, falling back to the hospital if none matches. `facility_id` is `null` (and `facility_name` falls back to the literal `"Kwekwe District Hospital"`) only if no hospital-level facility is seeded at all.
+
+`reminder_stage` (new) and the `reminded`/`escalated` statuses are now live, driven by an in-process scheduler (`backend/services/referral_cascade.py`, fired via APScheduler in `main.py`) — **not** synchronously on any request: RED gets one reminder at ~24h and escalates at 48h if still unattended; ORANGE reminds at day 3 and day 7 and escalates at day 14. This only runs while the server process is awake — see `SKILL.md`'s Render free-tier warm-up note.
 
 ### `PATCH /api/referrals/{referral_id}` — LIVE (new status lifecycle)
 
@@ -220,11 +219,11 @@ Requires `Authorization: Bearer <token>`.
 ```json
 { "status": "closed" }
 ```
-Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escalated` (Phase A schema migration, replacing the old `PENDING`/`XRAY_UPLOADED`/`COMPLETE`; `XRAY_UPLOADED` is gone — it was a leftover from the removed chest X-ray feature). Setting `status` to `attended` stamps `attended_at`; setting it to `closed` stamps `closed_at`. A referral moves to `pre_alerted` automatically when the hospital pre-alert SMS succeeds — `reminded` and `escalated` aren't reachable yet since the reminder/escalation scheduler isn't built.
+Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escalated`. Setting `status` to `attended` stamps `attended_at`; setting it to `closed` stamps `closed_at`. A referral moves to `pre_alerted` automatically when the hospital pre-alert SMS succeeds. `reminded`/`escalated` are now also reachable automatically by the reminder/escalation cascade (see above) — this endpoint can still set them manually too (e.g. a coordinator escalating early).
 
 **Response 200**
 ```json
-{ "id": 7, "miner_name": "Tendai Moyo", "mine_site": "Sherwood Mine", "tier": "RED", "status": "closed", "deadline": "2026-08-04 09:15:00", "pre_alert_sent": true, "attended_at": null, "closed_at": "2026-08-02 10:00:00", "created_at": "2026-08-02 09:15:00" }
+{ "id": 7, "miner_name": "Tendai Moyo", "mine_site": "Sherwood Mine", "tier": "RED", "status": "closed", "deadline": "2026-08-04 09:15:00", "pre_alert_sent": true, "facility_id": 1, "facility_name": "Kwekwe District Hospital", "reminder_stage": 0, "attended_at": null, "closed_at": "2026-08-02 10:00:00", "created_at": "2026-08-02 09:15:00" }
 ```
 
 **Errors**: `401` missing/invalid token; `404` unknown referral; `422` invalid status value.
@@ -233,7 +232,7 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 ## Outreach
 
-The underlying `outreach_visits` and `facilities` tables exist in the database as of the Phase A schema migration, but no route reads or writes them yet — the routes below are still TARGET.
+The `outreach_visits` table exists in the database but no route reads or writes it yet — the routes below are still TARGET, deferred past today's Smart Referral Router / Population Health Intelligence push (5 August 2026). `facilities` is now read (by referral creation's facility matching, see the Referrals section) but still has no dedicated route of its own.
 
 ### `POST /api/outreach` — TARGET (not yet built)
 
@@ -264,7 +263,7 @@ List scheduled/past outreach visits, including the auto-generated post-visit rep
 
 ## Dashboard
 
-### `GET /api/dashboard/week` — LIVE (narrative is a placeholder)
+### `GET /api/dashboard/week` — LIVE (Population Health Intelligence)
 
 Requires `Authorization: Bearer <token>`.
 
@@ -274,7 +273,8 @@ Requires `Authorization: Bearer <token>`.
   "total_screened": 142,
   "high_risk_count": 9,
   "referral_completion_rate": 0.67,
-  "ai_narrative": "Weekly AI narrative not yet implemented.",
+  "ai_narrative": "This week 142 miners were screened across three sites, with 9 at elevated risk...",
+  "tier_distribution": { "GREEN": 90, "YELLOW": 43, "ORANGE": 7, "RED": 2 },
   "site_breakdown": [
     { "mine_site": "Sherwood Mine", "count": 62 },
     { "mine_site": "Unknown", "count": 5 }
@@ -284,7 +284,7 @@ Requires `Authorization: Bearer <token>`.
 
 **Errors**: `401` missing/invalid token.
 
-`high_risk_count` counts screenings with `tier IN ('ORANGE', 'RED')`. `ai_narrative` is currently a hardcoded placeholder string. **Population Health Intelligence (the weekly job that should generate this) is not built yet.** Target: a real plain-language narrative describing what changed and where outreach should go next, produced by a scheduled job — this is one of the four AI modules.
+`high_risk_count` counts screenings with `tier IN ('ORANGE', 'RED')`. `tier_distribution` (new) is zero-filled for any tier with no screenings this period. `ai_narrative` is now a real Gemini call (`backend/services/population_intelligence.py`, `backend/prompts/population_narrative_prompt.txt`) generated fresh **on every request** (not cached/pre-computed by a scheduled job yet — a fast-follow candidate, not today's scope) — falls back to a deterministic templated sentence built from the same numbers if the AI call fails, so this endpoint never 500s because of it.
 
 ---
 
@@ -295,11 +295,11 @@ Requires `Authorization: Bearer <token>`.
 | `/api/health` | GET | LIVE |
 | `/api/auth/login` | POST | LIVE (roles will change) |
 | `/api/auth/me` | GET | LIVE (dev helper) |
-| `/api/miners` → `/api/workers` | POST | LIVE (rename + reshape pending) |
-| `/api/workers/{phone}` | GET | TARGET |
-| `/api/screen` | POST | LIVE (four-tier) |
+| `/api/workers` | POST | LIVE |
+| `/api/workers/{phone}` | GET | LIVE |
+| `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line) |
 | `/api/ussd` | POST | LIVE (four-tier) |
-| `/api/referrals` | GET | LIVE (new status lifecycle; facility matching pending) |
+| `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |
 | `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |
 | `/api/outreach` | POST, GET | TARGET |
-| `/api/dashboard/week` | GET | LIVE (narrative is a placeholder) |
+| `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |
