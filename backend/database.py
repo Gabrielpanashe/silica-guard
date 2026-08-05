@@ -71,10 +71,12 @@ CREATE TABLE IF NOT EXISTS referrals (
     screening_id INTEGER REFERENCES screenings(id),
     miner_id INTEGER REFERENCES miners(id),
     hospital TEXT DEFAULT 'Kwekwe District Hospital',
+    facility_id INTEGER REFERENCES facilities(id),
     deadline DATETIME,
     pre_alert_sent INTEGER DEFAULT 0,
     status TEXT DEFAULT 'open'
         CHECK (status IN ('open', 'pre_alerted', 'reminded', 'attended', 'closed', 'escalated')),
+    reminder_stage INTEGER DEFAULT 0,
     attended_at DATETIME,
     closed_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -100,11 +102,28 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+# Additive columns landing on an existing `referrals` table (5 August 2026,
+# Smart Referral Router — facility matching + reminder/escalation cascade).
+# CREATE TABLE IF NOT EXISTS won't add these to a table that already exists
+# under the old shape, so unlike most schema changes in this project (which
+# just ask you to delete backend/data/silicaguard.db), these two are applied
+# via ALTER TABLE so an existing local/deployed DB doesn't need deleting.
+_REFERRAL_ALTERS = (
+    "ALTER TABLE referrals ADD COLUMN facility_id INTEGER REFERENCES facilities(id)",
+    "ALTER TABLE referrals ADD COLUMN reminder_stage INTEGER DEFAULT 0",
+)
+
+
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(CLEANUP)
         conn.executescript(SCHEMA)
+        for statement in _REFERRAL_ALTERS:
+            try:
+                conn.execute(statement)
+            except sqlite3.OperationalError:
+                pass  # column already exists
         conn.commit()
     finally:
         conn.close()

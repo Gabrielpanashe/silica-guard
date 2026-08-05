@@ -1,12 +1,19 @@
 """
 Seeds a reproducible demo dataset: multiple mine sites, all four risk tiers,
-referrals across different lifecycle states, one worker with two screenings
-(a YELLOW followed later by a RED, for demoing the deterioration story once
-that engine exists), and a starter row in the facilities and outreach_visits
-tables so there is something to look at even though no endpoints read/write
-outreach_visits yet. (The employers/campaigns tables and their seed rows
-were removed 5 August 2026 — SilicaGuard is artisanal-miner-only now, see
-SILICAGUARD.md Section 13.)
+referrals across every lifecycle state (open/pre_alerted/attended/closed AND
+reminded/escalated — those last two are seeded explicitly with
+self-consistent timestamps rather than left to the live APScheduler cascade
+to produce, so the demo data is deterministic regardless of when you seed
+relative to when you present), one worker with two screenings (a YELLOW
+followed later by a RED, for demoing the deterioration story), and a starter
+row in the outreach_visits table so there is something to look at even
+though no endpoint reads/writes it yet. (The employers/campaigns tables and
+their seed rows were removed 5 August 2026 — SilicaGuard is
+artisanal-miner-only now, see SILICAGUARD.md Section 13.)
+
+facilities are seeded FIRST, ahead of referrals, so referrals can carry a
+real facility_id (Smart Referral Router facility matching, 5 August 2026) —
+this is why facilities moved to the top of seed() rather than the bottom.
 
 Safe to re-run: clears every table this script owns first, so running it
 twice reproduces the same known state rather than duplicating rows or
@@ -129,20 +136,27 @@ def _insert_referral(
     deadline: datetime,
     pre_alert_sent: bool,
     created_at: datetime,
+    facility_id: int,
+    facility_name: str,
+    reminder_stage: int = 0,
     attended_at: datetime | None = None,
     closed_at: datetime | None = None,
 ) -> None:
     conn.execute(
         """INSERT INTO referrals
-           (screening_id, miner_id, hospital, deadline, pre_alert_sent, status,
-            attended_at, closed_at, created_at)
-           VALUES (?, ?, 'Kwekwe District Hospital', ?, ?, ?, ?, ?, ?)""",
+           (screening_id, miner_id, hospital, facility_id, deadline,
+            pre_alert_sent, status, reminder_stage, attended_at, closed_at,
+            created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             screening_id,
             miner_id,
+            facility_name,
+            facility_id,
             _iso(deadline),
             1 if pre_alert_sent else 0,
             status,
+            reminder_stage,
             _iso(attended_at) if attended_at else None,
             _iso(closed_at) if closed_at else None,
             _iso(created_at),
@@ -162,6 +176,38 @@ def seed() -> None:
         conn.execute("DELETE FROM outreach_visits")
         conn.execute("DELETE FROM facilities")
         conn.commit()
+
+        # --- Facilities, seeded first so referrals below can carry a real
+        # facility_id (Smart Referral Router facility matching). ---
+        hospital_cur = conn.execute(
+            "INSERT INTO facilities (name, level, address, phone, latitude, longitude) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "Kwekwe District Hospital",
+                "district_hospital",
+                "Corner Robert Mugabe / Sixth Ave, Kwekwe",
+                "055-24000",
+                -18.9281,
+                29.8149,
+            ),
+        )
+        hospital_id = hospital_cur.lastrowid
+        hospital_name = "Kwekwe District Hospital"
+
+        clinic_cur = conn.execute(
+            "INSERT INTO facilities (name, level, address, phone, latitude, longitude) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "Sherwood Clinic",
+                "clinic",
+                "Sherwood Mine, Kwekwe",
+                "055-24101",
+                -18.8931,
+                29.7872,
+            ),
+        )
+        sherwood_clinic_id = clinic_cur.lastrowid
+        sherwood_clinic_name = "Sherwood Clinic"
 
         # --- Farai Ncube — Sherwood Mine — GREEN, single screening ---
         farai_id = _insert_worker(conn, "Farai Ncube", "+263771000002", "Sherwood Mine")
@@ -220,6 +266,8 @@ def seed() -> None:
             deadline=tapiwa_created + timedelta(hours=48),
             pre_alert_sent=True,
             created_at=tapiwa_created,
+            facility_id=hospital_id,
+            facility_name=hospital_name,
             attended_at=_now - timedelta(days=20),
             closed_at=_now - timedelta(days=18),
         )
@@ -249,6 +297,8 @@ def seed() -> None:
             deadline=nyasha_created + timedelta(hours=48),
             pre_alert_sent=False,
             created_at=nyasha_created,
+            facility_id=hospital_id,
+            facility_name=hospital_name,
         )
 
         # --- Kudakwashe Marecha — Sherwood Mine — ORANGE, referral attended (not yet closed) ---
@@ -276,6 +326,11 @@ def seed() -> None:
             deadline=kuda_created + timedelta(days=14),
             pre_alert_sent=True,
             created_at=kuda_created,
+            # ORANGE at Sherwood Mine matches the Sherwood Clinic by name —
+            # same rule services/facility_matching.py applies live.
+            facility_id=sherwood_clinic_id,
+            facility_name=sherwood_clinic_name,
+            reminder_stage=1,  # day-3 reminder already sent before he attended
             attended_at=_now - timedelta(days=1),
         )
 
@@ -332,34 +387,75 @@ def seed() -> None:
             deadline=tendai_second_created + timedelta(hours=48),
             pre_alert_sent=True,
             created_at=tendai_second_created,
+            # RED always routes to the hospital regardless of mine_site.
+            facility_id=hospital_id,
+            facility_name=hospital_name,
         )
 
-        # --- Outreach starter rows (no endpoints read these yet) ---
-        conn.execute(
-            "INSERT INTO facilities (name, level, address, phone, latitude, longitude) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "Kwekwe District Hospital",
-                "district_hospital",
-                "Corner Robert Mugabe / Sixth Ave, Kwekwe",
-                "055-24000",
-                -18.9281,
-                29.8149,
-            ),
+        # --- Tatenda Moyana — Globe & Phoenix Mine — ORANGE, mid-cascade
+        # 'reminded' state. No clinic at this site in the seed data, so the
+        # ORANGE match falls back to the hospital, same as the live rule. ---
+        tatenda_id = _insert_worker(
+            conn, "Tatenda Moyana", "+263771000008", "Globe & Phoenix Mine"
         )
-        conn.execute(
-            "INSERT INTO facilities (name, level, address, phone, latitude, longitude) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "Sherwood Clinic",
-                "clinic",
-                "Sherwood Mine, Kwekwe",
-                "055-24101",
-                -18.8931,
-                29.7872,
-            ),
+        tatenda_created = _now - timedelta(days=5)
+        tatenda_screening_id = _insert_screening(
+            conn,
+            tatenda_id,
+            ORANGE_PROFILE,
+            "ORANGE",
+            0.82,
+            "Over 10 years of dry drilling; symptoms consistent with possible disease requiring clinical assessment.",
+            ["10+ years exposure", "dry drilling", "never wears PPE"],
+            "APP",
+            "VHW Grace Chikwanha",
+            tatenda_created,
+        )
+        _insert_referral(
+            conn,
+            tatenda_screening_id,
+            tatenda_id,
+            "reminded",
+            deadline=tatenda_created + timedelta(days=14),
+            pre_alert_sent=True,
+            created_at=tatenda_created,
+            facility_id=hospital_id,
+            facility_name=hospital_name,
+            reminder_stage=1,  # day-3 reminder sent; day-7 not due yet at day 5
         )
 
+        # --- Farai Chikara — Kwekwe Consolidated — RED, 'escalated' (missed
+        # the 48h emergency window entirely). ---
+        farai_c_id = _insert_worker(
+            conn, "Farai Chikara", "+263771000009", "Kwekwe Consolidated"
+        )
+        farai_c_created = _now - timedelta(days=3)
+        farai_c_screening_id = _insert_screening(
+            conn,
+            farai_c_id,
+            RED_PROFILE,
+            "RED",
+            0.96,
+            "Over 10 years of dry drilling with severe cough, chest pain and a current TB diagnosis.",
+            ["10+ years exposure", "dry drilling", "current TB", "severe chest pain"],
+            "APP",
+            "VHW Grace Chikwanha",
+            farai_c_created,
+        )
+        _insert_referral(
+            conn,
+            farai_c_screening_id,
+            farai_c_id,
+            "escalated",
+            deadline=farai_c_created + timedelta(hours=48),
+            pre_alert_sent=True,
+            created_at=farai_c_created,
+            facility_id=hospital_id,
+            facility_name=hospital_name,
+            reminder_stage=1,  # the 24h reminder went out before he missed the 48h deadline
+        )
+
+        # --- Outreach starter row (no endpoint reads this yet) ---
         conn.execute(
             "INSERT INTO outreach_visits "
             "(site, scheduled_date, expected_headcount, screened_count, health_workers, report_generated) "
@@ -386,9 +482,13 @@ def seed() -> None:
                 "outreach_visits",
             )
         }
+        site_count = conn.execute(
+            "SELECT COUNT(DISTINCT mine_site) FROM miners WHERE mine_site IS NOT NULL"
+        ).fetchone()[0]
         print(
             f"Seeded: {counts['miners']} miners, {counts['screenings']} screenings, "
-            f"{counts['referrals']} referrals across 3 sites; "
+            f"{counts['referrals']} referrals across {site_count} sites "
+            "(every referral status incl. reminded/escalated represented); "
             f"{counts['facilities']} facilities, {counts['outreach_visits']} outreach visits."
         )
     finally:
