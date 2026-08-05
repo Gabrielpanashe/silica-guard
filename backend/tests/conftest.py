@@ -28,6 +28,12 @@ def _mock_notifications(monkeypatch):
     monkeypatch.setattr(
         notifications, "send_hospital_prealert", lambda *a, **k: True
     )
+    monkeypatch.setattr(
+        notifications, "send_referral_reminder", lambda *a, **k: True
+    )
+    monkeypatch.setattr(
+        notifications, "send_referral_escalation", lambda *a, **k: True
+    )
 
 
 @pytest.fixture
