@@ -3,10 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from database import get_connection
 from models import ReferralOut, ReferralStatusUpdate
 from routers.auth import get_current_user
+from services.population_intelligence import generate_weekly_narrative
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
 _VALID_REFERRAL_STATUSES = {"open", "pre_alerted", "reminded", "attended", "closed", "escalated"}
+_TIERS = ("GREEN", "YELLOW", "ORANGE", "RED")
 
 
 def _referral_row_to_dict(row) -> dict:
@@ -41,9 +43,11 @@ _REFERRAL_SELECT = """
 
 @router.get("/dashboard/week")
 def dashboard_week(user: dict = Depends(get_current_user)):
-    """Real counts from the database; ai_narrative is a placeholder until the
-    weekly Claude/Gemini narrative service (SILICAGUARD.md Section 9.3-equivalent)
-    is built. Requires a valid JWT — first real consumer of get_current_user."""
+    """Real counts from the database. ai_narrative is now a real Gemini call
+    (services/population_intelligence.py, Population Health Intelligence —
+    SILICAGUARD.md Section 10 AI module 4), not the old hardcoded placeholder;
+    it falls back to a deterministic string on any AI failure so this
+    endpoint can never 500 because of it. Requires a valid JWT."""
     conn = get_connection()
     try:
         total_screened = conn.execute("SELECT COUNT(*) FROM screenings").fetchone()[0]
@@ -69,11 +73,26 @@ def dashboard_week(user: dict = Depends(get_current_user)):
             )
         ]
 
+        tier_counts = {row["tier"]: row["count"] for row in conn.execute(
+            """SELECT tier, COUNT(*) AS count FROM screenings
+               WHERE tier IS NOT NULL GROUP BY tier"""
+        )}
+        tier_distribution = {tier: tier_counts.get(tier, 0) for tier in _TIERS}
+
+        ai_narrative = generate_weekly_narrative(
+            total_screened,
+            high_risk_count,
+            referral_completion_rate,
+            tier_distribution,
+            site_breakdown,
+        )
+
         return {
             "total_screened": total_screened,
             "high_risk_count": high_risk_count,
             "referral_completion_rate": referral_completion_rate,
-            "ai_narrative": "Weekly AI narrative not yet implemented.",
+            "ai_narrative": ai_narrative,
+            "tier_distribution": tier_distribution,
             "site_breakdown": site_breakdown,
         }
     finally:
