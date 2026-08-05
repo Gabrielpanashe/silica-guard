@@ -137,26 +137,28 @@ Look up a worker by phone number, returning their full screening history — thi
   "confidence": 0.82,
   "explanation_english": "Significant drilling exposure with no symptoms yet...",
   "contributing_factors": ["10+ years underground", "inconsistent PPE use"],
-  "advice_line": null,
+  "advice_line": "Wear your N95 mask every time you drill or crush, not just sometimes.",
   "previous_screening_id": 88,
-  "provisional": false
+  "provisional": false,
+  "deterioration": {
+    "compared_to_screening_id": 88,
+    "changed": true,
+    "summary": "Deterioration since last screening: BREATHLESSNESS worsened compared to the previous screening."
+  }
 }
 ```
 
 **Errors**: `404` unknown `miner_id`; `422` empty `answers`; `502` AI risk engine unavailable (screening + answers are still persisted for retry/audit — only the tier fields stay null).
 
-`tier` is one of `GREEN`, `YELLOW`, `ORANGE`, `RED` (Phase A schema migration, previously 3-tier `LOW`/`WATCH`/`REFER_NOW`). `previous_screening_id` links to this worker's most recent prior screening if one exists — it's just the link; comparing the two (Longitudinal Deterioration Detection) isn't built yet. `provisional` mirrors `offline_fallback_used` from the request. `advice_line` is always `null` for now — personalised advice generation (drawn from the miner's weakest answer) is not built yet; the column and field exist so the shape is stable when it lands.
+`tier` is one of `GREEN`, `YELLOW`, `ORANGE`, `RED` (Phase A schema migration, previously 3-tier `LOW`/`WATCH`/`REFER_NOW`). `previous_screening_id` links to this worker's most recent prior screening if one exists. `provisional` mirrors `offline_fallback_used` from the request.
 
-**Still TARGET, not in this response yet**: `explanation_shona`, a populated `advice_line`, and a `deterioration` object comparing this screening against `previous_screening_id`:
-```json
-{
-  "deterioration": {
-    "compared_to_screening_id": 88,
-    "changed": true,
-    "summary": "Breathlessness moved from Grade 0 to Grade 1 since your last screening."
-  }
-}
-```
+`advice_line` is now always populated (non-negotiable rule: every result must carry one) — a fixed, clinician-**pending** sentence selected from the miner's single weakest answer (`backend/services/advice_engine.py`). **The copy is draft, not yet Clinical-Lead-signed-off** — do not treat the exact wording as final, and there is no `explanation_shona`/Shona advice text yet.
+
+`deterioration` is now always present (`backend/services/deterioration.py`): `compared_to_screening_id` is `null` with `changed: false` and an explicit "no previous screening" summary when this is the worker's first screening; otherwise `changed` is `true` if any tracked symptom/exposure answer (`COUGH_DURATION`, `BREATHLESSNESS`, `CHEST_PAIN`, `WEIGHT_LOSS`, `PPE_USE`, `WET_DRILLING`) scored higher than on the previous screening. Any deterioration escalates `tier` one level versus what the AI alone would have returned — this can move a screening into `ORANGE`/`RED` referral territory even when this screening's own answers wouldn't have triggered a referral.
+
+**Hard safety overrides** (`backend/services/safety_overrides.py`) are now enforced in Python, after the AI call, before this response is built — a `severe` value on `BREATHLESSNESS` or `CHEST_PAIN`, a `current` value on `TB_HISTORY`, or a `yes` value on `PRIOR_LUNG_DIAGNOSIS` always forces `tier: "RED"` regardless of what the AI model returned. Applied after deterioration escalation, so nothing can downgrade a safety-triggered RED.
+
+**Still TARGET, not in this response yet**: `explanation_shona`.
 
 ### `POST /api/ussd` — LIVE
 

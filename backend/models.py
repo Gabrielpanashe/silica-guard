@@ -31,6 +31,12 @@ class ScreeningCreate(BaseModel):
     offline_fallback_used: bool = False
 
 
+class DeteriorationResult(BaseModel):
+    compared_to_screening_id: Optional[int] = None
+    changed: bool
+    summary: str
+
+
 class ScreeningResult(BaseModel):
     tier: str
     confidence: float
@@ -39,6 +45,7 @@ class ScreeningResult(BaseModel):
     advice_line: Optional[str] = None
     previous_screening_id: Optional[int] = None
     provisional: bool = False
+    deterioration: Optional[DeteriorationResult] = None
 
 
 class ReferralOut(BaseModel):
