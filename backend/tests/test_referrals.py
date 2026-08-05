@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import database
+
 RED_RESULT = {
     "tier": "RED",
     "confidence": 0.95,
@@ -66,6 +68,48 @@ def test_red_screening_creates_referral(client):
     assert referrals[0]["status"] == "pre_alerted"
     assert referrals[0]["pre_alert_sent"] is True
     assert referrals[0]["deadline"] is not None
+
+
+def test_referral_falls_back_to_default_hospital_name_when_no_facilities_seeded(client):
+    """No facilities table rows in this test's throwaway DB — facility
+    matching should degrade to the same literal default the old hardcoded
+    behaviour used, not crash or leave the field oddly blank."""
+    miner_id = _register_miner(client, phone="+263711110008")
+
+    with patch("routers.screening.assess_risk", return_value=RED_RESULT):
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+
+    token = _login(client)
+    referral = client.get(
+        "/api/referrals", headers={"Authorization": f"Bearer {token}"}
+    ).json()[0]
+    assert referral["facility_id"] is None
+    assert referral["mine_site"] == "Test Site"
+    assert referral["reminder_stage"] == 0
+
+
+def test_referral_matches_seeded_facility(client):
+    conn = database.get_connection()
+    try:
+        cur = conn.execute(
+            "INSERT INTO facilities (name, level) VALUES (?, ?)",
+            ("Kwekwe District Hospital", "district_hospital"),
+        )
+        hospital_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+
+    miner_id = _register_miner(client, phone="+263711110009")
+    with patch("routers.screening.assess_risk", return_value=RED_RESULT):
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+
+    token = _login(client)
+    referral = client.get(
+        "/api/referrals", headers={"Authorization": f"Bearer {token}"}
+    ).json()[0]
+    assert referral["facility_id"] == hospital_id
+    assert referral["facility_name"] == "Kwekwe District Hospital"
 
 
 def test_orange_screening_creates_referral(client):

@@ -71,6 +71,9 @@ class ReferralOut(BaseModel):
     status: str
     deadline: Optional[str] = None
     pre_alert_sent: bool
+    facility_id: Optional[int] = None
+    facility_name: Optional[str] = None
+    reminder_stage: int = 0
     attended_at: Optional[str] = None
     closed_at: Optional[str] = None
     created_at: str

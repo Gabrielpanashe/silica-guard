@@ -18,10 +18,25 @@ def _referral_row_to_dict(row) -> dict:
         "status": row["status"],
         "deadline": row["deadline"],
         "pre_alert_sent": bool(row["pre_alert_sent"]),
+        "facility_id": row["facility_id"],
+        "facility_name": row["facility_name"],
+        "reminder_stage": row["reminder_stage"],
         "attended_at": row["attended_at"],
         "closed_at": row["closed_at"],
         "created_at": row["created_at"],
     }
+
+
+_REFERRAL_SELECT = """
+    SELECT r.id, m.name AS miner_name, m.mine_site, s.tier,
+           r.status, r.deadline, r.pre_alert_sent,
+           r.facility_id, f.name AS facility_name, r.reminder_stage,
+           r.attended_at, r.closed_at, r.created_at
+    FROM referrals r
+    JOIN miners m ON m.id = r.miner_id
+    JOIN screenings s ON s.id = r.screening_id
+    LEFT JOIN facilities f ON f.id = r.facility_id
+"""
 
 
 @router.get("/dashboard/week")
@@ -70,13 +85,7 @@ def list_referrals(user: dict = Depends(get_current_user)):
     conn = get_connection()
     try:
         rows = conn.execute(
-            """SELECT r.id, m.name AS miner_name, m.mine_site, s.tier,
-                      r.status, r.deadline, r.pre_alert_sent, r.attended_at,
-                      r.closed_at, r.created_at
-               FROM referrals r
-               JOIN miners m ON m.id = r.miner_id
-               JOIN screenings s ON s.id = r.screening_id
-               ORDER BY r.created_at DESC"""
+            _REFERRAL_SELECT + " ORDER BY r.created_at DESC"
         ).fetchall()
         return [_referral_row_to_dict(row) for row in rows]
     finally:
@@ -115,14 +124,7 @@ def update_referral_status(
         conn.commit()
 
         row = conn.execute(
-            """SELECT r.id, m.name AS miner_name, m.mine_site, s.tier,
-                      r.status, r.deadline, r.pre_alert_sent, r.attended_at,
-                      r.closed_at, r.created_at
-               FROM referrals r
-               JOIN miners m ON m.id = r.miner_id
-               JOIN screenings s ON s.id = r.screening_id
-               WHERE r.id = ?""",
-            (referral_id,),
+            _REFERRAL_SELECT + " WHERE r.id = ?", (referral_id,)
         ).fetchone()
         return _referral_row_to_dict(row)
     finally:
