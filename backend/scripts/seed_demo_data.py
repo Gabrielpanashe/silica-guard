@@ -2,9 +2,11 @@
 Seeds a reproducible demo dataset: multiple mine sites, all four risk tiers,
 referrals across different lifecycle states, one worker with two screenings
 (a YELLOW followed later by a RED, for demoing the deterioration story once
-that engine exists), and a starter row in each v4.0 enterprise/outreach
-table (employers, facilities, campaigns, outreach_visits) so there is
-something to look at even though no endpoints read/write them yet.
+that engine exists), and a starter row in the facilities and outreach_visits
+tables so there is something to look at even though no endpoints read/write
+outreach_visits yet. (The employers/campaigns tables and their seed rows
+were removed 5 August 2026 — SilicaGuard is artisanal-miner-only now, see
+SILICAGUARD.md Section 13.)
 
 Safe to re-run: clears every table this script owns first, so running it
 twice reproduces the same known state rather than duplicating rows or
@@ -158,8 +160,6 @@ def seed() -> None:
         conn.execute("DELETE FROM screenings")
         conn.execute("DELETE FROM miners")
         conn.execute("DELETE FROM outreach_visits")
-        conn.execute("DELETE FROM campaigns")
-        conn.execute("DELETE FROM employers")
         conn.execute("DELETE FROM facilities")
         conn.commit()
 
@@ -334,7 +334,7 @@ def seed() -> None:
             created_at=tendai_second_created,
         )
 
-        # --- Enterprise / outreach starter rows (no endpoints read these yet) ---
+        # --- Outreach starter rows (no endpoints read these yet) ---
         conn.execute(
             "INSERT INTO facilities (name, level, address, phone, latitude, longitude) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -357,31 +357,6 @@ def seed() -> None:
                 "055-24101",
                 -18.8931,
                 29.7872,
-            ),
-        )
-
-        cur = conn.execute(
-            "INSERT INTO employers (name, contact, subscription_tier, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (
-                "Sherwood Mining (Pvt) Ltd",
-                "she-officer@sherwoodmining.example",
-                "enterprise",
-                _iso(_now - timedelta(days=30)),
-            ),
-        )
-        employer_id = cur.lastrowid
-
-        conn.execute(
-            "INSERT INTO campaigns (employer_id, site, job_roles, start_date, end_date, target_count) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                employer_id,
-                "Sherwood Mine",
-                "drilling,loading,crushing",
-                (_now - timedelta(days=10)).strftime("%Y-%m-%d"),
-                (_now + timedelta(days=80)).strftime("%Y-%m-%d"),
-                150,
             ),
         )
 
@@ -408,16 +383,13 @@ def seed() -> None:
                 "screenings",
                 "referrals",
                 "facilities",
-                "employers",
-                "campaigns",
                 "outreach_visits",
             )
         }
         print(
             f"Seeded: {counts['miners']} miners, {counts['screenings']} screenings, "
             f"{counts['referrals']} referrals across 3 sites; "
-            f"{counts['facilities']} facilities, {counts['employers']} employers, "
-            f"{counts['campaigns']} campaigns, {counts['outreach_visits']} outreach visits."
+            f"{counts['facilities']} facilities, {counts['outreach_visits']} outreach visits."
         )
     finally:
         conn.close()

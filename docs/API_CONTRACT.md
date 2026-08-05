@@ -46,7 +46,7 @@ No auth required to call this.
 
 **Errors**: `401` invalid credentials.
 
-Currently issues one of two demo roles: `hospital`, `cimas`, backed by env-var credentials (no `users` table yet). **Target v4.0 roles are `practitioner`, `clinical`, `employer`** — `employer` must be blocked from individual clinical records at the authorisation layer (non-negotiable rule; needs a test proving it). This is a planned, not-yet-scheduled change — flag before building UI that assumes the target role names.
+Currently issues one of two demo roles: `hospital`, `cimas`, backed by env-var credentials (no `users` table yet). **Target v4.0 roles are `practitioner`, `clinical`.** This is a planned, not-yet-scheduled change — flag before building UI that assumes the target role names.
 
 ### `GET /api/auth/me` — LIVE (dev helper, not part of the target contract)
 
@@ -79,14 +79,13 @@ Requires `Authorization: Bearer <token>`. Returns the decoded token claims. Usef
 
 **Errors**: `409` if `phone` is already registered (phone is the persistent worker identity).
 
-**Target v4.0 shape** — route renamed `/api/workers`, adds employer linkage and job role, matching the `workers` register table (`employer_id`, `site`, `job_role`):
+**Target v4.0 shape** — route renamed `/api/workers`, adds job role, matching the `workers` register table (`site`, `job_role`):
 ```json
 {
   "name": "Tendai Moyo",
   "phone": "+263771234567",
   "site": "Sherwood Mine",
-  "job_role": "drilling",
-  "employer_id": null
+  "job_role": "drilling"
 }
 ```
 
@@ -232,7 +231,7 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 ## Outreach
 
-The underlying `outreach_visits`, `employers`, `campaigns` and `facilities` tables exist in the database as of the Phase A schema migration, but no route reads or writes them yet — the routes below are still TARGET.
+The underlying `outreach_visits` and `facilities` tables exist in the database as of the Phase A schema migration, but no route reads or writes them yet — the routes below are still TARGET.
 
 ### `POST /api/outreach` — TARGET (not yet built)
 
@@ -287,36 +286,6 @@ Requires `Authorization: Bearer <token>`.
 
 ---
 
-## Enterprise
-
-### `POST /api/enterprise/workforce` — TARGET (not yet built)
-
-Bulk CSV upload of an employer's employee roster (name, employee number, phone, job role, site, hire date). Creates worker records in one operation.
-
-**Target request**: `multipart/form-data` with a `file` field (CSV).
-
-**Target response 200**
-```json
-{ "created": 148, "skipped": 2, "errors": [{ "row": 37, "reason": "duplicate phone number" }] }
-```
-
-### `GET /api/enterprise/aggregate` — TARGET (not yet built)
-
-Aggregate-only workforce risk view for an employer. **Must never return an individual clinical record** — this is the privacy boundary enforced at the authorisation layer, and it must ship with a test proving an `employer`-role token cannot retrieve individual data through this or any other endpoint.
-
-**Target response 200**
-```json
-{
-  "employer_id": 4,
-  "total_workforce": 150,
-  "screened": 118,
-  "tier_distribution": { "GREEN": 80, "YELLOW": 28, "ORANGE": 8, "RED": 2 },
-  "campaign_progress": { "target": 150, "screened": 118 }
-}
-```
-
----
-
 ## Summary table
 
 | Route | Method | Status |
@@ -332,5 +301,3 @@ Aggregate-only workforce risk view for an employer. **Must never return an indiv
 | `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |
 | `/api/outreach` | POST, GET | TARGET |
 | `/api/dashboard/week` | GET | LIVE (narrative is a placeholder) |
-| `/api/enterprise/workforce` | POST | TARGET |
-| `/api/enterprise/aggregate` | GET | TARGET |
