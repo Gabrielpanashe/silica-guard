@@ -3,17 +3,32 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
-class MinerCreate(BaseModel):
+class WorkerCreate(BaseModel):
     name: str
     phone: str
-    mine_site: Optional[str] = None
+    site: Optional[str] = None
 
 
-class MinerOut(BaseModel):
+class WorkerOut(BaseModel):
     id: int
     name: str
     phone: str
-    mine_site: Optional[str] = None
+    site: Optional[str] = None
+
+
+class WorkerScreeningSummary(BaseModel):
+    id: int
+    tier: Optional[str] = None
+    created_at: str
+    advice_line: Optional[str] = None
+
+
+class WorkerDetail(BaseModel):
+    id: int
+    name: str
+    phone: str
+    site: Optional[str] = None
+    screenings: List[WorkerScreeningSummary]
 
 
 class ScreeningAnswerIn(BaseModel):

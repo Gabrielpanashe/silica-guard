@@ -10,8 +10,8 @@ FAKE_RESULT = {
 
 def _register_miner(client, phone="+263700000001"):
     resp = client.post(
-        "/api/miners",
-        json={"name": "Test Miner", "phone": phone, "mine_site": "Test Site"},
+        "/api/workers",
+        json={"name": "Test Miner", "phone": phone, "site": "Test Site"},
     )
     assert resp.status_code == 200
     return resp.json()["id"]
@@ -24,7 +24,7 @@ def _ten_answers():
     ]
 
 
-def test_create_miner(client):
+def test_create_worker(client):
     miner_id = _register_miner(client)
     assert miner_id > 0
 
@@ -32,7 +32,7 @@ def test_create_miner(client):
 def test_duplicate_phone_returns_409(client):
     _register_miner(client, phone="+263700000002")
     resp = client.post(
-        "/api/miners", json={"name": "Duplicate", "phone": "+263700000002"}
+        "/api/workers", json={"name": "Duplicate", "phone": "+263700000002"}
     )
     assert resp.status_code == 409
 

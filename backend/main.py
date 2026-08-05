@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import auth, dashboard, screening, ussd
+from routers import auth, dashboard, screening, ussd, workers
 
 
 @asynccontextmanager
@@ -32,6 +32,7 @@ app.include_router(screening.router)
 app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(ussd.router)
+app.include_router(workers.router)
 
 
 @app.get("/api/health")

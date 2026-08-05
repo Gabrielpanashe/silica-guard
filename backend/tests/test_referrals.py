@@ -32,8 +32,8 @@ def _login(client):
 
 def _register_miner(client, phone="+263711110001"):
     resp = client.post(
-        "/api/miners",
-        json={"name": "Referral Test Miner", "phone": phone, "mine_site": "Test Site"},
+        "/api/workers",
+        json={"name": "Referral Test Miner", "phone": phone, "site": "Test Site"},
     )
     return resp.json()["id"]
 
