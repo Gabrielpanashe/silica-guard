@@ -8,6 +8,18 @@ DATABASE_URL = os.getenv("DATABASE_URL", "./data/silicaguard.db")
 # that already exists under the old 3-tier shape. Delete the local .db file
 # and re-run init_db()/seed_demo_data.py to pick up this schema, per the
 # "How to add or change a database field" procedure in SKILL.md.
+
+# The Enterprise Occupational Health pillar (employer accounts, scheduled
+# campaigns) was descoped 5 August 2026 per mentor feedback — SilicaGuard is
+# artisanal-miner-only now (see SILICAGUARD.md Section 13). Explicitly drop
+# these tables rather than leaving them as dead schema, the way xray_results/
+# whatsapp_messages were left behind in an earlier removal. `campaigns` has
+# an FK to `employers`, so it must drop first.
+CLEANUP = """
+DROP TABLE IF EXISTS campaigns;
+DROP TABLE IF EXISTS employers;
+"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS miners (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,24 +80,6 @@ CREATE TABLE IF NOT EXISTS referrals (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS employers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    contact TEXT,
-    subscription_tier TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS campaigns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    employer_id INTEGER REFERENCES employers(id),
-    site TEXT,
-    job_roles TEXT,
-    start_date DATE,
-    end_date DATE,
-    target_count INTEGER
-);
-
 CREATE TABLE IF NOT EXISTS outreach_visits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     site TEXT NOT NULL,
@@ -109,6 +103,7 @@ def get_connection() -> sqlite3.Connection:
 def init_db() -> None:
     conn = get_connection()
     try:
+        conn.executescript(CLEANUP)
         conn.executescript(SCHEMA)
         conn.commit()
     finally:
