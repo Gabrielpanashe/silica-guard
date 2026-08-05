@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -6,17 +7,43 @@ from dotenv import load_dotenv
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
 from routers import auth, dashboard, screening, ussd, workers
+from services.referral_cascade import run_scheduled_cascade
+
+logger = logging.getLogger("silicaguard.main")
+
+scheduler: BackgroundScheduler | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global scheduler
     init_db()
+
+    # Smart Referral Router reminder/escalation cascade — an in-process
+    # background job, not an external cron (Render free tier gives us no
+    # cron and this needs no new infrastructure to demo). Disabled under
+    # pytest via SCHEDULER_ENABLED=false (set in tests/conftest.py before
+    # `import main`), so no test ever starts a background thread. Only runs
+    # while this process is awake — Render's free tier sleeps after
+    # inactivity, so warm the server before a demo, same as /api/health.
+    if os.getenv("SCHEDULER_ENABLED", "true").lower() != "false":
+        interval = int(os.getenv("SCHEDULER_INTERVAL_MINUTES", "10"))
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(run_scheduled_cascade, "interval", minutes=interval, id="referral_cascade")
+        scheduler.start()
+        logger.info("Referral cascade scheduler started (every %s min)", interval)
+
     yield
+
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+        scheduler = None
 
 
 app = FastAPI(title="SilicaGuard API", lifespan=lifespan)
