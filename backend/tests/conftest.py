@@ -12,6 +12,11 @@ os.environ.setdefault("HOSPITAL_EMAIL", "hospital@silicaguard.health")
 os.environ.setdefault("HOSPITAL_PASSWORD", "hospital123")
 os.environ.setdefault("CIMAS_EMAIL", "cimas@silicaguard.health")
 os.environ.setdefault("CIMAS_PASSWORD", "cimas123")
+# Plain configuration, not a "detect pytest" hack — no test should ever
+# start a background scheduler thread (would leak across the per-test
+# TestClient instances and slow the suite down for no benefit; the cascade
+# logic itself is tested directly in test_referral_cascade.py).
+os.environ.setdefault("SCHEDULER_ENABLED", "false")
 
 import database  # noqa: E402
 import main  # noqa: E402
@@ -27,6 +32,12 @@ def _mock_notifications(monkeypatch):
     monkeypatch.setattr(notifications, "send_miner_result", lambda *a, **k: None)
     monkeypatch.setattr(
         notifications, "send_hospital_prealert", lambda *a, **k: True
+    )
+    monkeypatch.setattr(
+        notifications, "send_referral_reminder", lambda *a, **k: True
+    )
+    monkeypatch.setattr(
+        notifications, "send_referral_escalation", lambda *a, **k: True
     )
 
 

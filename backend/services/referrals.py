@@ -2,16 +2,18 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from services import notifications
+from services.facility_matching import select_facility
 
 # Urgency windows per SILICAGUARD.md Section 7 Pillar 2 (fixed by the
 # reference doc, not a clinical judgment call): RED is urgent (48h), ORANGE
-# is routine (14 days). Facility matching and the reminder/escalation
-# cascade (day 3, day 7, day 14) are Smart Referral Router work — not built
-# yet; only the initial deadline is set here.
+# is routine (14 days). Reused by services/referral_cascade.py for the
+# reminder/escalation cascade rather than re-hardcoded there.
 _URGENCY_WINDOW = {
     "RED": timedelta(hours=48),
     "ORANGE": timedelta(days=14),
 }
+
+_DEFAULT_HOSPITAL_NAME = "Kwekwe District Hospital"
 
 # The AI Risk Engine (/api/screen) is English-only (see CLAUDE.md) so it has
 # no Shona of its own to relay to the miner. Rather than invent new Shona
@@ -35,18 +37,24 @@ def create_referral_and_notify(
     shona_message: str,
     contributing_factors: Optional[List[str]] = None,
 ) -> None:
-    """Only acts on ORANGE/RED. Creates the referrals row, then sends real SMS
-    via Africa's Talking. pre_alert_sent reflects the actual hospital SMS API
-    call result, not just an attempted/logged intent."""
+    """Only acts on ORANGE/RED. Creates the referrals row (facility-matched —
+    see services/facility_matching.py), then sends real SMS via Africa's
+    Talking. pre_alert_sent reflects the actual hospital SMS API call
+    result, not just an attempted/logged intent."""
     if tier not in _URGENCY_WINDOW:
         return
 
     deadline = datetime.now(timezone.utc) + _URGENCY_WINDOW[tier]
 
+    facilities = conn.execute("SELECT * FROM facilities").fetchall()
+    facility = select_facility(tier, mine_site, facilities)
+    facility_id = facility["id"] if facility else None
+    facility_name = facility["name"] if facility else _DEFAULT_HOSPITAL_NAME
+
     cur = conn.execute(
-        """INSERT INTO referrals (screening_id, miner_id, hospital, deadline, pre_alert_sent, status)
-           VALUES (?, ?, 'Kwekwe District Hospital', ?, 0, 'open')""",
-        (screening_id, miner_id, deadline.strftime("%Y-%m-%d %H:%M:%S")),
+        """INSERT INTO referrals (screening_id, miner_id, hospital, facility_id, deadline, pre_alert_sent, status)
+           VALUES (?, ?, ?, ?, ?, 0, 'open')""",
+        (screening_id, miner_id, facility_name, facility_id, deadline.strftime("%Y-%m-%d %H:%M:%S")),
     )
     referral_id = cur.lastrowid
     conn.commit()

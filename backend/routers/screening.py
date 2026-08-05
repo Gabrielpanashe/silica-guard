@@ -1,10 +1,9 @@
 import json
-import sqlite3
 
 from fastapi import APIRouter, HTTPException
 
 from database import get_connection
-from models import DeteriorationResult, MinerCreate, MinerOut, ScreeningCreate, ScreeningResult
+from models import DeteriorationResult, ScreeningCreate, ScreeningResult
 from services.advice_engine import personalised_advice_line
 from services.ai_risk_engine import assess_risk
 from services.deterioration import compare_to_previous, escalate_tier_if_worsened
@@ -13,26 +12,9 @@ from services.safety_overrides import apply_safety_overrides
 
 router = APIRouter(prefix="/api", tags=["screening"])
 
-
-@router.post("/miners", response_model=MinerOut)
-def create_miner(miner: MinerCreate):
-    conn = get_connection()
-    try:
-        cur = conn.execute(
-            "INSERT INTO miners (name, phone, mine_site) VALUES (?, ?, ?)",
-            (miner.name, miner.phone, miner.mine_site),
-        )
-        conn.commit()
-        return MinerOut(
-            id=cur.lastrowid,
-            name=miner.name,
-            phone=miner.phone,
-            mine_site=miner.mine_site,
-        )
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="Phone number already registered")
-    finally:
-        conn.close()
+# Worker registration/lookup lives in routers/workers.py (POST /api/workers,
+# GET /api/workers/{phone}) — this router is screening only, as of 5 August
+# 2026 (previously also had POST /api/miners).
 
 
 @router.post("/screen", response_model=ScreeningResult)

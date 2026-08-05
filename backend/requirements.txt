@@ -6,3 +6,8 @@ python-jose[cryptography]
 python-dotenv
 python-multipart
 pydantic
+# Pinned <4 deliberately, the one exception in this otherwise-unpinned file:
+# APScheduler 4.x is an incompatible async-first rewrite; the Smart Referral
+# Router's reminder/escalation cascade (main.py's lifespan) needs the
+# synchronous BackgroundScheduler from the 3.x line.
+apscheduler>=3.10,<4

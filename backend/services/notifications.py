@@ -88,3 +88,36 @@ def send_hospital_prealert(
         f"Site: {mine_site or 'unknown'}. Factors: {contributing_factors_summary}"
     )
     return _send_sms(nurse_phone, body)
+
+
+# --- Smart Referral Router reminder/escalation cascade (5 August 2026) ---
+# DRAFT COPY, same caveat as advice_engine.py: not yet Clinical-Lead-signed
+# off. Fired by services/referral_cascade.py, itself triggered by the
+# APScheduler job in main.py — never called synchronously from a request.
+
+
+def send_referral_reminder(phone_number: str, tier: str, stage: int) -> bool:
+    """Sent to the miner when a referral is still open partway through its
+    urgency window (RED: ~24h in; ORANGE: day 3, then day 7)."""
+    body = (
+        f"Reminder from SilicaGuard: your {tier} screening result means you "
+        "should visit the hospital soon. "
+        f"{HOSPITAL_INFO_EN} Show your referral message to the nurse."
+    )
+    return _send_sms(phone_number, body)
+
+
+def send_referral_escalation(miner_name: str, phone_number: str, tier: str) -> bool:
+    """Sent to the hospital nurse (not the miner) when a referral's urgency
+    deadline passes with no recorded attendance — RED: 48h, ORANGE: 14 days."""
+    nurse_phone = os.getenv("HOSPITAL_NURSE_PHONE")
+    if not nurse_phone:
+        logger.warning(
+            "HOSPITAL_NURSE_PHONE not set — skipping referral escalation SMS"
+        )
+        return False
+    body = (
+        f"ESCALATION: {tier} referral for {miner_name} ({phone_number}) has "
+        "passed its urgency deadline with no recorded attendance. Please follow up."
+    )
+    return _send_sms(nurse_phone, body)
