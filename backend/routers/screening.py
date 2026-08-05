@@ -4,9 +4,12 @@ import sqlite3
 from fastapi import APIRouter, HTTPException
 
 from database import get_connection
-from models import MinerCreate, MinerOut, ScreeningCreate, ScreeningResult
+from models import DeteriorationResult, MinerCreate, MinerOut, ScreeningCreate, ScreeningResult
+from services.advice_engine import personalised_advice_line
 from services.ai_risk_engine import assess_risk
+from services.deterioration import compare_to_previous, escalate_tier_if_worsened
 from services.referrals import GENERIC_REFERRAL_SHONA_MESSAGE, create_referral_and_notify
+from services.safety_overrides import apply_safety_overrides
 
 router = APIRouter(prefix="/api", tags=["screening"])
 
@@ -53,6 +56,17 @@ def screen_miner(payload: ScreeningCreate):
         previous_screening_id = previous_row["id"] if previous_row else None
         provisional = 1 if payload.offline_fallback_used else 0
 
+        # Answers from that previous screening, for Longitudinal Deterioration
+        # Detection. Empty list (not an error) if this is the worker's first.
+        previous_answer_rows = (
+            conn.execute(
+                "SELECT question_code, answer_score FROM screening_answers WHERE screening_id = ?",
+                (previous_screening_id,),
+            ).fetchall()
+            if previous_screening_id
+            else []
+        )
+
         cur = conn.execute(
             """INSERT INTO screenings
                  (miner_id, previous_screening_id, screened_by, channel, fallback_used, provisional)
@@ -92,16 +106,29 @@ def screen_miner(payload: ScreeningCreate):
                 status_code=502, detail="AI risk engine unavailable, please retry"
             )
 
+        # Longitudinal Deterioration Detection: escalate one tier on any
+        # adverse trajectory, before the hard safety override gets the final
+        # word — see services/deterioration.py and services/safety_overrides.py.
+        deterioration = compare_to_previous(
+            payload.answers, previous_screening_id, previous_answer_rows
+        )
+        result["tier"] = escalate_tier_if_worsened(result["tier"], deterioration["changed"])
+        result = apply_safety_overrides(payload.answers, result)
+
+        advice_line = personalised_advice_line(payload.answers)
+
         conn.execute(
             """UPDATE screenings SET
                  tier = ?, risk_confidence = ?,
-                 ai_explanation_english = ?, ai_contributing_factors = ?
+                 ai_explanation_english = ?, ai_contributing_factors = ?,
+                 advice_line = ?
                WHERE id = ?""",
             (
                 result["tier"],
                 result["confidence"],
                 result["explanation_english"],
                 json.dumps(result["contributing_factors"]),
+                advice_line,
                 screening_id,
             ),
         )
@@ -129,9 +156,10 @@ def screen_miner(payload: ScreeningCreate):
             confidence=result["confidence"],
             explanation_english=result["explanation_english"],
             contributing_factors=result["contributing_factors"],
-            advice_line=None,
+            advice_line=advice_line,
             previous_screening_id=previous_screening_id,
             provisional=bool(provisional),
+            deterioration=DeteriorationResult(**deterioration),
         )
     finally:
         conn.close()

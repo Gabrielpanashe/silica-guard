@@ -100,6 +100,69 @@ def test_screen_empty_answers_rejected(client):
     assert resp.status_code == 422  # Pydantic min_length=1 rejects before our code runs
 
 
+def test_screen_response_carries_advice_line_and_deterioration(client):
+    miner_id = _register_miner(client, phone="+263700000011")
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        resp = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "APP"},
+        )
+
+    body = resp.json()
+    assert body["advice_line"]  # non-negotiable rule: never absent
+    assert body["deterioration"]["compared_to_screening_id"] is None
+    assert body["deterioration"]["changed"] is False
+
+
+def test_screen_hard_red_flag_overrides_ai_tier_even_when_ai_says_green(client):
+    """The model can never downgrade a RED — a red-flag answer forces RED
+    even when the (mocked) AI result says GREEN."""
+    miner_id = _register_miner(client, phone="+263700000012")
+
+    green_from_model = {
+        "tier": "GREEN",
+        "confidence": 0.9,
+        "contributing_factors": ["looked fine"],
+        "explanation_english": "Low risk overall",
+    }
+    answers = _ten_answers()
+    answers[0] = {"question_code": "BREATHLESSNESS", "answer_value": "severe", "answer_score": 5}
+
+    with patch("routers.screening.assess_risk", return_value=green_from_model):
+        resp = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": answers, "channel": "APP"},
+        )
+
+    body = resp.json()
+    assert body["tier"] == "RED"
+
+
+def test_second_screening_with_worsened_symptom_escalates_tier(client):
+    miner_id = _register_miner(client, phone="+263700000013")
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        first_answers = _ten_answers()
+        first_answers[0] = {"question_code": "COUGH_DURATION", "answer_value": "no", "answer_score": 0}
+        client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": first_answers, "channel": "APP"},
+        )
+
+        second_answers = _ten_answers()
+        second_answers[0] = {"question_code": "COUGH_DURATION", "answer_value": "severe", "answer_score": 5}
+        second = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": second_answers, "channel": "APP"},
+        ).json()
+
+    # FAKE_RESULT's tier is YELLOW; worsened cough should escalate it to ORANGE.
+    assert second["tier"] == "ORANGE"
+    assert second["deterioration"]["changed"] is True
+    assert second["deterioration"]["compared_to_screening_id"] is not None
+
+
 def test_screen_ai_failure_returns_502(client):
     miner_id = _register_miner(client, phone="+263700000005")
 
