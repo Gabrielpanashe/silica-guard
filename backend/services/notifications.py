@@ -18,12 +18,24 @@ testing all three directly before deciding to bypass the SDK.
 
 Failures are logged, not raised — a notification failing should never break
 the referral/screening transaction that triggered it.
+
+Every send is also persisted to the `notifications` table (5 August 2026 —
+SILICAGUARD.md Section 7's target schema, "every SMS sent, for audit and
+delivery reporting", previously only ever a log line). Each public function
+below opens and closes its own short-lived DB connection for this rather
+than accepting a `conn` parameter threaded in from the caller — matches the
+existing precedent in services/referral_cascade.py's run_scheduled_cascade
+(background/audit concerns manage their own connection), and is more
+correct for an audit trail: a notification that was actually sent should be
+logged even if the caller's surrounding transaction later fails.
 """
 
 import logging
 import os
 
 import httpx
+
+from database import get_connection
 
 logger = logging.getLogger("silicaguard.notifications")
 
@@ -56,7 +68,26 @@ def _send_sms(to: str, message: str) -> bool:
         return False
 
 
-def send_miner_result(phone_number: str, tier: str, shona_message: str) -> bool:
+def _log_notification(worker_id: int, template: str, payload: str, delivery_status: str) -> None:
+    """Best-effort audit write — a logging failure must never surface as if
+    the SMS itself failed, so this swallows its own exceptions."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT INTO notifications (worker_id, channel, template, payload, delivery_status)
+               VALUES (?, 'sms', ?, ?, ?)""",
+            (worker_id, template, payload, delivery_status),
+        )
+        conn.commit()
+    except Exception:
+        logger.exception(
+            "Failed to log notification (template=%s, worker_id=%s)", template, worker_id
+        )
+    finally:
+        conn.close()
+
+
+def send_miner_result(worker_id: int, phone_number: str, tier: str, shona_message: str) -> bool:
     """Doctor-approved Shona explanation (shona_message) + English facility info
     + a line telling the miner what to do with this message at the hospital."""
     body = (
@@ -64,10 +95,13 @@ def send_miner_result(phone_number: str, tier: str, shona_message: str) -> bool:
         f"{HOSPITAL_INFO_EN}\n"
         "Show this message to the nurse when you arrive."
     )
-    return _send_sms(phone_number, body)
+    ok = _send_sms(phone_number, body)
+    _log_notification(worker_id, "miner_result", body, "sent" if ok else "failed")
+    return ok
 
 
 def send_hospital_prealert(
+    worker_id: int,
     miner_name: str,
     phone_number: str,
     mine_site: str | None,
@@ -76,18 +110,21 @@ def send_hospital_prealert(
 ) -> bool:
     """Returns True only if the SMS API call succeeded, so the caller can set
     referrals.pre_alert_sent accurately instead of assuming success."""
-    nurse_phone = os.getenv("HOSPITAL_NURSE_PHONE")
-    if not nurse_phone:
-        logger.warning(
-            "HOSPITAL_NURSE_PHONE not set — skipping hospital pre-alert SMS"
-        )
-        return False
     body = (
         f"New {tier} referral from SilicaGuard screening. "
         f"Miner: {miner_name}, Phone: {phone_number}, "
         f"Site: {mine_site or 'unknown'}. Factors: {contributing_factors_summary}"
     )
-    return _send_sms(nurse_phone, body)
+    nurse_phone = os.getenv("HOSPITAL_NURSE_PHONE")
+    if not nurse_phone:
+        logger.warning(
+            "HOSPITAL_NURSE_PHONE not set — skipping hospital pre-alert SMS"
+        )
+        _log_notification(worker_id, "hospital_prealert", body, "skipped")
+        return False
+    ok = _send_sms(nurse_phone, body)
+    _log_notification(worker_id, "hospital_prealert", body, "sent" if ok else "failed")
+    return ok
 
 
 # --- Smart Referral Router reminder/escalation cascade (5 August 2026) ---
@@ -96,7 +133,7 @@ def send_hospital_prealert(
 # APScheduler job in main.py — never called synchronously from a request.
 
 
-def send_referral_reminder(phone_number: str, tier: str, stage: int) -> bool:
+def send_referral_reminder(worker_id: int, phone_number: str, tier: str, stage: int) -> bool:
     """Sent to the miner when a referral is still open partway through its
     urgency window (RED: ~24h in; ORANGE: day 3, then day 7)."""
     body = (
@@ -104,20 +141,48 @@ def send_referral_reminder(phone_number: str, tier: str, stage: int) -> bool:
         "should visit the hospital soon. "
         f"{HOSPITAL_INFO_EN} Show your referral message to the nurse."
     )
-    return _send_sms(phone_number, body)
+    ok = _send_sms(phone_number, body)
+    _log_notification(worker_id, "referral_reminder", body, "sent" if ok else "failed")
+    return ok
 
 
-def send_referral_escalation(miner_name: str, phone_number: str, tier: str) -> bool:
+def send_referral_escalation(worker_id: int, miner_name: str, phone_number: str, tier: str) -> bool:
     """Sent to the hospital nurse (not the miner) when a referral's urgency
-    deadline passes with no recorded attendance — RED: 48h, ORANGE: 14 days."""
+    deadline passes with no recorded attendance — RED: 48h, ORANGE: 14 days.
+    worker_id still identifies the miner whose referral triggered this —
+    the audit trail records whose clinical event caused the send, not just
+    who physically received the SMS."""
+    body = (
+        f"ESCALATION: {tier} referral for {miner_name} ({phone_number}) has "
+        "passed its urgency deadline with no recorded attendance. Please follow up."
+    )
     nurse_phone = os.getenv("HOSPITAL_NURSE_PHONE")
     if not nurse_phone:
         logger.warning(
             "HOSPITAL_NURSE_PHONE not set — skipping referral escalation SMS"
         )
+        _log_notification(worker_id, "referral_escalation", body, "skipped")
         return False
+    ok = _send_sms(nurse_phone, body)
+    _log_notification(worker_id, "referral_escalation", body, "sent" if ok else "failed")
+    return ok
+
+
+# --- Outreach Planner (5 August 2026) ---
+# DRAFT COPY, same not-yet-signed-off caveat as everything else above.
+
+
+def send_outreach_announcement(
+    worker_id: int, phone_number: str, site: str, scheduled_date: str, stage: str
+) -> bool:
+    """stage is "3day" or "1day" — how far ahead of the visit this
+    announcement is. Sent to every worker previously registered at `site`."""
+    when = "in 3 days" if stage == "3day" else "tomorrow"
     body = (
-        f"ESCALATION: {tier} referral for {miner_name} ({phone_number}) has "
-        "passed its urgency deadline with no recorded attendance. Please follow up."
+        f"SilicaGuard screening at {site} {when} ({scheduled_date}). "
+        "Come for your free lung health check and education session."
     )
-    return _send_sms(nurse_phone, body)
+    ok = _send_sms(phone_number, body)
+    template = f"outreach_announcement_{stage}"
+    _log_notification(worker_id, template, body, "sent" if ok else "failed")
+    return ok
