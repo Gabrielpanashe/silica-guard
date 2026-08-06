@@ -12,7 +12,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import auth, dashboard, screening, ussd, workers
+from routers import auth, dashboard, outreach, screening, ussd, workers
+from services.outreach import run_scheduled_outreach
 from services.referral_cascade import run_scheduled_cascade
 
 logger = logging.getLogger("silicaguard.main")
@@ -25,6 +26,22 @@ async def lifespan(app: FastAPI):
     global scheduler
     init_db()
 
+    # Render's free tier has no persistent disk — the SQLite file resets on
+    # every redeploy and likely every sleep/wake cycle. Rather than silently
+    # deploy with an empty, unseeded DB, re-run the same reproducible demo
+    # dataset used locally (backend/scripts/seed_demo_data.py) on every boot
+    # when this is explicitly turned on. Off by default — this wipes and
+    # reseeds every table the script owns, so it must never run against a
+    # real deployment carrying real screenings. Confirmed decision (6 August
+    # 2026): accept ephemeral storage for the 11 August demo rather than pay
+    # for a persistent disk or migrate to Postgres this close to feature
+    # freeze — see CLAUDE.md's sprint status for the full reasoning.
+    if os.getenv("AUTO_SEED_ON_BOOT", "false").lower() == "true":
+        from scripts.seed_demo_data import seed
+
+        seed()
+        logger.info("AUTO_SEED_ON_BOOT=true — reseeded demo data on startup")
+
     # Smart Referral Router reminder/escalation cascade — an in-process
     # background job, not an external cron (Render free tier gives us no
     # cron and this needs no new infrastructure to demo). Disabled under
@@ -36,8 +53,12 @@ async def lifespan(app: FastAPI):
         interval = int(os.getenv("SCHEDULER_INTERVAL_MINUTES", "10"))
         scheduler = BackgroundScheduler()
         scheduler.add_job(run_scheduled_cascade, "interval", minutes=interval, id="referral_cascade")
+        # Outreach Planner's 3-day/1-day announcement + report-ready cadence —
+        # a second job on the SAME scheduler instance/interval, not a second
+        # scheduler (see services/outreach.py).
+        scheduler.add_job(run_scheduled_outreach, "interval", minutes=interval, id="outreach_announcements")
         scheduler.start()
-        logger.info("Referral cascade scheduler started (every %s min)", interval)
+        logger.info("Referral cascade + outreach schedulers started (every %s min)", interval)
 
     yield
 
@@ -60,6 +81,7 @@ app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(ussd.router)
 app.include_router(workers.router)
+app.include_router(outreach.router)
 
 
 @app.get("/api/health")

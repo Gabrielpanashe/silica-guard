@@ -39,6 +39,9 @@ def _mock_notifications(monkeypatch):
     monkeypatch.setattr(
         notifications, "send_referral_escalation", lambda *a, **k: True
     )
+    monkeypatch.setattr(
+        notifications, "send_outreach_announcement", lambda *a, **k: True
+    )
 
 
 @pytest.fixture

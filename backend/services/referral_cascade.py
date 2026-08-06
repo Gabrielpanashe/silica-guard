@@ -78,7 +78,7 @@ def process_due_referrals(conn, now: Optional[datetime] = None) -> None:
 
     rows = conn.execute(
         """SELECT r.id, r.status, r.reminder_stage, r.created_at,
-                  s.tier, m.name AS miner_name, m.phone
+                  s.tier, m.id AS worker_id, m.name AS miner_name, m.phone
            FROM referrals r
            JOIN screenings s ON s.id = r.screening_id
            JOIN miners m ON m.id = r.miner_id
@@ -96,7 +96,7 @@ def process_due_referrals(conn, now: Optional[datetime] = None) -> None:
 
             if action["action"] == "remind":
                 notifications.send_referral_reminder(
-                    row["phone"], row["tier"], action["new_stage"]
+                    row["worker_id"], row["phone"], row["tier"], action["new_stage"]
                 )
                 conn.execute(
                     "UPDATE referrals SET status = 'reminded', reminder_stage = ? WHERE id = ?",
@@ -104,7 +104,7 @@ def process_due_referrals(conn, now: Optional[datetime] = None) -> None:
                 )
             elif action["action"] == "escalate":
                 notifications.send_referral_escalation(
-                    row["miner_name"], row["phone"], row["tier"]
+                    row["worker_id"], row["miner_name"], row["phone"], row["tier"]
                 )
                 conn.execute(
                     "UPDATE referrals SET status = 'escalated' WHERE id = ?",

@@ -59,8 +59,9 @@ def create_referral_and_notify(
     referral_id = cur.lastrowid
     conn.commit()
 
-    notifications.send_miner_result(phone_number, tier, shona_message)
+    notifications.send_miner_result(miner_id, phone_number, tier, shona_message)
     prealert_sent = notifications.send_hospital_prealert(
+        miner_id,
         miner_name,
         phone_number,
         mine_site,

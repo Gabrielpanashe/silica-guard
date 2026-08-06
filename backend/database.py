@@ -91,6 +91,16 @@ CREATE TABLE IF NOT EXISTS outreach_visits (
     health_workers TEXT,
     report_generated INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    worker_id INTEGER NOT NULL REFERENCES miners(id),
+    channel TEXT NOT NULL DEFAULT 'sms',
+    template TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    delivery_status TEXT NOT NULL CHECK (delivery_status IN ('sent', 'failed', 'skipped'))
+);
 """
 
 
@@ -113,13 +123,23 @@ _REFERRAL_ALTERS = (
     "ALTER TABLE referrals ADD COLUMN reminder_stage INTEGER DEFAULT 0",
 )
 
+# Same pattern, for the Outreach Planner (5 August 2026): screenings need a
+# link back to the visit they came from (for live screened_count tracking
+# and the post-visit report), and outreach_visits needs flags tracking the
+# 3-day/1-day announcement cadence.
+_OUTREACH_ALTERS = (
+    "ALTER TABLE screenings ADD COLUMN outreach_visit_id INTEGER REFERENCES outreach_visits(id)",
+    "ALTER TABLE outreach_visits ADD COLUMN sms_3day_sent INTEGER DEFAULT 0",
+    "ALTER TABLE outreach_visits ADD COLUMN sms_1day_sent INTEGER DEFAULT 0",
+)
+
 
 def init_db() -> None:
     conn = get_connection()
     try:
         conn.executescript(CLEANUP)
         conn.executescript(SCHEMA)
-        for statement in _REFERRAL_ALTERS:
+        for statement in _REFERRAL_ALTERS + _OUTREACH_ALTERS:
             try:
                 conn.execute(statement)
             except sqlite3.OperationalError:

@@ -110,38 +110,38 @@ def _seed_referral(conn, tier, status, created_at, reminder_stage=0, phone="+263
         ),
     )
     conn.commit()
-    return cur.lastrowid
+    return cur.lastrowid, miner_id
 
 
 def test_process_due_referrals_sends_reminder_and_updates_row(conn):
-    referral_id = _seed_referral(
+    referral_id, worker_id = _seed_referral(
         conn, "RED", "pre_alerted", NOW - timedelta(hours=25), phone="+263700111001"
     )
 
     with patch("services.notifications.send_referral_reminder") as mock_remind:
         process_due_referrals(conn, now=NOW)
 
-    mock_remind.assert_called_once_with("+263700111001", "RED", 1)
+    mock_remind.assert_called_once_with(worker_id, "+263700111001", "RED", 1)
     row = conn.execute("SELECT status, reminder_stage FROM referrals WHERE id = ?", (referral_id,)).fetchone()
     assert row["status"] == "reminded"
     assert row["reminder_stage"] == 1
 
 
 def test_process_due_referrals_escalates_and_updates_row(conn):
-    referral_id = _seed_referral(
+    referral_id, worker_id = _seed_referral(
         conn, "RED", "reminded", NOW - timedelta(hours=50), reminder_stage=1, phone="+263700111002"
     )
 
     with patch("services.notifications.send_referral_escalation") as mock_escalate:
         process_due_referrals(conn, now=NOW)
 
-    mock_escalate.assert_called_once_with("Cascade Test Miner", "+263700111002", "RED")
+    mock_escalate.assert_called_once_with(worker_id, "Cascade Test Miner", "+263700111002", "RED")
     row = conn.execute("SELECT status FROM referrals WHERE id = ?", (referral_id,)).fetchone()
     assert row["status"] == "escalated"
 
 
 def test_process_due_referrals_ignores_referrals_not_yet_due(conn):
-    referral_id = _seed_referral(
+    referral_id, _ = _seed_referral(
         conn, "ORANGE", "open", NOW - timedelta(hours=1), phone="+263700111003"
     )
 
@@ -168,10 +168,10 @@ def test_process_due_referrals_ignores_closed_referrals_even_if_overdue(conn):
 def test_one_bad_row_does_not_abort_the_batch(conn):
     """A referral with an unparsable created_at shouldn't stop a second,
     valid referral in the same batch from being processed."""
-    good_id = _seed_referral(
+    good_id, _ = _seed_referral(
         conn, "RED", "open", NOW - timedelta(hours=25), phone="+263700111005"
     )
-    bad_id = _seed_referral(
+    bad_id, _ = _seed_referral(
         conn, "RED", "open", NOW - timedelta(hours=25), phone="+263700111006"
     )
     conn.execute(

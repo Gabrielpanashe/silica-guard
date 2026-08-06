@@ -117,9 +117,12 @@ Look up a worker by phone number, returning their full screening history — thi
   ],
   "channel": "APP",
   "screened_by": "VHW Grace Chikwanha",
-  "offline_fallback_used": false
+  "offline_fallback_used": false,
+  "outreach_visit_id": null
 }
 ```
+
+`outreach_visit_id` (new, optional) links this screening to an Outreach Planner visit (see the Outreach section) for live `screened_count` tracking and the post-visit report. If omitted and `channel` is `"APP"`, the backend infers it by matching the worker's `mine_site` against a scheduled visit at the same site whose `scheduled_date` is today or yesterday (tolerates offline sync lag) — see `backend/services/outreach.py`'s `match_active_visit`. USSD self-screens never auto-link. An explicit id that doesn't exist is silently ignored (the screening still succeeds) rather than rejected — never fail a screening over a bad reference.
 
 **Response 200**
 ```json
@@ -232,32 +235,62 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 ## Outreach
 
-The `outreach_visits` table exists in the database but no route reads or writes it yet — the routes below are still TARGET, deferred past today's Smart Referral Router / Population Health Intelligence push (5 August 2026). `facilities` is now read (by referral creation's facility matching, see the Referrals section) but still has no dedicated route of its own.
+### `POST /api/outreach` — LIVE
 
-### `POST /api/outreach` — TARGET (not yet built)
+Requires `Authorization: Bearer <token>` — a coordinator/dashboard action, not a field action (deliberately not the unauthenticated shape this section originally drafted). Schedules a visit; the 3-day/1-day-before bulk SMS announcement to every worker registered at that site is triggered later by the same in-process scheduler as the referral cascade (`backend/services/outreach.py`, `run_scheduled_outreach`), not synchronously on this call.
 
-Schedule a visit and trigger the 3-day / 1-day-before bulk SMS announcement to every registered worker at that site.
-
-**Target request**
+**Request**
 ```json
 { "site": "Sherwood Mine", "scheduled_date": "2026-08-15", "expected_headcount": 40, "health_workers": ["Grace Chikwanha"] }
 ```
 
-**Target response 201**
+**Response 201**
 ```json
-{ "id": 3, "site": "Sherwood Mine", "scheduled_date": "2026-08-15", "expected_headcount": 40, "screened_count": 0, "report_generated": false }
+{
+  "id": 3,
+  "site": "Sherwood Mine",
+  "scheduled_date": "2026-08-15",
+  "expected_headcount": 40,
+  "screened_count": 0,
+  "report_generated": false,
+  "tier_distribution": null,
+  "referral_list": null
+}
 ```
 
-### `GET /api/outreach` — TARGET (not yet built)
+**Errors**: `401` missing/invalid token.
 
-List scheduled/past outreach visits, including the auto-generated post-visit report (attendance, tier distribution, referral list) once a visit's data has synced.
+### `GET /api/outreach` — LIVE
 
-**Target response 200**
+Requires `Authorization: Bearer <token>`. Lists all scheduled/past outreach visits, most-recently-scheduled first.
+
+**Response 200**
 ```json
 [
-  { "id": 3, "site": "Sherwood Mine", "scheduled_date": "2026-08-15", "expected_headcount": 40, "screened_count": 38, "report_generated": true }
+  {
+    "id": 3,
+    "site": "Sherwood Mine",
+    "scheduled_date": "2026-07-28",
+    "expected_headcount": 5,
+    "screened_count": 2,
+    "report_generated": true,
+    "tier_distribution": { "GREEN": 1, "YELLOW": 0, "ORANGE": 1, "RED": 0 },
+    "referral_list": [
+      { "miner_name": "Kudakwashe Marecha", "tier": "ORANGE", "status": "attended" }
+    ]
+  }
 ]
 ```
+
+**Errors**: `401` missing/invalid token.
+
+`screened_count` increments live as screenings link to the visit (see `POST /api/screen`'s `outreach_visit_id`). `report_generated`, `tier_distribution` and `referral_list` are all `null`/`false` until the visit's `scheduled_date` has passed — at that point the scheduler flips `report_generated` to `true` and `tier_distribution`/`referral_list` are computed live from every screening linked to the visit (not stored as a static snapshot, so they can't go stale). **Known simplification**: "report ready" is approximated as "the scheduled date has passed" — there's no genuine signal anywhere in the schema for "the mobile app has actually finished syncing this visit's offline screenings," so a report can show as ready even if a VHW's phone hasn't synced yet.
+
+---
+
+## Notifications (audit trail — no route yet)
+
+Every SMS sent by the backend (screening result, hospital pre-alert, referral reminder/escalation, outreach announcement — `backend/services/notifications.py`) now logs a row to a `notifications` table (`worker_id`, `channel`, `template`, `payload`, `sent_at`, `delivery_status`: `sent`/`failed`/`skipped`), instead of only a server log line. `worker_id` always identifies the miner whose clinical event triggered the send, even for the two templates that physically go to the hospital nurse (`hospital_prealert`, `referral_escalation`). **No endpoint reads this table yet** — it's audit-only infrastructure for now, intentionally, not an oversight.
 
 ---
 
@@ -301,5 +334,5 @@ Requires `Authorization: Bearer <token>`.
 | `/api/ussd` | POST | LIVE (four-tier) |
 | `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |
 | `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |
-| `/api/outreach` | POST, GET | TARGET |
+| `/api/outreach` | POST, GET | LIVE |
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |
