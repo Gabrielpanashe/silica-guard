@@ -7,7 +7,7 @@ Every route is marked:
 - **LIVE (shape will change)** — implemented today, but in an older pre-v4.0 shape; the target v4.0 shape is also shown.
 - **TARGET (not yet built)** — specified by the v4.0 reference document, not implemented yet. Shape shown is the plan, not a guarantee — it may shift slightly during implementation. Check back or ask before building a hard dependency on field names here.
 
-Base URL: local dev is `http://127.0.0.1:8000`. Deployed URL will be added here once Render deployment happens (Day 7 per the sprint plan).
+Base URL: local dev is `http://127.0.0.1:8000`. **Deployed: `https://silicaguard-backend.onrender.com`** (Render free tier — sleeps after inactivity, warm it with `/api/health` a few minutes before any demo; also note the DB reseeds on every restart, see `CLAUDE.md`'s `AUTO_SEED_ON_BOOT` note).
 
 Interactive docs: **`GET /docs`** (Swagger UI) is enabled by default — nothing in `main.py` disables it. Use it to explore and try requests against a running local server without needing to ask the backend owner anything.
 
