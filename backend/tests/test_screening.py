@@ -1,4 +1,7 @@
+from datetime import datetime, timezone
 from unittest.mock import patch
+
+import database
 
 FAKE_RESULT = {
     "tier": "YELLOW",
@@ -161,6 +164,121 @@ def test_second_screening_with_worsened_symptom_escalates_tier(client):
     assert second["tier"] == "ORANGE"
     assert second["deterioration"]["changed"] is True
     assert second["deterioration"]["compared_to_screening_id"] is not None
+
+
+def _seed_outreach_visit(site: str, scheduled_date: str) -> int:
+    conn = database.get_connection()
+    try:
+        cur = conn.execute(
+            """INSERT INTO outreach_visits
+               (site, scheduled_date, expected_headcount, screened_count, health_workers, report_generated)
+               VALUES (?, ?, 10, 0, '[]', 0)""",
+            (site, scheduled_date),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def test_screen_explicit_outreach_visit_id_links_and_increments_count(client):
+    miner_id = _register_miner(client, phone="+263700000014")
+    visit_id = _seed_outreach_visit("Test Site", "2026-01-01")  # not date-matched — explicit wins anyway
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        client.post(
+            "/api/screen",
+            json={
+                "miner_id": miner_id,
+                "outreach_visit_id": visit_id,
+                "answers": _ten_answers(),
+                "channel": "APP",
+            },
+        )
+
+    conn = database.get_connection()
+    try:
+        visit = conn.execute(
+            "SELECT screened_count FROM outreach_visits WHERE id = ?", (visit_id,)
+        ).fetchone()
+        screening = conn.execute(
+            "SELECT outreach_visit_id FROM screenings WHERE miner_id = ?", (miner_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert visit["screened_count"] == 1
+    assert screening["outreach_visit_id"] == visit_id
+
+
+def test_screen_implicit_app_channel_matches_active_visit_by_site(client):
+    miner_id = _register_miner(client, phone="+263700000015")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    visit_id = _seed_outreach_visit("Test Site", today)  # same site as _register_miner's default
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "APP"},
+        )
+
+    conn = database.get_connection()
+    try:
+        screening = conn.execute(
+            "SELECT outreach_visit_id FROM screenings WHERE miner_id = ?", (miner_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert screening["outreach_visit_id"] == visit_id
+
+
+def test_screen_ussd_channel_never_auto_links_even_with_matching_visit(client):
+    miner_id = _register_miner(client, phone="+263700000016")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    _seed_outreach_visit("Test Site", today)
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "USSD"},
+        )
+
+    conn = database.get_connection()
+    try:
+        screening = conn.execute(
+            "SELECT outreach_visit_id FROM screenings WHERE miner_id = ?", (miner_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert screening["outreach_visit_id"] is None
+
+
+def test_screen_unknown_explicit_outreach_visit_id_degrades_to_none(client):
+    miner_id = _register_miner(client, phone="+263700000017")
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        resp = client.post(
+            "/api/screen",
+            json={
+                "miner_id": miner_id,
+                "outreach_visit_id": 999999,
+                "answers": _ten_answers(),
+                "channel": "APP",
+            },
+        )
+
+    assert resp.status_code == 200  # never fails the screening over a bad reference
+    conn = database.get_connection()
+    try:
+        screening = conn.execute(
+            "SELECT outreach_visit_id FROM screenings WHERE miner_id = ?", (miner_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert screening["outreach_visit_id"] is None
 
 
 def test_screen_ai_failure_returns_502(client):

@@ -44,6 +44,7 @@ class ScreeningCreate(BaseModel):
     channel: str = "APP"
     screened_by: Optional[str] = None
     offline_fallback_used: bool = False
+    outreach_visit_id: Optional[int] = None
 
 
 class DeteriorationResult(BaseModel):
@@ -91,3 +92,27 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     role: str
+
+
+class OutreachVisitCreate(BaseModel):
+    site: str
+    scheduled_date: str  # "YYYY-MM-DD"
+    expected_headcount: int
+    health_workers: List[str] = []
+
+
+class ReferralListItem(BaseModel):
+    miner_name: str
+    tier: str
+    status: str
+
+
+class OutreachVisitOut(BaseModel):
+    id: int
+    site: str
+    scheduled_date: str
+    expected_headcount: int
+    screened_count: int
+    report_generated: bool
+    tier_distribution: Optional[dict] = None
+    referral_list: Optional[List[ReferralListItem]] = None

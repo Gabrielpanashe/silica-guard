@@ -12,7 +12,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import auth, dashboard, screening, ussd, workers
+from routers import auth, dashboard, outreach, screening, ussd, workers
+from services.outreach import run_scheduled_outreach
 from services.referral_cascade import run_scheduled_cascade
 
 logger = logging.getLogger("silicaguard.main")
@@ -36,8 +37,12 @@ async def lifespan(app: FastAPI):
         interval = int(os.getenv("SCHEDULER_INTERVAL_MINUTES", "10"))
         scheduler = BackgroundScheduler()
         scheduler.add_job(run_scheduled_cascade, "interval", minutes=interval, id="referral_cascade")
+        # Outreach Planner's 3-day/1-day announcement + report-ready cadence —
+        # a second job on the SAME scheduler instance/interval, not a second
+        # scheduler (see services/outreach.py).
+        scheduler.add_job(run_scheduled_outreach, "interval", minutes=interval, id="outreach_announcements")
         scheduler.start()
-        logger.info("Referral cascade scheduler started (every %s min)", interval)
+        logger.info("Referral cascade + outreach schedulers started (every %s min)", interval)
 
     yield
 
@@ -60,6 +65,7 @@ app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(ussd.router)
 app.include_router(workers.router)
+app.include_router(outreach.router)
 
 
 @app.get("/api/health")

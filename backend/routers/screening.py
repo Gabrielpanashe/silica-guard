@@ -2,11 +2,14 @@ import json
 
 from fastapi import APIRouter, HTTPException
 
+from datetime import datetime, timezone
+
 from database import get_connection
 from models import DeteriorationResult, ScreeningCreate, ScreeningResult
 from services.advice_engine import personalised_advice_line
 from services.ai_risk_engine import assess_risk
 from services.deterioration import compare_to_previous, escalate_tier_if_worsened
+from services.outreach import match_active_visit
 from services.referrals import GENERIC_REFERRAL_SHONA_MESSAGE, create_referral_and_notify
 from services.safety_overrides import apply_safety_overrides
 
@@ -22,10 +25,33 @@ def screen_miner(payload: ScreeningCreate):
     conn = get_connection()
     try:
         miner_row = conn.execute(
-            "SELECT id FROM miners WHERE id = ?", (payload.miner_id,)
+            "SELECT id, mine_site FROM miners WHERE id = ?", (payload.miner_id,)
         ).fetchone()
         if miner_row is None:
             raise HTTPException(status_code=404, detail="Miner not found")
+
+        # Outreach Planner (5 August 2026): link this screening to a visit
+        # for live screened_count tracking + the post-visit report. Explicit
+        # id is trusted if it exists (never fail the screening over a bad
+        # reference — same philosophy as "a failed AI call doesn't corrupt
+        # the screening record"); otherwise infer it for APP-channel
+        # screenings via services/outreach.py's match_active_visit. USSD
+        # self-screens never auto-link — not a coordinated site visit.
+        outreach_visit_id = None
+        if payload.outreach_visit_id is not None:
+            visit_row = conn.execute(
+                "SELECT id FROM outreach_visits WHERE id = ?", (payload.outreach_visit_id,)
+            ).fetchone()
+            outreach_visit_id = visit_row["id"] if visit_row else None
+        elif payload.channel == "APP" and miner_row["mine_site"]:
+            candidate_visits = conn.execute(
+                "SELECT * FROM outreach_visits WHERE LOWER(site) = LOWER(?)",
+                (miner_row["mine_site"],),
+            ).fetchall()
+            matched_visit = match_active_visit(
+                miner_row["mine_site"], datetime.now(timezone.utc), candidate_visits
+            )
+            outreach_visit_id = matched_visit["id"] if matched_visit else None
 
         # Most recent prior screening for this worker, if any — just the link;
         # actual trajectory comparison (Longitudinal Deterioration Detection)
@@ -51,8 +77,8 @@ def screen_miner(payload: ScreeningCreate):
 
         cur = conn.execute(
             """INSERT INTO screenings
-                 (miner_id, previous_screening_id, screened_by, channel, fallback_used, provisional)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+                 (miner_id, previous_screening_id, screened_by, channel, fallback_used, provisional, outreach_visit_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 payload.miner_id,
                 previous_screening_id,
@@ -60,9 +86,16 @@ def screen_miner(payload: ScreeningCreate):
                 payload.channel,
                 1 if payload.offline_fallback_used else 0,
                 provisional,
+                outreach_visit_id,
             ),
         )
         screening_id = cur.lastrowid
+
+        if outreach_visit_id is not None:
+            conn.execute(
+                "UPDATE outreach_visits SET screened_count = screened_count + 1 WHERE id = ?",
+                (outreach_visit_id,),
+            )
 
         for answer in payload.answers:
             conn.execute(
