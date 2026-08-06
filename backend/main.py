@@ -26,6 +26,22 @@ async def lifespan(app: FastAPI):
     global scheduler
     init_db()
 
+    # Render's free tier has no persistent disk — the SQLite file resets on
+    # every redeploy and likely every sleep/wake cycle. Rather than silently
+    # deploy with an empty, unseeded DB, re-run the same reproducible demo
+    # dataset used locally (backend/scripts/seed_demo_data.py) on every boot
+    # when this is explicitly turned on. Off by default — this wipes and
+    # reseeds every table the script owns, so it must never run against a
+    # real deployment carrying real screenings. Confirmed decision (6 August
+    # 2026): accept ephemeral storage for the 11 August demo rather than pay
+    # for a persistent disk or migrate to Postgres this close to feature
+    # freeze — see CLAUDE.md's sprint status for the full reasoning.
+    if os.getenv("AUTO_SEED_ON_BOOT", "false").lower() == "true":
+        from scripts.seed_demo_data import seed
+
+        seed()
+        logger.info("AUTO_SEED_ON_BOOT=true — reseeded demo data on startup")
+
     # Smart Referral Router reminder/escalation cascade — an in-process
     # background job, not an external cron (Render free tier gives us no
     # cron and this needs no new infrastructure to demo). Disabled under
