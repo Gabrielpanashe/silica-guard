@@ -5,15 +5,19 @@ reminded/escalated — those last two are seeded explicitly with
 self-consistent timestamps rather than left to the live APScheduler cascade
 to produce, so the demo data is deterministic regardless of when you seed
 relative to when you present), one worker with two screenings (a YELLOW
-followed later by a RED, for demoing the deterioration story), and a starter
-row in the outreach_visits table so there is something to look at even
-though no endpoint reads/writes it yet. (The employers/campaigns tables and
-their seed rows were removed 5 August 2026 — SilicaGuard is
-artisanal-miner-only now, see SILICAGUARD.md Section 13.)
+followed later by a RED, for demoing the deterioration story), and two
+outreach visits: one future-dated with nothing synced yet, one past-dated
+with two linked screenings and report_generated=1 so GET /api/outreach has
+a real populated report to demo, not just an empty shell. (The
+employers/campaigns tables and their seed rows were removed 5 August
+2026 — SilicaGuard is artisanal-miner-only now, see SILICAGUARD.md
+Section 13.)
 
-facilities are seeded FIRST, ahead of referrals, so referrals can carry a
-real facility_id (Smart Referral Router facility matching, 5 August 2026) —
-this is why facilities moved to the top of seed() rather than the bottom.
+facilities AND outreach_visits are seeded FIRST, ahead of screenings/
+referrals, so screenings can carry a real outreach_visit_id and referrals a
+real facility_id (Outreach Planner and Smart Referral Router facility
+matching, both 5 August 2026) — this is why both moved to the top of
+seed() rather than the bottom.
 
 Safe to re-run: clears every table this script owns first, so running it
 twice reproduces the same known state rather than duplicating rows or
@@ -23,7 +27,9 @@ Inserts screenings with pre-computed tiers directly — it does not call the
 live Gemini risk engine, so it needs no GEMINI_API_KEY. It also never calls
 services.notifications, so it needs no Africa's Talking key either;
 referral rows are inserted directly with pre_alert_sent/status set to
-reflect a plausible outcome rather than an actual SMS send.
+reflect a plausible outcome rather than an actual SMS send, and no
+`notifications` audit rows are inserted for the same reason — this script
+simulates end states, not the act of sending.
 
 Usage:
     cd backend
@@ -91,13 +97,14 @@ def _insert_screening(
     screened_by: str,
     created_at: datetime,
     previous_screening_id: int | None = None,
+    outreach_visit_id: int | None = None,
 ) -> int:
     cur = conn.execute(
         """INSERT INTO screenings
            (miner_id, previous_screening_id, screened_by, channel, tier,
             risk_confidence, ai_explanation_english, ai_contributing_factors,
-            provisional, fallback_used, synced, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?)""",
+            provisional, fallback_used, synced, created_at, outreach_visit_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)""",
         (
             miner_id,
             previous_screening_id,
@@ -108,6 +115,7 @@ def _insert_screening(
             explanation_english,
             json.dumps(contributing_factors),
             _iso(created_at),
+            outreach_visit_id,
         ),
     )
     screening_id = cur.lastrowid
@@ -209,7 +217,49 @@ def seed() -> None:
         sherwood_clinic_id = clinic_cur.lastrowid
         sherwood_clinic_name = "Sherwood Clinic"
 
-        # --- Farai Ncube — Sherwood Mine — GREEN, single screening ---
+        # --- Outreach visits, seeded before the screenings below so two of
+        # them can carry a real outreach_visit_id. ---
+        future_visit_cur = conn.execute(
+            "INSERT INTO outreach_visits "
+            "(site, scheduled_date, expected_headcount, screened_count, "
+            "health_workers, report_generated, sms_3day_sent, sms_1day_sent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "Globe & Phoenix Mine",
+                (_now + timedelta(days=13)).strftime("%Y-%m-%d"),
+                40,
+                0,
+                json.dumps(["Grace Chikwanha"]),
+                0,
+                0,
+                0,
+            ),
+        )
+        future_visit_id = future_visit_cur.lastrowid
+
+        # Past visit, already fully processed by the scheduled cascade (both
+        # announcements sent, report ready) — linked screenings below give
+        # GET /api/outreach a real report to show, not an empty shell.
+        past_visit_cur = conn.execute(
+            "INSERT INTO outreach_visits "
+            "(site, scheduled_date, expected_headcount, screened_count, "
+            "health_workers, report_generated, sms_3day_sent, sms_1day_sent) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "Sherwood Mine",
+                (_now - timedelta(days=9)).strftime("%Y-%m-%d"),
+                5,
+                2,
+                json.dumps(["Grace Chikwanha"]),
+                1,
+                1,
+                1,
+            ),
+        )
+        past_visit_id = past_visit_cur.lastrowid
+
+        # --- Farai Ncube — Sherwood Mine — GREEN, single screening, from the
+        # past outreach visit above ---
         farai_id = _insert_worker(conn, "Farai Ncube", "+263771000002", "Sherwood Mine")
         _insert_screening(
             conn,
@@ -222,6 +272,7 @@ def seed() -> None:
             "APP",
             "VHW Grace Chikwanha",
             _now - timedelta(days=12),
+            outreach_visit_id=past_visit_id,
         )
 
         # --- Blessing Sithole — Globe & Phoenix Mine — YELLOW, single screening ---
@@ -317,6 +368,7 @@ def seed() -> None:
             "APP",
             "VHW Grace Chikwanha",
             kuda_created,
+            outreach_visit_id=past_visit_id,
         )
         _insert_referral(
             conn,
@@ -453,21 +505,6 @@ def seed() -> None:
             facility_id=hospital_id,
             facility_name=hospital_name,
             reminder_stage=1,  # the 24h reminder went out before he missed the 48h deadline
-        )
-
-        # --- Outreach starter row (no endpoint reads this yet) ---
-        conn.execute(
-            "INSERT INTO outreach_visits "
-            "(site, scheduled_date, expected_headcount, screened_count, health_workers, report_generated) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "Globe & Phoenix Mine",
-                (_now + timedelta(days=13)).strftime("%Y-%m-%d"),
-                40,
-                0,
-                "Grace Chikwanha",
-                0,
-            ),
         )
 
         conn.commit()
