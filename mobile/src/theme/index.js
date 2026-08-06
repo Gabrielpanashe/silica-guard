@@ -67,32 +67,45 @@ export const radius = {
 };
 
 export const riskConfig = {
-  'Low Risk': {
-    colour:     colours.low,
-    background: 'rgba(2,195,154,0.12)',
-    label:      'LOW RISK',
-    shona:      'HAPANA NJODZI',
-    emoji:      '✅',
-    action:     'No immediate referral needed. Continue education.',
-    actionShona:'Hakuna kutumwa chipatara. Ramba kudzidziswa.',
+  GREEN: {
+    colour:      colours.low,
+    background:  'rgba(2,195,154,0.12)',
+    label:       'LOW RISK',
+    shona:       'HAPANA NJODZI HURU',
+    emoji:       '✅',
+    urgency:     null,
+    action:      'No immediate referral needed. Rescreen in 6 months.',
+    actionShona: 'Hakuna kutumwa chipatara. Dzokera mushure memwedzi 6.',
   },
-  'Watch': {
-    colour:     colours.watch,
-    background: 'rgba(255,184,0,0.12)',
-    label:      'WATCH',
-    shona:      'TARISA',
-    emoji:      '⚠️',
-    action:     'Monitor closely. Schedule follow-up in 3 months.',
-    actionShona:'Tarira zvakanyanya. Gara wakagadzirira kuonekwa mushandi.',
+  YELLOW: {
+    colour:      colours.watch,
+    background:  'rgba(255,184,0,0.12)',
+    label:       'ELEVATED RISK',
+    shona:       'TARISA ZVAKANYANYA',
+    emoji:       '⚠️',
+    urgency:     '3 months',
+    action:      'Monitor closely. Rescreen in 3 months.',
+    actionShona: 'Tarira zvakanyanya. Ongororwa zvakare mumwedzi mitatu.',
   },
-  'Refer Now': {
-    colour:     colours.refer,
-    background: 'rgba(255,59,59,0.12)',
-    label:      'REFER NOW',
-    shona:      'TUMIRA CHIPATARA NHASI',
-    emoji:      '🚨',
-    action:     'Immediate referral to Kwekwe District Hospital required.',
-    actionShona:'Tumira chipatara chino nhasi. Kwekwe District Hospital.',
+  ORANGE: {
+    colour:      '#FF8C00', // Amber/Orange
+    background:  'rgba(255,140,0,0.12)',
+    label:       'HIGH RISK',
+    shona:       'NJODZI YEKUCHIPATARA',
+    emoji:       '🟧',
+    urgency:     '14 days',
+    action:      'Referral recommended within 14 days.',
+    actionShona: 'Enda kuchipatara mumazuva gumi nemana.',
+  },
+  RED: {
+    colour:      colours.refer,
+    background:  'rgba(255,59,59,0.12)',
+    label:       'CRITICAL RISK',
+    shona:       'TUMIRA CHIPATARA NHASI',
+    emoji:       '🚨',
+    urgency:     '48 hours',
+    action:      'Immediate referral to Kwekwe District Hospital required.',
+    actionShona: 'Tumira chipatara nhasi. Kwekwe District Hospital.',
   },
 };
 
