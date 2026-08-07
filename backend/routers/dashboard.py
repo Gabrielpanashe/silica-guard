@@ -1,7 +1,18 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from database import get_connection
-from models import ReferralOut, ReferralStatusUpdate
+from models import (
+    DashboardTodayOut,
+    ReferNowItem,
+    ReferNowSection,
+    ReferralOut,
+    ReferralStatusUpdate,
+    TodaysLogItem,
+    WatchItem,
+    WatchSection,
+)
 from routers.auth import get_current_user
 from services.population_intelligence import generate_weekly_narrative
 
@@ -9,6 +20,10 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 
 _VALID_REFERRAL_STATUSES = {"open", "pre_alerted", "reminded", "attended", "closed", "escalated"}
 _TIERS = ("GREEN", "YELLOW", "ORANGE", "RED")
+# "Refer Now" = a referral that hasn't been resolved yet (attended or closed
+# both mean action was already taken — they drop off this list). Includes
+# 'escalated', which is still more, not less, in need of follow-up.
+_OPEN_REFERRAL_STATUSES = ("open", "pre_alerted", "reminded", "escalated")
 
 
 def _referral_row_to_dict(row) -> dict:
@@ -39,6 +54,88 @@ _REFERRAL_SELECT = """
     JOIN screenings s ON s.id = r.screening_id
     LEFT JOIN facilities f ON f.id = r.facility_id
 """
+
+
+@router.get("/dashboard/today", response_model=DashboardTodayOut)
+def dashboard_today(site: Optional[str] = None):
+    """Powers the mobile Home screen's live numbers (Screened Today / Refer
+    Now / Watch / Today's Log) — previously all hardcoded to 0 client-side.
+    Unauthenticated, same VHW-in-the-field precedent as POST /api/screen and
+    GET /api/workers/{phone} — and the same tradeoff as that route: this
+    returns miner names/phone numbers/tiers without a login, a materially
+    bigger exposure than a write-only route, accepted here for the same
+    reason (a field worker has no dashboard session, and needs to actually
+    call a miner back to follow up).
+
+    'Today' = server UTC calendar date (SQLite's date('now')) — Zimbabwe is
+    UTC+2 (CAT), so a screening in the last ~2 hours before UTC midnight can
+    appear on the 'wrong' day. A known simplification, not a bug — same
+    class of approximation as outreach_visits.report_generated.
+
+    'Refer Now' is a live worklist, not scoped to today — a referral from
+    three days ago that's still open belongs on it; it drops off once its
+    status becomes 'attended' or 'closed', which is how "have they taken
+    action" gets answered by re-polling this endpoint.
+
+    'Watch' = miners whose most recent screening is YELLOW (moderate risk,
+    "watch closely" per services/tier_messages.py) and who never get a
+    referral row at all — so this is sourced from screenings, not referrals.
+    optional ?site= filters all four sections by miners.mine_site
+    (case-insensitive), matching the VHW's current outreach site."""
+    conn = get_connection()
+    try:
+        site_filter = "AND LOWER(m.mine_site) = LOWER(?)" if site else ""
+        site_args = (site,) if site else ()
+
+        todays_log_rows = conn.execute(
+            f"""SELECT s.id AS screening_id, m.name AS miner_name, m.phone,
+                       m.mine_site, s.tier, s.created_at
+                FROM screenings s
+                JOIN miners m ON m.id = s.miner_id
+                WHERE date(s.created_at) = date('now') {site_filter}
+                ORDER BY s.created_at DESC""",
+            site_args,
+        ).fetchall()
+        todays_log = [TodaysLogItem(**dict(row)) for row in todays_log_rows]
+
+        refer_now_rows = conn.execute(
+            f"""SELECT r.id AS referral_id, m.name AS miner_name, m.phone,
+                       m.mine_site, s.tier, r.status, r.deadline
+                FROM referrals r
+                JOIN miners m ON m.id = r.miner_id
+                JOIN screenings s ON s.id = r.screening_id
+                WHERE r.status IN ({",".join("?" * len(_OPEN_REFERRAL_STATUSES))})
+                {site_filter}
+                ORDER BY r.deadline ASC""",
+            (*_OPEN_REFERRAL_STATUSES, *site_args),
+        ).fetchall()
+        refer_now_items = [ReferNowItem(**dict(row)) for row in refer_now_rows]
+
+        watch_rows = conn.execute(
+            f"""SELECT s.id AS screening_id, m.name AS miner_name, m.phone,
+                       m.mine_site, s.tier, s.created_at
+                FROM screenings s
+                JOIN miners m ON m.id = s.miner_id
+                WHERE s.tier = 'YELLOW'
+                  AND s.id = (
+                      SELECT s2.id FROM screenings s2
+                      WHERE s2.miner_id = m.id
+                      ORDER BY s2.created_at DESC, s2.id DESC LIMIT 1
+                  )
+                  {site_filter}
+                ORDER BY s.created_at DESC""",
+            site_args,
+        ).fetchall()
+        watch_items = [WatchItem(**dict(row)) for row in watch_rows]
+
+        return DashboardTodayOut(
+            screened_today=len(todays_log),
+            todays_log=todays_log,
+            refer_now=ReferNowSection(count=len(refer_now_items), items=refer_now_items),
+            watch=WatchSection(count=len(watch_items), items=watch_items),
+        )
+    finally:
+        conn.close()
 
 
 @router.get("/dashboard/week")

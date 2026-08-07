@@ -8,6 +8,109 @@ def _login(client, email="hospital@silicaguard.health", password="hospital123"):
     return resp.json()["access_token"]
 
 
+def _register(client, phone, site="Test Site"):
+    resp = client.post(
+        "/api/workers", json={"name": f"Worker {phone[-3:]}", "phone": phone, "site": site}
+    )
+    return resp.json()["id"]
+
+
+def _screen(client, miner_id, result):
+    with patch("routers.screening.assess_risk", return_value=result):
+        return client.post(
+            "/api/screen",
+            json={
+                "miner_id": miner_id,
+                "answers": [
+                    {"question_code": f"Q{i}", "answer_value": "x", "answer_score": 1}
+                    for i in range(10)
+                ],
+                "channel": "APP",
+            },
+        ).json()
+
+
+def test_dashboard_today_unauthenticated(client):
+    resp = client.get("/api/dashboard/today")
+    assert resp.status_code != 401
+
+
+def test_dashboard_today_empty(client):
+    resp = client.get("/api/dashboard/today")
+    body = resp.json()
+    assert body["screened_today"] == 0
+    assert body["todays_log"] == []
+    assert body["refer_now"] == {"count": 0, "items": []}
+    assert body["watch"] == {"count": 0, "items": []}
+
+
+def test_dashboard_today_counts_screening_and_refer_now(client):
+    miner_id = _register(client, "+263791000001")
+    _screen(
+        client,
+        miner_id,
+        {"tier": "RED", "confidence": 0.9, "contributing_factors": ["x"], "explanation_english": "x"},
+    )
+
+    body = client.get("/api/dashboard/today").json()
+    assert body["screened_today"] == 1
+    assert len(body["todays_log"]) == 1
+    assert body["todays_log"][0]["phone"] == "+263791000001"
+    assert body["refer_now"]["count"] == 1
+    assert body["refer_now"]["items"][0]["tier"] == "RED"
+    assert body["refer_now"]["items"][0]["phone"] == "+263791000001"
+
+
+def test_dashboard_today_watch_reflects_yellow_tier(client):
+    miner_id = _register(client, "+263791000002")
+    _screen(
+        client,
+        miner_id,
+        {"tier": "YELLOW", "confidence": 0.8, "contributing_factors": ["x"], "explanation_english": "x"},
+    )
+
+    body = client.get("/api/dashboard/today").json()
+    assert body["watch"]["count"] == 1
+    assert body["watch"]["items"][0]["tier"] == "YELLOW"
+    assert body["refer_now"]["count"] == 0  # YELLOW never creates a referral
+
+
+def test_dashboard_today_referral_drops_off_after_attended(client):
+    miner_id = _register(client, "+263791000003")
+    _screen(
+        client,
+        miner_id,
+        {"tier": "RED", "confidence": 0.9, "contributing_factors": ["x"], "explanation_english": "x"},
+    )
+    body = client.get("/api/dashboard/today").json()
+    referral_id = body["refer_now"]["items"][0]["referral_id"]
+
+    token = _login(client)
+    client.patch(
+        f"/api/referrals/{referral_id}",
+        json={"status": "attended"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    body = client.get("/api/dashboard/today").json()
+    assert body["refer_now"]["count"] == 0  # taken action -> off the worklist
+
+
+def test_dashboard_today_site_filter(client):
+    a = _register(client, "+263791000004", site="Site A")
+    _register(client, "+263791000005", site="Site B")
+    _screen(
+        client, a,
+        {"tier": "GREEN", "confidence": 0.9, "contributing_factors": ["x"], "explanation_english": "x"},
+    )
+
+    body = client.get("/api/dashboard/today", params={"site": "site a"}).json()
+    assert body["screened_today"] == 1
+
+    body = client.get("/api/dashboard/today", params={"site": "Site B"}).json()
+    assert body["screened_today"] == 0
+
+
 def test_dashboard_requires_auth(client):
     resp = client.get("/api/dashboard/week")
     assert resp.status_code == 401

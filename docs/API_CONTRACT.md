@@ -104,6 +104,39 @@ Look up a worker by phone number, returning their full screening history — thi
 
 ---
 
+## Mines
+
+### `GET /api/mines` — LIVE (7 August 2026)
+
+Powers the VHW's outreach-site dropdown on the mobile app (previously a hardcoded free-text default). **Unauthenticated**, same field-worker precedent as `POST /api/workers`.
+
+**Response 200**
+```json
+[
+  { "id": 1, "name": "Globe & Phoenix Mine", "district": "Kwekwe", "province": "Midlands" },
+  { "id": 6, "name": "Mimosa Mine", "district": "Zvishavane", "province": "Midlands" }
+]
+```
+Ordered by `district`, then `name`. Seeded with 11 Midlands mines (`backend/scripts/seed_demo_data.py`) — illustrative names for the demo, not verified real-world data.
+
+**Deliberately not a foreign key target**: `miners.mine_site` and `outreach_visits.site` both stay free `TEXT`, not `mines.id` — this table is a curated suggestion list for the dropdown, not a hard schema constraint. A full migration tying the two together was judged too risky this close to feature freeze.
+
+### `POST /api/mines` — LIVE (7 August 2026)
+
+For the case where a VHW's site genuinely isn't in the list yet. Unauthenticated.
+
+**Request**
+```json
+{ "name": "New Mine", "district": "Gweru", "province": "Midlands" }
+```
+`province` defaults to `"Midlands"` if omitted.
+
+**Response 201**: same shape as a `GET /api/mines` item.
+
+**Errors**: `409` if `name` is already registered.
+
+---
+
 ## Screening
 
 ### `POST /api/screen` — LIVE (four-tier)
@@ -299,6 +332,40 @@ Every SMS sent by the backend (screening result, hospital pre-alert, referral re
 
 ## Dashboard
 
+### `GET /api/dashboard/today` — LIVE (7 August 2026)
+
+**Unauthenticated** — same deliberate precedent as `POST /api/screen` and `GET /api/workers/{phone}` (a VHW in the field has no dashboard login), and the same tradeoff as that route: returns miner names/phone numbers/tiers without a login, flagged for the same reason it's flagged there. Powers the mobile Home screen's live numbers (previously all hardcoded to 0 client-side): Screened Today, Refer Now, Watch, Today's Log.
+
+Optional query param `?site=<name>` (case-insensitive exact match against `miners.mine_site`) scopes every section to one outreach site.
+
+**Response 200**
+```json
+{
+  "screened_today": 3,
+  "todays_log": [
+    { "screening_id": 41, "miner_name": "Tendai T", "phone": "+263776877873", "mine_site": "Globe & Phoenix Mine", "tier": "RED", "created_at": "2026-08-07 10:33:51" }
+  ],
+  "refer_now": {
+    "count": 2,
+    "items": [
+      { "referral_id": 7, "miner_name": "Tendai T", "phone": "+263776877873", "mine_site": "Globe & Phoenix Mine", "tier": "RED", "status": "pre_alerted", "deadline": "2026-08-09 10:33:56" }
+    ]
+  },
+  "watch": {
+    "count": 1,
+    "items": [
+      { "screening_id": 39, "miner_name": "Blessing Sithole", "phone": "+263771000003", "mine_site": "Globe & Phoenix Mine", "tier": "YELLOW", "created_at": "2026-07-18 11:48:55" }
+    ]
+  }
+}
+```
+
+`screened_today` / `todays_log` = screenings whose `created_at` falls on the server's current UTC calendar date — Zimbabwe is UTC+2 (CAT), so a screening in the ~2 hours before UTC midnight can land on the "wrong" day. A known simplification, same class as `outreach_visits.report_generated`.
+
+`refer_now` is a **live worklist, not scoped to today** — any referral with `status` in `open`/`pre_alerted`/`reminded`/`escalated`. It drops off once `PATCH /api/referrals/{id}` sets `status` to `attended` or `closed` — that's how "have they taken action" gets answered by re-polling this endpoint, using the contact details already in each item.
+
+`watch` = miners whose **most recent** screening (not just any screening) is `YELLOW` — YELLOW never creates a referral, so this is sourced from `screenings`, not `referrals`. A miner whose YELLOW screening was later superseded by a re-screen of any tier drops off this list.
+
 ### `GET /api/dashboard/week` — LIVE (Population Health Intelligence)
 
 Requires `Authorization: Bearer <token>`.
@@ -333,9 +400,11 @@ Requires `Authorization: Bearer <token>`.
 | `/api/auth/me` | GET | LIVE (dev helper) |
 | `/api/workers` | POST | LIVE |
 | `/api/workers/{phone}` | GET | LIVE |
+| `/api/mines` | GET, POST | LIVE |
 | `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line + Shona explanation, result SMS for all four tiers) |
 | `/api/ussd` | POST | LIVE (four-tier) |
 | `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |
 | `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |
 | `/api/outreach` | POST, GET | LIVE |
+| `/api/dashboard/today` | GET | LIVE (unauthenticated, VHW Home-screen numbers) |
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |

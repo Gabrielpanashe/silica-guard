@@ -117,3 +117,61 @@ class OutreachVisitOut(BaseModel):
     report_generated: bool
     tier_distribution: Optional[dict] = None
     referral_list: Optional[List[ReferralListItem]] = None
+
+
+class MineCreate(BaseModel):
+    name: str
+    district: Optional[str] = None
+    province: str = "Midlands"
+
+
+class MineOut(BaseModel):
+    id: int
+    name: str
+    district: Optional[str] = None
+    province: str
+
+
+class TodaysLogItem(BaseModel):
+    screening_id: int
+    miner_name: str
+    phone: str
+    mine_site: Optional[str] = None
+    tier: Optional[str] = None
+    created_at: str
+
+
+class ReferNowItem(BaseModel):
+    referral_id: int
+    miner_name: str
+    phone: str
+    mine_site: Optional[str] = None
+    tier: str
+    status: str
+    deadline: Optional[str] = None
+
+
+class WatchItem(BaseModel):
+    screening_id: int
+    miner_name: str
+    phone: str
+    mine_site: Optional[str] = None
+    tier: str
+    created_at: str
+
+
+class ReferNowSection(BaseModel):
+    count: int
+    items: List[ReferNowItem]
+
+
+class WatchSection(BaseModel):
+    count: int
+    items: List[WatchItem]
+
+
+class DashboardTodayOut(BaseModel):
+    screened_today: int
+    todays_log: List[TodaysLogItem]
+    refer_now: ReferNowSection
+    watch: WatchSection
