@@ -1,12 +1,10 @@
 // ─────────────────────────────────────────────────────────────
 //  SilicaGuard API Service
 //  Source of truth: docs/api-contract.md in the backend repo
-//  Switch BASE_URL to Render URL once Panashe deploys (Day 7)
 // ─────────────────────────────────────────────────────────────
 
 // ── CONFIG ────────────────────────────────────────────────────
-const BASE_URL = 'http://127.0.0.1:8000';
-// TODO Day 7: replace with → 'https://silica-guard.onrender.com'
+const BASE_URL = 'https://silicaguard-backend.onrender.com';
 
 // In-memory token store (replace with SecureStore in production)
 let _token = null;
@@ -64,27 +62,38 @@ export const clearToken = () => { _token = null; };
 // ── WORKERS ───────────────────────────────────────────────────
 /**
  * Register a new miner before their first screening.
- * Currently live as POST /api/miners — will rename to /api/workers.
+ * POST /api/workers
  *
  * @param {object} worker
  *   name       string  — full name
  *   phone      string  — "+263771234567" (unique identifier)
  *   mine_site  string  — e.g. "Globe & Phoenix Mine"
  *
- * Response: { id, name, phone, mine_site }
+ * Response: { id, name, phone, site }
  * Error 409: phone already registered
  */
 export const registerWorker = async ({ name, phone, mine_site }) => {
-  const res = await fetch(`${BASE_URL}/api/miners`, {
+  const res = await fetch(`${BASE_URL}/api/workers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, phone, mine_site }),
+    body: JSON.stringify({ name, phone, site: mine_site }),
   });
   return handleResponse(res);
 };
 
-// TARGET — not built yet, don't call this until Panashe ships it
-// export const getWorkerByPhone = async (phone) => { ... }
+/**
+ * Look up an existing worker by phone.
+ * GET /api/workers/{phone}
+ *
+ * Response: { id, name, phone, site, screenings: [...] }
+ * Error 404: phone not registered
+ */
+export const getWorkerByPhone = async (phone) => {
+  const res = await fetch(`${BASE_URL}/api/workers/${phone}`, {
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return handleResponse(res);
+};
 
 // ── SCREENING ─────────────────────────────────────────────────
 /**
@@ -92,7 +101,7 @@ export const registerWorker = async ({ name, phone, mine_site }) => {
  * POST /api/screen
  *
  * @param {object} payload
- *   miner_id              number   — from registerWorker response
+ *   miner_id              number   — from registerWorker/getWorkerByPhone response
  *   answers               array    — see shape below
  *   screened_by           string   — VHW name
  *   offline_fallback_used boolean  — true if AI was unavailable

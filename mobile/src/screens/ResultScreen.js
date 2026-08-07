@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius, riskConfig } from '../theme';
 import { offlineScore } from './QuestionScreen';
-import { registerWorker, submitScreening } from '../services/api';
+import { registerWorker, getWorkerByPhone, submitScreening } from '../services/api';
 
 export default function ResultScreen({ navigation, route }) {
   const { miner, answers } = route.params;
@@ -20,70 +20,87 @@ export default function ResultScreen({ navigation, route }) {
   const runScreening = async () => {
     setLoading(true);
     try {
-      // Step 1: Register miner (409 = already exists, that's fine)
+      // Step 1: Register miner (409 = already exists — look them up instead)
       let minerId;
       try {
         const worker = await registerWorker({
-          name:      miner.name,
-          phone:     miner.phone,
+          name: miner.name,
+          phone: miner.phone,
           mine_site: miner.mine_site,
         });
         minerId = worker.id;
       } catch (e) {
-        // Worker already registered — still need their ID
-        // TODO: call GET /api/workers/{phone} when Panashe ships it
-        // For now fall through to offline
-        throw new Error('worker_lookup_not_available');
+        const msg = e.message?.toLowerCase() || "";
+        if (msg.includes("already registered") || msg.includes("409")) {
+          const existing = await getWorkerByPhone(miner.phone);
+          minerId = existing.id;
+        } else {
+          throw e; // genuine failure — fall through to offline, as today
+        }
       }
 
       // Step 2: Submit screening to backend
-      const screening = await submitScreening({
-        miner_id:             minerId,
-        answers,
-        screened_by:          'VHW',
-        offline_fallback_used: false,
-      });
+      let screening;
+      try {
+        screening = await submitScreening({
+          miner_id: minerId,
+          answers,
+          screened_by: "VHW",
+          offline_fallback_used: false,
+        });
+      } catch (e) {
+        console.warn("Registration/lookup succeeded but submitScreening failed:", e.message);
+        throw e;
+      }
 
       setResult({
-        tier:                 screening.tier,
-        confidence:           screening.confidence,
-        explanation_english:  screening.explanation_english,
-        explanation_shona:    screening.explanation_shona || 'Ongorora mhinduro nenguva.',
+        tier: screening.tier,
+        confidence: screening.confidence,
+        explanation_english: screening.explanation_english,
+        explanation_shona:
+          screening.explanation_shona || "Ongorora mhinduro nenguva.",
         contributing_factors: screening.contributing_factors || [],
-        advice_line:          screening.advice_line,
-        provisional:          screening.provisional,
+        advice_line: screening.advice_line,
+        provisional: screening.provisional,
         previous_screening_id: screening.previous_screening_id,
       });
       setOffline(false);
-
     } catch (err) {
-      console.warn('Backend unavailable, using offline score:', err.message);
-      // Offline fallback — includes safety overrides
-      const { tier, total, provisional } = offlineScore(answers);
+      console.warn("Backend unavailable, using offline score:", err.message);
+      const scored = offlineScore(answers);
+      const tier = scored?.tier || "GREEN";
+      const total = scored?.total || 0;
+
       setResult({
         tier,
-        confidence:          0.75,
+        confidence: 0.75,
         explanation_english: `Offline assessment. Combined score: ${total}. ${
-          tier === 'GREEN'  ? 'Low silicosis risk detected.' :
-          tier === 'YELLOW' ? 'Elevated exposure — monitor closely.' :
-          tier === 'ORANGE' ? 'High risk — referral recommended within 14 days.' :
-                              'Critical risk — immediate referral required within 48 hours.'
+          tier === "GREEN"
+            ? "Low silicosis risk detected."
+            : tier === "YELLOW"
+              ? "Elevated exposure — monitor closely."
+              : tier === "ORANGE"
+                ? "High risk — referral recommended within 14 days."
+                : "Critical risk — immediate referral required within 48 hours."
         }`,
-        explanation_shona: (
-          tier === 'RED'    ? 'Njodzi huru — enda kuchipatara nhasi. Kwekwe District Hospital.' :
-          tier === 'ORANGE' ? 'Njodzi — enda kuchipatara mumazuva gumi nemana.' :
-          tier === 'YELLOW' ? 'Tarira zvakanyanya. Dzokera kuongorwa mushure memwedzi mitatu.' :
-                              'Hapana njodzi huru. Ramba uchidzidziswa nezve utano.'
-        ),
+        explanation_shona:
+          tier === "RED"
+            ? "Njodzi huru — enda kuchipatara nhasi."
+            : tier === "ORANGE"
+              ? "Njodzi — enda kuchipatara mumazuva gumi nemana."
+              : tier === "YELLOW"
+                ? "Tarira zvakanyanya. Dzokera kuongorwa mushure memwedzi mitatu."
+                : "Hapana njodzi huru. Ramba uchidzidziswa nezve utano.",
         contributing_factors: [
           `Total score: ${total}`,
-          'Assessed using offline algorithm (backend unavailable)',
-          'Safety overrides applied',
+          "Assessed using offline algorithm",
+          "Safety overrides applied",
         ],
-        advice_line: tier === 'RED' || tier === 'ORANGE'
-          ? 'Report to Kwekwe District Hospital immediately.'
-          : 'Continue wearing N95 respirator. Return for rescreening in 6 months.',
-        provisional,
+        advice_line:
+          tier === "RED" || tier === "ORANGE"
+            ? "Report to Kwekwe District Hospital immediately."
+            : "Continue wearing N95 respirator. Return for rescreening in 6 months.",
+        provisional: true,
       });
       setOffline(true);
     } finally {
@@ -106,7 +123,9 @@ export default function ResultScreen({ navigation, route }) {
   }
 
   if (!result) return null;
-  const config = riskConfig[result.tier] || riskConfig['GREEN'];
+  const tier = result?.tier;
+  const config =
+    tier && riskConfig[tier] ? riskConfig[tier] : riskConfig["GREEN"];
 
   return (
     <SafeAreaView style={s.root}>
