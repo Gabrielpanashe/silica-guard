@@ -6,6 +6,7 @@ import {
 import { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius } from '../theme';
+import MineSitePicker from '../components/MineSitePicker';
 
 export default function IntakeScreen({ navigation }) {
   const [name, setName]         = useState('');
@@ -98,12 +99,7 @@ export default function IntakeScreen({ navigation }) {
           {/* Mine Site */}
           <View style={s.field}>
             <Text style={s.fieldLabel}>Mine Site</Text>
-            <TextInput
-              style={s.input}
-              value={mineSite}
-              onChangeText={setMineSite}
-              autoCapitalize="words"
-            />
+            <MineSitePicker value={mineSite} onChange={setMineSite} />
           </View>
 
           {/* Info card */}

@@ -48,15 +48,21 @@ export default function ReferralScreen({ navigation, route }) {
         showsVerticalScrollIndicator={false}
       >
 
-        {/* ── PRE-ALERT CONFIRMATION ── */}
+        {/* ── PRE-ALERT CONFIRMATION ──
+            Softer, accurate copy — this screen makes no network call of its
+            own, so it can't actually confirm delivery. The real pre-alert
+            SMS already fired server-side at screening time (see
+            services/referrals.create_referral_and_notify in the backend);
+            this banner describes that automatic behaviour rather than
+            asserting a live confirmation this screen never checked. */}
         <View style={[s.alertBanner, { borderColor: config.colour, backgroundColor: config.background }]}>
           <Text style={s.alertIcon}>🏥</Text>
           <View style={s.alertText}>
             <Text style={[s.alertTitle, { color: config.colour }]}>
-              Kwekwe District Hospital Notified
+              Referral Recorded
             </Text>
             <Text style={s.alertSub}>
-              Pre-alert sent · {new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} today
+              SilicaGuard automatically pre-alerts the hospital when this screening is submitted.
             </Text>
           </View>
         </View>
