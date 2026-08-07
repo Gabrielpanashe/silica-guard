@@ -6,12 +6,15 @@ from datetime import datetime, timezone
 
 from database import get_connection
 from models import DeteriorationResult, ScreeningCreate, ScreeningResult
+from services import notifications
 from services.advice_engine import personalised_advice_line
 from services.ai_risk_engine import assess_risk
 from services.deterioration import compare_to_previous, escalate_tier_if_worsened
+from services.explanation_shona import personalised_explanation_shona
 from services.outreach import match_active_visit
-from services.referrals import GENERIC_REFERRAL_SHONA_MESSAGE, create_referral_and_notify
+from services.referrals import create_referral_and_notify
 from services.safety_overrides import apply_safety_overrides
+from services.tier_messages import TIER_MESSAGES
 
 router = APIRouter(prefix="/api", tags=["screening"])
 
@@ -131,17 +134,19 @@ def screen_miner(payload: ScreeningCreate):
         result = apply_safety_overrides(payload.answers, result)
 
         advice_line = personalised_advice_line(payload.answers)
+        explanation_shona = personalised_explanation_shona(payload.answers)
 
         conn.execute(
             """UPDATE screenings SET
                  tier = ?, risk_confidence = ?,
-                 ai_explanation_english = ?, ai_contributing_factors = ?,
+                 ai_explanation_english = ?, ai_explanation_shona = ?, ai_contributing_factors = ?,
                  advice_line = ?
                WHERE id = ?""",
             (
                 result["tier"],
                 result["confidence"],
                 result["explanation_english"],
+                explanation_shona,
                 json.dumps(result["contributing_factors"]),
                 advice_line,
                 screening_id,
@@ -149,11 +154,17 @@ def screen_miner(payload: ScreeningCreate):
         )
         conn.commit()
 
+        # Result notification, per tier (CLAUDE.md: "Everyone receives their
+        # result... by SMS"). ORANGE/RED go through create_referral_and_notify
+        # (referral + facility match + hospital pre-alert + miner SMS);
+        # GREEN/YELLOW never get a referral but still get a result-only SMS —
+        # see services/notifications.send_screening_result_sms.
+        shona_message = TIER_MESSAGES[result["tier"]][0]
+        miner = conn.execute(
+            "SELECT name, phone, mine_site FROM miners WHERE id = ?",
+            (payload.miner_id,),
+        ).fetchone()
         if result["tier"] in ("ORANGE", "RED"):
-            miner = conn.execute(
-                "SELECT name, phone, mine_site FROM miners WHERE id = ?",
-                (payload.miner_id,),
-            ).fetchone()
             create_referral_and_notify(
                 conn,
                 screening_id=screening_id,
@@ -162,14 +173,19 @@ def screen_miner(payload: ScreeningCreate):
                 phone_number=miner["phone"],
                 mine_site=miner["mine_site"],
                 tier=result["tier"],
-                shona_message=GENERIC_REFERRAL_SHONA_MESSAGE,
+                shona_message=shona_message,
                 contributing_factors=result["contributing_factors"],
+            )
+        else:
+            notifications.send_screening_result_sms(
+                payload.miner_id, miner["phone"], result["tier"], shona_message
             )
 
         return ScreeningResult(
             tier=result["tier"],
             confidence=result["confidence"],
             explanation_english=result["explanation_english"],
+            explanation_shona=explanation_shona,
             contributing_factors=result["contributing_factors"],
             advice_line=advice_line,
             previous_screening_id=previous_screening_id,

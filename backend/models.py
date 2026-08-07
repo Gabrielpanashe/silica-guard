@@ -57,6 +57,7 @@ class ScreeningResult(BaseModel):
     tier: str
     confidence: float
     explanation_english: str
+    explanation_shona: str
     contributing_factors: List[str]
     advice_line: Optional[str] = None
     previous_screening_id: Optional[int] = None

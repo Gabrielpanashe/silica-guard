@@ -100,6 +100,21 @@ def send_miner_result(worker_id: int, phone_number: str, tier: str, shona_messag
     return ok
 
 
+def send_screening_result_sms(worker_id: int, phone_number: str, tier: str, shona_message: str) -> bool:
+    """Result-only SMS for GREEN/YELLOW screenings, which never trigger a
+    referral (see services/referrals.create_referral_and_notify's
+    ORANGE/RED-only gate). Deliberately a separate function from
+    send_miner_result rather than a reuse with different inputs — that
+    function's body always ends with "Show this message to the nurse when
+    you arrive", which is wrong here: there is no facility visit to show it
+    at. Added 7 August 2026 so every tier gets an SMS, per CLAUDE.md's
+    project identity: "Everyone receives their result... by SMS.\""""
+    body = f"SilicaGuard: {shona_message}"
+    ok = _send_sms(phone_number, body)
+    _log_notification(worker_id, "screening_result", body, "sent" if ok else "failed")
+    return ok
+
+
 def send_hospital_prealert(
     worker_id: int,
     miner_name: str,

@@ -31,6 +31,9 @@ def _mock_notifications(monkeypatch):
     anyway. Every test gets this mocked automatically."""
     monkeypatch.setattr(notifications, "send_miner_result", lambda *a, **k: None)
     monkeypatch.setattr(
+        notifications, "send_screening_result_sms", lambda *a, **k: True
+    )
+    monkeypatch.setattr(
         notifications, "send_hospital_prealert", lambda *a, **k: True
     )
     monkeypatch.setattr(

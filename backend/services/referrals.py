@@ -15,16 +15,6 @@ _URGENCY_WINDOW = {
 
 _DEFAULT_HOSPITAL_NAME = "Kwekwe District Hospital"
 
-# The AI Risk Engine (/api/screen) is English-only (see CLAUDE.md) so it has
-# no Shona of its own to relay to the miner. Rather than invent new Shona
-# text, reuse the doctor-approved fixed high-risk message from the USSD
-# decision tree (services/ussd_handler.py) as a generic "you're being
-# referred" SMS for any AI-triggered referral that didn't come through USSD
-# itself (which already has its own Shona message).
-GENERIC_REFERRAL_SHONA_MESSAGE = (
-    "Zvakafanana nemamiriro ane njodzi. Enda kuchipatara Kwekwe nhasi kuti upiwe X-ray."
-)
-
 
 def create_referral_and_notify(
     conn,

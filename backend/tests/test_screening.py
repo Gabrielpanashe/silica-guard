@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import database
+from services import notifications
 
 FAKE_RESULT = {
     "tier": "YELLOW",
@@ -116,6 +117,63 @@ def test_screen_response_carries_advice_line_and_deterioration(client):
     assert body["advice_line"]  # non-negotiable rule: never absent
     assert body["deterioration"]["compared_to_screening_id"] is None
     assert body["deterioration"]["changed"] is False
+
+
+def test_screen_response_carries_explanation_shona(client):
+    miner_id = _register_miner(client, phone="+263700000018")
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        resp = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "APP"},
+        )
+
+    body = resp.json()
+    assert body["explanation_shona"]  # never absent, same guarantee as advice_line
+
+
+def test_green_tier_sends_screening_result_sms_not_referral(client):
+    miner_id = _register_miner(client, phone="+263700000019")
+    green_result = {**FAKE_RESULT, "tier": "GREEN"}
+
+    with patch("routers.screening.assess_risk", return_value=green_result), \
+         patch.object(notifications, "send_screening_result_sms", return_value=True) as mock_sms:
+        resp = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "APP"},
+        )
+
+    assert resp.status_code == 200
+    mock_sms.assert_called_once()
+    args = mock_sms.call_args[0]
+    assert args[0] == miner_id
+    assert args[2] == "GREEN"
+    # No referral should be created for GREEN.
+    conn = database.get_connection()
+    try:
+        referral = conn.execute(
+            "SELECT 1 FROM referrals WHERE miner_id = ?", (miner_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert referral is None
+
+
+def test_red_tier_does_not_call_screening_result_sms_directly(client):
+    """RED goes through create_referral_and_notify's own SMS (send_miner_result),
+    not the GREEN/YELLOW-only send_screening_result_sms path."""
+    miner_id = _register_miner(client, phone="+263700000020")
+    red_result = {**FAKE_RESULT, "tier": "RED"}
+
+    with patch("routers.screening.assess_risk", return_value=red_result), \
+         patch.object(notifications, "send_screening_result_sms", return_value=True) as mock_sms:
+        resp = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "APP"},
+        )
+
+    assert resp.status_code == 200
+    mock_sms.assert_not_called()
 
 
 def test_screen_hard_red_flag_overrides_ai_tier_even_when_ai_says_green(client):

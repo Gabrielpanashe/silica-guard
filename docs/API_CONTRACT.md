@@ -130,6 +130,7 @@ Look up a worker by phone number, returning their full screening history — thi
   "tier": "YELLOW",
   "confidence": 0.82,
   "explanation_english": "Significant drilling exposure with no symptoms yet...",
+  "explanation_shona": "Une njodzi yakati wandei nokuda kwemakore ako ekushanda pasi pevhu.",
   "contributing_factors": ["10+ years underground", "inconsistent PPE use"],
   "advice_line": "Wear your N95 mask every time you drill or crush, not just sometimes.",
   "previous_screening_id": 88,
@@ -146,13 +147,15 @@ Look up a worker by phone number, returning their full screening history — thi
 
 `tier` is one of `GREEN`, `YELLOW`, `ORANGE`, `RED` (Phase A schema migration, previously 3-tier `LOW`/`WATCH`/`REFER_NOW`). `previous_screening_id` links to this worker's most recent prior screening if one exists. `provisional` mirrors `offline_fallback_used` from the request.
 
-`advice_line` is now always populated (non-negotiable rule: every result must carry one) — a fixed, clinician-**pending** sentence selected from the miner's single weakest answer (`backend/services/advice_engine.py`). **The copy is draft, not yet Clinical-Lead-signed-off** — do not treat the exact wording as final, and there is no `explanation_shona`/Shona advice text yet.
+`advice_line` is now always populated (non-negotiable rule: every result must carry one) — a fixed, clinician-**pending** sentence selected from the miner's single weakest answer (`backend/services/advice_engine.py`). **The copy is draft, not yet Clinical-Lead-signed-off** — do not treat the exact wording as final.
+
+`explanation_shona` (**LIVE as of 7 August 2026**, previously TARGET-only) is now always populated too, using the same mechanism and the same weakest-answer selection as `advice_line` (`backend/services/explanation_shona.py`) — a fixed, template-bound Shona sentence, not an AI-generated translation. **Also draft, not yet Clinical-Lead-signed-off.**
 
 `deterioration` is now always present (`backend/services/deterioration.py`): `compared_to_screening_id` is `null` with `changed: false` and an explicit "no previous screening" summary when this is the worker's first screening; otherwise `changed` is `true` if any tracked symptom/exposure answer (`COUGH_DURATION`, `BREATHLESSNESS`, `CHEST_PAIN`, `WEIGHT_LOSS`, `PPE_USE`, `WET_DRILLING`) scored higher than on the previous screening. Any deterioration escalates `tier` one level versus what the AI alone would have returned — this can move a screening into `ORANGE`/`RED` referral territory even when this screening's own answers wouldn't have triggered a referral.
 
 **Hard safety overrides** (`backend/services/safety_overrides.py`) are now enforced in Python, after the AI call, before this response is built — a `severe` value on `BREATHLESSNESS` or `CHEST_PAIN`, a `current` value on `TB_HISTORY`, or a `yes` value on `PRIOR_LUNG_DIAGNOSIS` always forces `tier: "RED"` regardless of what the AI model returned. Applied after deterioration escalation, so nothing can downgrade a safety-triggered RED.
 
-**Still TARGET, not in this response yet**: `explanation_shona`.
+**Result SMS, every tier (7 August 2026)**: `ORANGE`/`RED` results go through `services/referrals.create_referral_and_notify` (referral + facility match + hospital pre-alert + miner SMS, via `send_miner_result`). `GREEN`/`YELLOW` results now also send the miner a result SMS (`services/notifications.send_screening_result_sms`) — previously they sent nothing at all, silently contradicting CLAUDE.md's "everyone receives their result... by SMS." The SMS text for a given tier is the same fixed message the USSD self-screen path uses (`backend/services/tier_messages.py`, shared by both channels as of this change — previously the AI-driven path used one generic ORANGE-flavored message for both ORANGE and RED referrals; RED now gets RED-specific wording).
 
 ### `POST /api/ussd` — LIVE
 
@@ -330,7 +333,7 @@ Requires `Authorization: Bearer <token>`.
 | `/api/auth/me` | GET | LIVE (dev helper) |
 | `/api/workers` | POST | LIVE |
 | `/api/workers/{phone}` | GET | LIVE |
-| `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line) |
+| `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line + Shona explanation, result SMS for all four tiers) |
 | `/api/ussd` | POST | LIVE (four-tier) |
 | `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |
 | `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |

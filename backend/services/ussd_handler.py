@@ -2,7 +2,9 @@ from typing import Dict, List, Tuple
 
 from database import get_connection
 from questions import SCREENING_QUESTIONS
+from services import notifications
 from services.referrals import create_referral_and_notify
+from services.tier_messages import TIER_MESSAGES
 
 # Session state as a plain dict, keyed by Africa's Talking's sessionId — no Redis
 # for MVP. A session that's abandoned mid-flow (miner hangs up) leaks its entry
@@ -43,11 +45,12 @@ def _classify(answers: List[dict]) -> Tuple[str, str, str]:
     score>=12 branches map 1:1 onto the pre-v4.0 REFER_NOW logic, now split
     into RED (a hard safety trigger fired) vs ORANGE (score alone crossed
     the threshold, no trigger) rather than one merged bucket — see
-    services/referrals.py for the same RED/ORANGE urgency split. All four
-    messages below are reused verbatim from the pre-v4.0 doctor-approved
-    text, not reworded; the ORANGE message in particular still reads as
-    urgent ("today") inherited from the old REFER_NOW copy and should get an
-    explicit Clinical Lead pass for its new 14-day-window tier."""
+    services/referrals.py for the same RED/ORANGE urgency split. Message
+    text comes from services/tier_messages.py (shared with the AI-driven
+    /api/screen path, 7 August 2026); the ORANGE message in particular still
+    reads as urgent ("today") inherited from the old REFER_NOW copy and
+    should get an explicit Clinical Lead pass for its new 14-day-window
+    tier."""
     total_score = sum(a["answer_score"] for a in answers)
     is_dangerous = any(
         (a["question_code"], a["answer_value"]) in _DANGEROUS_TRIGGERS
@@ -55,28 +58,16 @@ def _classify(answers: List[dict]) -> Tuple[str, str, str]:
     )
 
     if is_dangerous:
-        return (
-            "RED",
-            "Matiripo ako aratidza njodzi yakakwira. Enda kuchipatara Kwekwe nhasi.",
-            "Your answers show serious warning signs. Please go to Kwekwe District Hospital today.",
-        )
-    if total_score >= 12:
-        return (
-            "ORANGE",
-            "Zvakafanana nemamiriro ane njodzi. Enda kuchipatara Kwekwe nhasi kuti upiwe X-ray.",
-            "Your exposure and symptoms suggest high risk. Go to Kwekwe District Hospital for a chest X-ray.",
-        )
-    if total_score >= 6:
-        return (
-            "YELLOW",
-            "Une njodzi yakati wandei. Enda kuchipatara mumwedzi uno.",
-            "You have moderate risk. Visit a clinic within the next 4 weeks.",
-        )
-    return (
-        "GREEN",
-        "Njodzi yako iri pasi. Ramba uchipfeka mask yako nguva dzose.",
-        "Your risk appears low. Keep wearing your mask and stay safe.",
-    )
+        tier = "RED"
+    elif total_score >= 12:
+        tier = "ORANGE"
+    elif total_score >= 6:
+        tier = "YELLOW"
+    else:
+        tier = "GREEN"
+
+    shona, english = TIER_MESSAGES[tier]
+    return tier, shona, english
 
 
 def _find_or_create_miner(conn, phone_number: str) -> int:
@@ -140,6 +131,12 @@ def _save_screening(
                 tier=tier,
                 shona_message=shona,
             )
+        else:
+            # GREEN/YELLOW never get a referral, but the miner only saw this
+            # result once, live, during the USSD session — send it by SMS
+            # too so it isn't lost the moment the call ends (7 August 2026,
+            # CLAUDE.md: "Everyone receives their result... by SMS").
+            notifications.send_screening_result_sms(miner_id, phone_number, tier, shona)
     finally:
         conn.close()
 
