@@ -57,6 +57,27 @@ RED_PROFILE = [3, 0, 2, 3, 2, 2, 2, 2, 2, 1]
 
 _now = datetime.now(timezone.utc)
 
+# Midlands province mine sites for the VHW's outreach-site dropdown
+# (7 August 2026) — a curated suggestion list, not a hard foreign key
+# target (miners.mine_site/outreach_visits.site stay free TEXT, see
+# routers/mines.py). Names/districts are illustrative for the demo, not
+# verified real-world coordinates — the three already used elsewhere in
+# this seed script (Globe & Phoenix, Sherwood, Kwekwe Consolidated) are
+# included so the dropdown matches the rest of the demo data.
+MIDLANDS_MINES = [
+    ("Globe & Phoenix Mine", "Kwekwe"),
+    ("Sherwood Mine", "Kwekwe"),
+    ("Kwekwe Consolidated", "Kwekwe"),
+    ("Empress Nickel Mine", "Kwekwe"),
+    ("Sandawana Mine", "Zvishavane"),
+    ("Mimosa Mine", "Zvishavane"),
+    ("Unki Mine", "Shurugwi"),
+    ("Ngezi Mine", "Shurugwi"),
+    ("Zenith Mine", "Gweru"),
+    ("Mberengwa Chrome Belt", "Mberengwa"),
+    ("Gokwe Alluvial Fields", "Gokwe"),
+]
+
 
 def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -183,6 +204,15 @@ def seed() -> None:
         conn.execute("DELETE FROM miners")
         conn.execute("DELETE FROM outreach_visits")
         conn.execute("DELETE FROM facilities")
+        conn.execute("DELETE FROM mines")
+        conn.commit()
+
+        # --- Mines dropdown list (Midlands province) ---
+        for name, district in MIDLANDS_MINES:
+            conn.execute(
+                "INSERT INTO mines (name, district, province) VALUES (?, ?, 'Midlands')",
+                (name, district),
+            )
         conn.commit()
 
         # --- Facilities, seeded first so referrals below can carry a real
@@ -517,6 +547,7 @@ def seed() -> None:
                 "referrals",
                 "facilities",
                 "outreach_visits",
+                "mines",
             )
         }
         site_count = conn.execute(
@@ -526,7 +557,8 @@ def seed() -> None:
             f"Seeded: {counts['miners']} miners, {counts['screenings']} screenings, "
             f"{counts['referrals']} referrals across {site_count} sites "
             "(every referral status incl. reminded/escalated represented); "
-            f"{counts['facilities']} facilities, {counts['outreach_visits']} outreach visits."
+            f"{counts['facilities']} facilities, {counts['outreach_visits']} outreach visits, "
+            f"{counts['mines']} mines in the outreach-site dropdown."
         )
     finally:
         conn.close()

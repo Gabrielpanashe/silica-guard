@@ -25,6 +25,7 @@ from services.notifications import (
     send_outreach_announcement,
     send_referral_escalation,
     send_referral_reminder,
+    send_screening_result_sms,
 )
 
 
@@ -82,6 +83,23 @@ def test_send_miner_result_logs_failed_row_on_httpx_error(conn, worker_id, monke
     rows = _notification_rows(conn)
     assert len(rows) == 1
     assert rows[0]["delivery_status"] == "failed"
+
+
+def test_send_screening_result_sms_logs_sent_row_on_success(conn, worker_id, monkeypatch):
+    monkeypatch.setenv("AT_API_KEY", "fake")
+    with patch("services.notifications.httpx.post", return_value=_mock_success_response()):
+        ok = send_screening_result_sms(worker_id, "+263700222001", "GREEN", "Shona result message")
+
+    assert ok is True
+    rows = _notification_rows(conn)
+    assert len(rows) == 1
+    assert rows[0]["worker_id"] == worker_id
+    assert rows[0]["template"] == "screening_result"
+    assert "Shona result message" in rows[0]["payload"]
+    assert rows[0]["delivery_status"] == "sent"
+    # Unlike send_miner_result, no facility-visit instruction — there's no
+    # referral to show up for.
+    assert "nurse" not in rows[0]["payload"].lower()
 
 
 def test_send_hospital_prealert_logs_skipped_row_when_nurse_phone_unset(conn, worker_id, monkeypatch):

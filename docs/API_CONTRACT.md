@@ -104,6 +104,39 @@ Look up a worker by phone number, returning their full screening history — thi
 
 ---
 
+## Mines
+
+### `GET /api/mines` — LIVE (7 August 2026)
+
+Powers the VHW's outreach-site dropdown on the mobile app (previously a hardcoded free-text default). **Unauthenticated**, same field-worker precedent as `POST /api/workers`.
+
+**Response 200**
+```json
+[
+  { "id": 1, "name": "Globe & Phoenix Mine", "district": "Kwekwe", "province": "Midlands" },
+  { "id": 6, "name": "Mimosa Mine", "district": "Zvishavane", "province": "Midlands" }
+]
+```
+Ordered by `district`, then `name`. Seeded with 11 Midlands mines (`backend/scripts/seed_demo_data.py`) — illustrative names for the demo, not verified real-world data.
+
+**Deliberately not a foreign key target**: `miners.mine_site` and `outreach_visits.site` both stay free `TEXT`, not `mines.id` — this table is a curated suggestion list for the dropdown, not a hard schema constraint. A full migration tying the two together was judged too risky this close to feature freeze.
+
+### `POST /api/mines` — LIVE (7 August 2026)
+
+For the case where a VHW's site genuinely isn't in the list yet. Unauthenticated.
+
+**Request**
+```json
+{ "name": "New Mine", "district": "Gweru", "province": "Midlands" }
+```
+`province` defaults to `"Midlands"` if omitted.
+
+**Response 201**: same shape as a `GET /api/mines` item.
+
+**Errors**: `409` if `name` is already registered.
+
+---
+
 ## Screening
 
 ### `POST /api/screen` — LIVE (four-tier)
@@ -130,6 +163,7 @@ Look up a worker by phone number, returning their full screening history — thi
   "tier": "YELLOW",
   "confidence": 0.82,
   "explanation_english": "Significant drilling exposure with no symptoms yet...",
+  "explanation_shona": "Une njodzi yakati wandei nokuda kwemakore ako ekushanda pasi pevhu.",
   "contributing_factors": ["10+ years underground", "inconsistent PPE use"],
   "advice_line": "Wear your N95 mask every time you drill or crush, not just sometimes.",
   "previous_screening_id": 88,
@@ -146,13 +180,15 @@ Look up a worker by phone number, returning their full screening history — thi
 
 `tier` is one of `GREEN`, `YELLOW`, `ORANGE`, `RED` (Phase A schema migration, previously 3-tier `LOW`/`WATCH`/`REFER_NOW`). `previous_screening_id` links to this worker's most recent prior screening if one exists. `provisional` mirrors `offline_fallback_used` from the request.
 
-`advice_line` is now always populated (non-negotiable rule: every result must carry one) — a fixed, clinician-**pending** sentence selected from the miner's single weakest answer (`backend/services/advice_engine.py`). **The copy is draft, not yet Clinical-Lead-signed-off** — do not treat the exact wording as final, and there is no `explanation_shona`/Shona advice text yet.
+`advice_line` is now always populated (non-negotiable rule: every result must carry one) — a fixed, clinician-**pending** sentence selected from the miner's single weakest answer (`backend/services/advice_engine.py`). **The copy is draft, not yet Clinical-Lead-signed-off** — do not treat the exact wording as final.
+
+`explanation_shona` (**LIVE as of 7 August 2026**, previously TARGET-only) is now always populated too, using the same mechanism and the same weakest-answer selection as `advice_line` (`backend/services/explanation_shona.py`) — a fixed, template-bound Shona sentence, not an AI-generated translation. **Also draft, not yet Clinical-Lead-signed-off.**
 
 `deterioration` is now always present (`backend/services/deterioration.py`): `compared_to_screening_id` is `null` with `changed: false` and an explicit "no previous screening" summary when this is the worker's first screening; otherwise `changed` is `true` if any tracked symptom/exposure answer (`COUGH_DURATION`, `BREATHLESSNESS`, `CHEST_PAIN`, `WEIGHT_LOSS`, `PPE_USE`, `WET_DRILLING`) scored higher than on the previous screening. Any deterioration escalates `tier` one level versus what the AI alone would have returned — this can move a screening into `ORANGE`/`RED` referral territory even when this screening's own answers wouldn't have triggered a referral.
 
 **Hard safety overrides** (`backend/services/safety_overrides.py`) are now enforced in Python, after the AI call, before this response is built — a `severe` value on `BREATHLESSNESS` or `CHEST_PAIN`, a `current` value on `TB_HISTORY`, or a `yes` value on `PRIOR_LUNG_DIAGNOSIS` always forces `tier: "RED"` regardless of what the AI model returned. Applied after deterioration escalation, so nothing can downgrade a safety-triggered RED.
 
-**Still TARGET, not in this response yet**: `explanation_shona`.
+**Result SMS, every tier (7 August 2026)**: `ORANGE`/`RED` results go through `services/referrals.create_referral_and_notify` (referral + facility match + hospital pre-alert + miner SMS, via `send_miner_result`). `GREEN`/`YELLOW` results now also send the miner a result SMS (`services/notifications.send_screening_result_sms`) — previously they sent nothing at all, silently contradicting CLAUDE.md's "everyone receives their result... by SMS." The SMS text for a given tier is the same fixed message the USSD self-screen path uses (`backend/services/tier_messages.py`, shared by both channels as of this change — previously the AI-driven path used one generic ORANGE-flavored message for both ORANGE and RED referrals; RED now gets RED-specific wording).
 
 ### `POST /api/ussd` — LIVE
 
@@ -296,6 +332,40 @@ Every SMS sent by the backend (screening result, hospital pre-alert, referral re
 
 ## Dashboard
 
+### `GET /api/dashboard/today` — LIVE (7 August 2026)
+
+**Unauthenticated** — same deliberate precedent as `POST /api/screen` and `GET /api/workers/{phone}` (a VHW in the field has no dashboard login), and the same tradeoff as that route: returns miner names/phone numbers/tiers without a login, flagged for the same reason it's flagged there. Powers the mobile Home screen's live numbers (previously all hardcoded to 0 client-side): Screened Today, Refer Now, Watch, Today's Log.
+
+Optional query param `?site=<name>` (case-insensitive exact match against `miners.mine_site`) scopes every section to one outreach site.
+
+**Response 200**
+```json
+{
+  "screened_today": 3,
+  "todays_log": [
+    { "screening_id": 41, "miner_name": "Tendai T", "phone": "+263776877873", "mine_site": "Globe & Phoenix Mine", "tier": "RED", "created_at": "2026-08-07 10:33:51" }
+  ],
+  "refer_now": {
+    "count": 2,
+    "items": [
+      { "referral_id": 7, "miner_name": "Tendai T", "phone": "+263776877873", "mine_site": "Globe & Phoenix Mine", "tier": "RED", "status": "pre_alerted", "deadline": "2026-08-09 10:33:56" }
+    ]
+  },
+  "watch": {
+    "count": 1,
+    "items": [
+      { "screening_id": 39, "miner_name": "Blessing Sithole", "phone": "+263771000003", "mine_site": "Globe & Phoenix Mine", "tier": "YELLOW", "created_at": "2026-07-18 11:48:55" }
+    ]
+  }
+}
+```
+
+`screened_today` / `todays_log` = screenings whose `created_at` falls on the server's current UTC calendar date — Zimbabwe is UTC+2 (CAT), so a screening in the ~2 hours before UTC midnight can land on the "wrong" day. A known simplification, same class as `outreach_visits.report_generated`.
+
+`refer_now` is a **live worklist, not scoped to today** — any referral with `status` in `open`/`pre_alerted`/`reminded`/`escalated`. It drops off once `PATCH /api/referrals/{id}` sets `status` to `attended` or `closed` — that's how "have they taken action" gets answered by re-polling this endpoint, using the contact details already in each item.
+
+`watch` = miners whose **most recent** screening (not just any screening) is `YELLOW` — YELLOW never creates a referral, so this is sourced from `screenings`, not `referrals`. A miner whose YELLOW screening was later superseded by a re-screen of any tier drops off this list.
+
 ### `GET /api/dashboard/week` — LIVE (Population Health Intelligence)
 
 Requires `Authorization: Bearer <token>`.
@@ -330,9 +400,11 @@ Requires `Authorization: Bearer <token>`.
 | `/api/auth/me` | GET | LIVE (dev helper) |
 | `/api/workers` | POST | LIVE |
 | `/api/workers/{phone}` | GET | LIVE |
-| `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line) |
+| `/api/mines` | GET, POST | LIVE |
+| `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line + Shona explanation, result SMS for all four tiers) |
 | `/api/ussd` | POST | LIVE (four-tier) |
 | `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |
 | `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |
 | `/api/outreach` | POST, GET | LIVE |
+| `/api/dashboard/today` | GET | LIVE (unauthenticated, VHW Home-screen numbers) |
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |

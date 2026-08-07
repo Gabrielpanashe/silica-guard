@@ -92,6 +92,14 @@ CREATE TABLE IF NOT EXISTS outreach_visits (
     report_generated INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS mines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    district TEXT,
+    province TEXT DEFAULT 'Midlands',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     worker_id INTEGER NOT NULL REFERENCES miners(id),

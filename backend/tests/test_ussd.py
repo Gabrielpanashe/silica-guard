@@ -1,6 +1,8 @@
 import sqlite3
+from unittest.mock import patch
 
 import database
+from services import notifications
 
 URL = "/api/ussd"
 
@@ -105,6 +107,26 @@ def test_completed_session_persists_to_database(client):
     ).fetchone()[0]
     assert answer_count == 10
     conn.close()
+
+
+def test_green_result_sends_screening_result_sms_not_referral(client):
+    with patch.object(notifications, "send_screening_result_sms", return_value=True) as mock_sms:
+        reply = _walk_session(
+            client, "s8", "+263770000008", ["1", "4", "1", "1", "1", "1", "1", "1", "1", "1"]
+        )
+
+    assert reply.startswith("END ")
+    mock_sms.assert_called_once()
+    assert mock_sms.call_args[0][2] == "GREEN"
+
+    conn = sqlite3.connect(database.DATABASE_URL)
+    conn.row_factory = sqlite3.Row
+    referral = conn.execute(
+        "SELECT r.* FROM referrals r JOIN miners m ON m.id = r.miner_id WHERE m.phone = ?",
+        ("+263770000008",),
+    ).fetchone()
+    conn.close()
+    assert referral is None
 
 
 def test_session_state_cleared_after_completion(client):
