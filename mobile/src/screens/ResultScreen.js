@@ -8,12 +8,30 @@ import { colours, typography, spacing, radius, riskConfig } from '../theme';
 import { offlineScore } from './QuestionScreen';
 import { registerWorker, getWorkerByPhone, submitScreening } from '../services/api';
 
+// Backend timestamps are SQLite-style "YYYY-MM-DD HH:MM:SS" (space-
+// separated, no 'Z') — append it so Date() parses as UTC rather than
+// guessing local time, same fix as the web dashboard's relativeTime().
+function formatHistoryDate(isoLike) {
+  if (!isoLike) return '—';
+  const iso = isoLike.includes('T') ? isoLike : isoLike.replace(' ', 'T') + 'Z';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return isoLike;
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 export default function ResultScreen({ navigation, route }) {
   const { miner, answers } = route.params;
 
   const [loading, setLoading] = useState(true);
   const [result, setResult]   = useState(null);
   const [offline, setOffline] = useState(false);
+  // Full screening history for this miner (10 August) — every screening
+  // this system has ever recorded for them is already kept (nothing is
+  // ever overwritten), this just surfaces it. Best-effort: fetched after
+  // the screening itself succeeds, never blocks or fails the result
+  // screen if it can't load. Absent entirely in the offline-fallback path
+  // (no way to look anything up without the backend).
+  const [history, setHistory] = useState([]);
 
   useEffect(() => { runScreening(); }, []);
 
@@ -70,6 +88,15 @@ export default function ResultScreen({ navigation, route }) {
         deterioration: screening.deterioration,
       });
       setOffline(false);
+
+      // Full comparative history (10 August) — best-effort, never lets a
+      // failure here affect the result already shown above.
+      try {
+        const worker = await getWorkerByPhone(miner.phone);
+        setHistory(worker.screenings || []);
+      } catch (histErr) {
+        console.warn("Could not load screening history:", histErr.message);
+      }
     } catch (err) {
       console.warn("Backend unavailable, using offline score:", err.message);
       const scored = offlineScore(answers);
@@ -196,6 +223,33 @@ export default function ResultScreen({ navigation, route }) {
           </View>
         )}
 
+        {/* Screening history (10 August) — every screening this system has
+            ever recorded for this miner, most recent (today's) first.
+            The one-line deterioration summary above is the headline;
+            this is the actual comparative record it's summarising —
+            tier progression across every visit, not just the latest pair.
+            Only shows once there's more than just today's entry. */}
+        {history.length > 1 && (
+          <View style={s.historyCard}>
+            <Text style={s.cardEyebrow}>SCREENING HISTORY · {history.length} VISITS</Text>
+            {history.map((h, i) => {
+              const hConfig = h.tier && riskConfig[h.tier] ? riskConfig[h.tier] : riskConfig['GREEN'];
+              return (
+                <View key={h.id} style={[s.historyRow, i === history.length - 1 && s.historyRowLast]}>
+                  <View style={[s.historyTierDot, { backgroundColor: hConfig.colour }]} />
+                  <View style={s.historyMain}>
+                    <View style={s.historyTopLine}>
+                      <Text style={[s.historyTier, { color: hConfig.colour }]}>{h.tier || '—'}</Text>
+                      <Text style={s.historyDate}>{i === 0 ? 'TODAY' : formatHistoryDate(h.created_at)}</Text>
+                    </View>
+                    {!!h.advice_line && <Text style={s.historyAdvice}>{h.advice_line}</Text>}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         {/* English explanation */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>CLINICAL EXPLANATION</Text>
@@ -292,6 +346,15 @@ const s = StyleSheet.create({
   minerSub: { fontSize: typography.caption, color: colours.muted, marginTop: spacing.xs },
   deteriorationCard: { backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1.5, borderLeftWidth: 4, padding: spacing.lg, marginBottom: spacing.lg },
   deteriorationText: { fontSize: typography.body, fontWeight: typography.semibold, lineHeight: 21, marginTop: spacing.xs },
+  historyCard: { backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1, borderColor: colours.mid, padding: spacing.lg, marginBottom: spacing.lg },
+  historyRow: { flexDirection: 'row', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 0.5, borderBottomColor: colours.mid },
+  historyRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
+  historyTierDot: { width: 9, height: 9, borderRadius: 5, marginTop: 5 },
+  historyMain: { flex: 1 },
+  historyTopLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  historyTier: { fontSize: typography.caption, fontWeight: typography.black, letterSpacing: 0.5 },
+  historyDate: { fontSize: typography.tiny, color: colours.muted, fontWeight: typography.semibold, fontVariant: ['tabular-nums'] },
+  historyAdvice: { fontSize: typography.tiny, color: colours.muted, marginTop: 2, lineHeight: 15 },
   section: { marginBottom: spacing.lg },
   sectionLabel: { fontSize: typography.micro, fontWeight: typography.bold, color: colours.teal, letterSpacing: 2, marginBottom: spacing.md },
   explanationText: { fontSize: typography.body, color: colours.offwhite, lineHeight: 22 },

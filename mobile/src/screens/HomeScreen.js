@@ -6,14 +6,9 @@ import { colours, typography, spacing, radius } from '../theme';
 import StatCard from '../components/StatCard';
 import SyncPill from '../components/SyncPill';
 import SecondaryButton from '../components/SecondaryButton';
+import MineSitePicker from '../components/MineSitePicker';
+import { useOutreachSite } from '../context/OutreachSiteContext';
 import { getDashboardToday } from '../services/api';
-
-// Matches the outreach banner below — kept as one constant so the numbers
-// shown and the site the banner claims to be at never disagree. TARGET:
-// once there's a real "which outreach visit is active" signal available
-// without auth, both this and the banner text should come from that
-// instead of being hardcoded here.
-const OUTREACH_SITE = 'Globe & Phoenix Mine';
 
 // The Intelligence Dashboard (dashboard/, 9-10 August) — a separate static
 // web page, not part of this app, deployed to Render as a Static Site
@@ -34,22 +29,28 @@ export default function HomeScreen({ navigation }) {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
+  // Which mine the VHW is at today — shared app-wide (10 August, previously
+  // a hardcoded OUTREACH_SITE constant here). Real numbers below are
+  // filtered by this; changing it re-fetches immediately.
+  const { site, setSite, mine, setMine } = useOutreachSite();
+
   // Real numbers from GET /api/dashboard/today (7 August) — previously
   // hardcoded to zero. Re-fetched every time this screen gains focus (not
-  // just on mount) so returning here after a screening shows the update
-  // without needing a manual refresh. Fails silently to EMPTY_TODAY on any
-  // error (offline, cold Render instance) — this data is never allowed to
-  // block the primary "Screen New Miner" action.
+  // just on mount) AND whenever the selected site changes, so returning
+  // here after a screening — or switching mines — shows the update without
+  // needing a manual refresh. Fails silently to EMPTY_TODAY on any error
+  // (offline, cold Render instance) — this data is never allowed to block
+  // the primary "Screen New Miner" action.
   const [stats, setStats] = useState(EMPTY_TODAY);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      getDashboardToday(OUTREACH_SITE)
+      getDashboardToday(site)
         .then((data) => { if (!cancelled) setStats(data); })
         .catch(() => { if (!cancelled) setStats(EMPTY_TODAY); });
       return () => { cancelled = true; };
-    }, [])
+    }, [site])
   );
 
   const openWorklist = (kind) => {
@@ -66,7 +67,7 @@ export default function HomeScreen({ navigation }) {
 
   // No site param — Outreach Stats shows every scheduled visit across every
   // mine, not just wherever this Home screen is currently scoped to. Home's
-  // own live numbers above stay scoped to OUTREACH_SITE (the VHW is
+  // own live numbers above stay scoped to the selected site (the VHW is
   // physically at one site during a visit); the stats screen is the
   // cross-site rollup a coordinator actually needs.
   const openOutreachStats = () => navigation.navigate('OutreachStats');
@@ -98,14 +99,30 @@ export default function HomeScreen({ navigation }) {
         </View>
       </View>
 
-      {/* ── OUTREACH BANNER ── */}
-      <View style={s.outreachBanner}>
-        <Text style={s.eyebrow}>TODAY'S OUTREACH SITE</Text>
-        <Text style={s.outreachName}>Globe &{'\n'}Phoenix Mine</Text>
-        <View style={s.outreachTag}>
-          <Text style={s.outreachTagText}>Kwekwe District · Midlands</Text>
-        </View>
-      </View>
+      {/* ── OUTREACH BANNER — now a real mine picker (10 August), was
+          hardcoded "Globe & Phoenix Mine" text with nothing behind it.
+          Whole card is the tap target, reusing MineSitePicker's list/modal
+          via renderTrigger so there's one single mines-picking
+          implementation, not two. ── */}
+      <MineSitePicker
+        value={site}
+        onChange={setSite}
+        onSelectMine={setMine}
+        renderTrigger={(open) => (
+          <TouchableOpacity style={s.outreachBanner} onPress={open} activeOpacity={0.85}>
+            <View style={s.outreachTop}>
+              <Text style={s.eyebrow}>TODAY'S OUTREACH SITE</Text>
+              <Text style={s.changeHint}>Change ▾</Text>
+            </View>
+            <Text style={s.outreachName}>{mine?.name || site}</Text>
+            <View style={s.outreachTag}>
+              <Text style={s.outreachTagText}>
+                {mine?.district ? `${mine.district} District · ${mine.province}` : 'Tap to confirm today’s site'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+      />
 
       {/* ── STATS — real numbers, tappable (7 August) ── */}
       <View style={s.statsRow}>
@@ -240,12 +257,22 @@ const s = StyleSheet.create({
     borderColor: colours.teal,
     borderLeftWidth: 5,
   },
+  outreachTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
   eyebrow: {
     fontSize: typography.micro,
     fontWeight: typography.bold,
     color: colours.teal,
     letterSpacing: 2,
-    marginBottom: spacing.sm,
+  },
+  changeHint: {
+    fontSize: typography.tiny,
+    fontWeight: typography.semibold,
+    color: colours.muted,
   },
   outreachName: {
     fontSize: 30,
