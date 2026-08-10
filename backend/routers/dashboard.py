@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from database import get_connection
 from models import (
     DashboardTodayOut,
+    MinerSummary,
     ReferNowItem,
     ReferNowSection,
     ReferralOut,
     ReferralStatusUpdate,
+    ScreeningLogItem,
     TodaysLogItem,
     WatchItem,
     WatchSection,
@@ -243,5 +245,54 @@ def update_referral_status(
             _REFERRAL_SELECT + " WHERE r.id = ?", (referral_id,)
         ).fetchone()
         return _referral_row_to_dict(row)
+    finally:
+        conn.close()
+
+
+@router.get("/miners", response_model=list[MinerSummary])
+def list_miners(user: dict = Depends(get_current_user)):
+    """Every registered miner, most recently active first — the dashboard's
+    Miners directory (10 August). Distinct from GET /api/workers/{phone}
+    (unauthenticated, single-miner lookup for the VHW re-screen flow): this
+    is the full roster for a logged-in coordinator, so it's authenticated
+    like /api/referrals and /api/dashboard/week."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT m.id, m.name, m.phone, m.mine_site AS site, m.created_at,
+                      COUNT(s.id) AS screening_count,
+                      MAX(s.created_at) AS last_screened_at,
+                      (SELECT s2.tier FROM screenings s2
+                       WHERE s2.miner_id = m.id
+                       ORDER BY s2.created_at DESC, s2.id DESC LIMIT 1) AS latest_tier
+               FROM miners m
+               LEFT JOIN screenings s ON s.miner_id = m.id
+               GROUP BY m.id
+               ORDER BY COALESCE(MAX(s.created_at), m.created_at) DESC"""
+        ).fetchall()
+        return [MinerSummary(**dict(row)) for row in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/screenings", response_model=list[ScreeningLogItem])
+def list_screenings(limit: int = 200, user: dict = Depends(get_current_user)):
+    """Every screening across every miner and channel (APP/USSD), most
+    recent first — the dashboard's All Screenings activity log (10 August).
+    `limit` (default 200) caps the response; the demo dataset is small
+    enough this rarely matters, but a growing pilot deployment shouldn't
+    return an unbounded list to a browser tab."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT s.id, s.miner_id, m.name AS miner_name, m.phone,
+                      m.mine_site AS site, s.tier, s.channel, s.advice_line, s.created_at
+               FROM screenings s
+               JOIN miners m ON m.id = s.miner_id
+               ORDER BY s.created_at DESC, s.id DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [ScreeningLogItem(**dict(row)) for row in rows]
     finally:
         conn.close()

@@ -217,6 +217,29 @@ CON Une kuhema (cough) inoenderera kupfuura mavhiki matatu here?
 
 ## Referrals
 
+### `GET /api/miners` — LIVE (10 August 2026)
+
+Requires `Authorization: Bearer <token>`. The dashboard's Miners directory — every registered miner, most recently active first. Distinct from `GET /api/workers/{phone}` (unauthenticated, single-miner lookup for the VHW re-screen flow) — this is the full roster for a logged-in coordinator.
+
+**Response 200**
+```json
+[
+  { "id": 14, "name": "Tendai Moyo", "phone": "+263771234567", "site": "Sherwood Mine", "latest_tier": "ORANGE", "screening_count": 2, "last_screened_at": "2026-08-09 10:33:51", "created_at": "2026-07-01 08:00:00" }
+]
+```
+`latest_tier`/`last_screened_at` are `null` for a miner with no screenings yet (registered but not yet screened). `latest_tier` is the miner's **most recent** screening's tier, not their first or their worst.
+
+### `GET /api/screenings` — LIVE (10 August 2026)
+
+Requires `Authorization: Bearer <token>`. The dashboard's All Screenings activity log — every screening across every miner and channel (`APP`/`USSD`), most recent first. Optional `?limit=` (default 200) caps the response.
+
+**Response 200**
+```json
+[
+  { "id": 41, "miner_id": 14, "miner_name": "Tendai Moyo", "phone": "+263771234567", "site": "Sherwood Mine", "tier": "RED", "channel": "APP", "advice_line": "A cough that has lasted this long needs to be checked by a clinician as soon as possible.", "created_at": "2026-08-09 10:33:51" }
+]
+```
+
 ### `GET /api/referrals` — LIVE (Smart Referral Router: facility matching + reminder/escalation cascade)
 
 Requires `Authorization: Bearer <token>`.
@@ -401,6 +424,8 @@ Requires `Authorization: Bearer <token>`.
 | `/api/workers` | POST | LIVE |
 | `/api/workers/{phone}` | GET | LIVE |
 | `/api/mines` | GET, POST | LIVE |
+| `/api/miners` | GET | LIVE (dashboard Miners directory) |
+| `/api/screenings` | GET | LIVE (dashboard All Screenings log) |
 | `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line + Shona explanation, result SMS for all four tiers) |
 | `/api/ussd` | POST | LIVE (four-tier) |
 | `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |

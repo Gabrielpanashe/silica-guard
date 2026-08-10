@@ -199,3 +199,74 @@ def test_fallback_narrative_handles_empty_site_breakdown():
         total_screened=0, high_risk_count=0, referral_completion_rate=0.0, site_breakdown=[]
     )
     assert "no site data" in text
+
+
+def test_list_miners_requires_auth(client):
+    resp = client.get("/api/miners")
+    assert resp.status_code == 401
+
+
+def test_list_miners_empty(client):
+    token = _login(client)
+    resp = client.get("/api/miners", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_list_miners_includes_latest_tier_and_screening_count(client):
+    miner_id = _register(client, "+263792000001", site="Site A")
+    _screen(client, miner_id, {"tier": "YELLOW", "confidence": 0.8, "contributing_factors": ["x"], "explanation_english": "x"})
+    _screen(client, miner_id, {"tier": "ORANGE", "confidence": 0.85, "contributing_factors": ["x"], "explanation_english": "x"})
+
+    token = _login(client)
+    resp = client.get("/api/miners", headers={"Authorization": f"Bearer {token}"})
+    body = resp.json()
+
+    assert len(body) == 1
+    assert body[0]["id"] == miner_id
+    assert body[0]["screening_count"] == 2
+    assert body[0]["latest_tier"] == "ORANGE"  # most recent, not first
+    assert body[0]["last_screened_at"] is not None
+
+
+def test_list_miners_without_screenings_has_null_tier(client):
+    _register(client, "+263792000002")
+
+    token = _login(client)
+    body = client.get("/api/miners", headers={"Authorization": f"Bearer {token}"}).json()
+
+    assert body[0]["screening_count"] == 0
+    assert body[0]["latest_tier"] is None
+    assert body[0]["last_screened_at"] is None
+
+
+def test_list_screenings_requires_auth(client):
+    resp = client.get("/api/screenings")
+    assert resp.status_code == 401
+
+
+def test_list_screenings_returns_most_recent_first(client):
+    a = _register(client, "+263792000003")
+    b = _register(client, "+263792000004")
+    _screen(client, a, {"tier": "GREEN", "confidence": 0.9, "contributing_factors": ["x"], "explanation_english": "x"})
+    _screen(client, b, {"tier": "RED", "confidence": 0.95, "contributing_factors": ["x"], "explanation_english": "x"})
+
+    token = _login(client)
+    body = client.get("/api/screenings", headers={"Authorization": f"Bearer {token}"}).json()
+
+    assert len(body) == 2
+    assert body[0]["tier"] == "RED"  # most recent screening first
+    assert body[0]["miner_id"] == b
+    assert body[1]["tier"] == "GREEN"
+
+
+def test_list_screenings_respects_limit(client):
+    for i in range(5):
+        miner_id = _register(client, f"+26379200001{i}")
+        _screen(client, miner_id, {"tier": "GREEN", "confidence": 0.9, "contributing_factors": ["x"], "explanation_english": "x"})
+
+    token = _login(client)
+    body = client.get(
+        "/api/screenings", params={"limit": 2}, headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    assert len(body) == 2
