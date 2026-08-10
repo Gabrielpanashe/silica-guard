@@ -96,6 +96,23 @@ body {
   border-radius: 999px; padding: 7px 16px; font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
 .btn-ghost:hover { border-color: var(--teal); color: var(--teal); }
+.role-badge {
+  font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px;
+  background: rgba(2,195,154,0.15); color: var(--mint); border: 1px solid rgba(2,195,154,0.4);
+  border-radius: 999px; padding: 4px 10px;
+}
+
+/* ── Section nav ── */
+.sectionnav {
+  display: flex; gap: 4px; overflow-x: auto;
+  padding: 10px 28px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 57px; background: var(--navy); z-index: 9;
+}
+.sectionnav a {
+  color: var(--muted); text-decoration: none; font-size: 12.5px; font-weight: 600;
+  padding: 6px 14px; border-radius: 999px; white-space: nowrap;
+}
+.sectionnav a:hover { background: var(--card); color: var(--offwhite); }
 
 /* ── Banners ── */
 .wake-banner, .error-banner {
@@ -110,7 +127,7 @@ body {
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
 
 /* ── Stat row ── */
-.statrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+.statrow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
 .stat {
   background: var(--card); border: 1.5px solid var(--border-strong); border-radius: var(--radius-lg);
   padding: 20px; text-align: center;
@@ -206,9 +223,64 @@ body {
 
 .page-footer { text-align: center; color: var(--muted); font-size: 11.5px; padding: 30px 0 10px; }
 
+/* ── Filters (Miners directory) ── */
+.filter-row { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.search-input {
+  flex: 1; min-width: 200px; background: var(--card-2); border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 9px 12px; color: var(--white); font-size: 13px;
+}
+.search-input:focus { outline: none; border-color: var(--teal); }
+.filter-select {
+  background: var(--card-2); border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 9px 12px; color: var(--white); font-size: 13px;
+}
+
+/* ── Miners table row expand ── */
+.miner-row { cursor: pointer; }
+.miner-row:hover { background: rgba(255,255,255,0.03); }
+.miner-expand-icon { color: var(--muted); transition: transform 0.15s ease; display: inline-block; }
+.miner-row.expanded .miner-expand-icon { transform: rotate(90deg); color: var(--teal); }
+.miner-detail-row td { padding: 0; border-bottom: 1px solid var(--border); }
+.miner-detail {
+  padding: 14px 16px; background: var(--card-2); font-size: 12.5px;
+}
+.miner-detail-loading { color: var(--muted); }
+.miner-history-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
+}
+.miner-history-row:last-child { border-bottom: none; }
+.miner-history-advice { color: var(--muted); flex: 1; margin-left: 12px; }
+
+/* ── Live pill (Activity Log header) ── */
+.live-pill {
+  font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--mint); white-space: nowrap;
+}
+
+/* ── Activity log (Screenings / Watch) ── */
+.activity-log { display: flex; flex-direction: column; gap: 2px; }
+.activity-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 4px; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.activity-row:last-child { border-bottom: none; }
+.activity-tier-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.activity-main { flex: 1; min-width: 0; }
+.activity-name { color: var(--white); font-weight: 600; }
+.activity-meta { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.activity-channel {
+  font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.3px;
+  padding: 2px 7px; border-radius: 999px; background: var(--card-2); color: var(--muted);
+  flex-shrink: 0;
+}
+.activity-time { color: var(--muted); font-size: 11.5px; white-space: nowrap; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
 @media (max-width: 760px) {
   .statrow { grid-template-columns: repeat(2, 1fr); }
   .grid-2 { grid-template-columns: 1fr; }
   .content { padding: 20px 16px 50px; }
   .topbar { padding: 14px 16px; }
+  .sectionnav { top: 53px; }
 }

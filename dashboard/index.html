@@ -25,7 +25,8 @@
         <button type="submit" id="login-btn">Sign in</button>
         <p id="login-error" class="error-text" hidden></p>
       </form>
-      <p class="login-footnote">Demo credentials pre-filled. Backend: <span class="mono" id="base-url-display"></span></p>
+      <p class="login-footnote">Demo credentials pre-filled. First sign-in of the day can take up to a minute — the free-tier backend has to wake up.</p>
+      <p class="login-footnote mono" id="base-url-display"></p>
     </div>
   </div>
 
@@ -37,11 +38,21 @@
         <span class="brand-word">SILICA</span><span class="brand-accent">Guard<span class="brand-dot">●</span></span>
       </div>
       <div class="topbar-right">
+        <span id="role-badge" class="role-badge"></span>
         <span id="last-updated" class="muted small"></span>
         <button id="refresh-btn" class="btn-ghost">↻ Refresh</button>
         <button id="logout-btn" class="btn-ghost">Sign out</button>
       </div>
     </header>
+
+    <nav class="sectionnav">
+      <a href="#section-overview">Overview</a>
+      <a href="#section-miners">Miners</a>
+      <a href="#section-screenings">Activity</a>
+      <a href="#section-referrals">Referrals</a>
+      <a href="#section-watch">Watch</a>
+      <a href="#section-outreach">Outreach</a>
+    </nav>
 
     <div id="wake-banner" class="wake-banner" hidden>
       ⏳ Waking up the backend (free-tier server sleeps after inactivity) — this can take 30–50 seconds on a cold start…
@@ -50,54 +61,102 @@
 
     <main class="content">
 
-      <!-- Stat row -->
-      <section class="statrow">
-        <div class="stat">
-          <div class="stat-value" id="stat-screened">—</div>
-          <div class="stat-label">Total Screened</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" id="stat-highrisk">—</div>
-          <div class="stat-label">High Risk (Orange+Red)</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" id="stat-completion">—</div>
-          <div class="stat-label">Referral Completion</div>
-        </div>
-        <div class="stat">
-          <div class="stat-value" id="stat-openreferrals">—</div>
-          <div class="stat-label">Open Referrals</div>
-        </div>
-      </section>
-
-      <div class="grid-2">
-        <!-- Tier distribution -->
-        <section class="card">
-          <h2 class="card-h">Tier Distribution</h2>
-          <p class="card-sub">Every screening on record, by risk tier</p>
-          <div id="tier-chart" class="tier-chart"></div>
+      <div id="section-overview">
+        <!-- Stat row -->
+        <section class="statrow">
+          <div class="stat">
+            <div class="stat-value" id="stat-screened">—</div>
+            <div class="stat-label">Total Screened</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-today">—</div>
+            <div class="stat-label">Screened Today</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-highrisk">—</div>
+            <div class="stat-label">High Risk (Orange+Red)</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-completion">—</div>
+            <div class="stat-label">Referral Completion</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-openreferrals">—</div>
+            <div class="stat-label">Open Referrals</div>
+          </div>
         </section>
 
-        <!-- Site breakdown -->
-        <section class="card">
-          <h2 class="card-h">Screenings by Site</h2>
-          <p class="card-sub">Where the risk is concentrated</p>
-          <div id="site-breakdown" class="site-breakdown"></div>
+        <div class="grid-2">
+          <!-- Tier distribution -->
+          <section class="card">
+            <h2 class="card-h">Tier Distribution</h2>
+            <p class="card-sub">Every screening on record, by risk tier</p>
+            <div id="tier-chart" class="tier-chart"></div>
+          </section>
+
+          <!-- Site breakdown -->
+          <section class="card">
+            <h2 class="card-h">Screenings by Site</h2>
+            <p class="card-sub">Where the risk is concentrated</p>
+            <div id="site-breakdown" class="site-breakdown"></div>
+          </section>
+        </div>
+
+        <!-- AI Narrative -->
+        <section class="card narrative-card">
+          <div class="narrative-head">
+            <h2 class="card-h">Population Health Intelligence</h2>
+            <span class="ai-pill">AI-generated · Gemini 2.5 Flash</span>
+          </div>
+          <p class="card-sub">Plain-language weekly narrative — the only free-form AI text in this system, generated fresh from the live numbers above, never shown to a patient</p>
+          <p id="narrative-text" class="narrative-text">—</p>
         </section>
       </div>
 
-      <!-- AI Narrative -->
-      <section class="card narrative-card">
-        <div class="narrative-head">
-          <h2 class="card-h">Population Health Intelligence</h2>
-          <span class="ai-pill">AI-generated · Gemini 2.5 Flash</span>
+      <!-- Miners directory -->
+      <section class="card" id="section-miners">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Miners</h2>
+            <p class="card-sub">Every registered miner — tap a row for their full screening history</p>
+          </div>
         </div>
-        <p class="card-sub">Plain-language weekly narrative — the only free-form AI text in this system, generated fresh from the live numbers above, never shown to a patient</p>
-        <p id="narrative-text" class="narrative-text">—</p>
+        <div class="filter-row">
+          <input id="miner-search" class="search-input" type="search" placeholder="Search by name, phone or site…" />
+          <select id="miner-tier-filter" class="filter-select">
+            <option value="">All tiers</option>
+            <option value="GREEN">GREEN</option>
+            <option value="YELLOW">YELLOW</option>
+            <option value="ORANGE">ORANGE</option>
+            <option value="RED">RED</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="miners-table" class="data-table">
+            <thead>
+              <tr>
+                <th></th><th>Name</th><th>Phone</th><th>Site</th><th>Latest Tier</th><th>Screenings</th><th>Last Screened</th>
+              </tr>
+            </thead>
+            <tbody id="miners-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- All Screenings activity log -->
+      <section class="card" id="section-screenings">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Activity Log</h2>
+            <p class="card-sub">Every screening, across every miner and channel — most recent first</p>
+          </div>
+          <span class="live-pill">● live</span>
+        </div>
+        <div id="screenings-log" class="activity-log"></div>
       </section>
 
       <!-- Referral queue -->
-      <section class="card">
+      <section class="card" id="section-referrals">
         <div class="card-head-row">
           <div>
             <h2 class="card-h">Live Referral Queue</h2>
@@ -116,8 +175,19 @@
         </div>
       </section>
 
+      <!-- Watch list -->
+      <section class="card" id="section-watch">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Watch List</h2>
+            <p class="card-sub">YELLOW tier — moderate risk, no referral yet, worth monitoring on the next visit</p>
+          </div>
+        </div>
+        <div id="watch-list" class="activity-log"></div>
+      </section>
+
       <!-- Outreach Planner -->
-      <section class="card">
+      <section class="card" id="section-outreach">
         <h2 class="card-h">Outreach Planner</h2>
         <p class="card-sub">Scheduled site visits — bulk SMS reminders, live screened-count tracking, auto-generated post-visit reports</p>
         <div id="outreach-list" class="outreach-list"></div>

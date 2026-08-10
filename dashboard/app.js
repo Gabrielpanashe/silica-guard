@@ -10,6 +10,11 @@
 const BASE_URL = 'https://silicaguard-backend.onrender.com';
 
 let _token = sessionStorage.getItem('sg_token') || null;
+let _role = sessionStorage.getItem('sg_role') || null;
+
+// Cache of GET /api/workers/{phone} responses, keyed by phone — a miner's
+// full history is fetched once on first expand, not refetched every click.
+const _minerHistoryCache = new Map();
 
 const $ = (id) => document.getElementById(id);
 
@@ -23,13 +28,18 @@ async function login(email, password) {
   const data = await res.json();
   if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
   _token = data.access_token;
+  _role = data.role;
   sessionStorage.setItem('sg_token', _token);
+  sessionStorage.setItem('sg_role', _role);
   return data;
 }
 
 function logout() {
   _token = null;
+  _role = null;
   sessionStorage.removeItem('sg_token');
+  sessionStorage.removeItem('sg_role');
+  stopAutoRefresh();
   $('dashboard').hidden = true;
   $('login-screen').hidden = false;
 }
@@ -51,22 +61,33 @@ async function fetchJSON(path, options = {}) {
   return data;
 }
 
+let _miners = [];   // last fetched list, kept for client-side search/filter
+let _minerFilter = { search: '', tier: '' };
+
 async function loadAll() {
   showWakeBanner(true);
   hideError();
   try {
-    const [week, referrals, outreach] = await Promise.all([
+    const [week, referrals, outreach, miners, screenings, today] = await Promise.all([
       fetchJSON('/api/dashboard/week', { headers: authHeaders() }),
       fetchJSON('/api/referrals', { headers: authHeaders() }),
       fetchJSON('/api/outreach', { headers: authHeaders() }),
+      fetchJSON('/api/miners', { headers: authHeaders() }),
+      fetchJSON('/api/screenings?limit=100', { headers: authHeaders() }),
+      fetchJSON('/api/dashboard/today', {}), // unauthenticated by design, no headers needed
     ]);
     showWakeBanner(false);
-    renderStats(week, referrals);
+    renderStats(week, referrals, today);
     renderTierChart(week.tier_distribution);
     renderNarrative(week.ai_narrative);
     renderSiteBreakdown(week.site_breakdown);
     renderReferralTable(referrals);
     renderOutreach(outreach);
+    _miners = miners;
+    renderMinersTable();
+    renderScreeningsLog(screenings);
+    renderWatchList(today.watch.items);
+    $('role-badge').textContent = _role ? `Signed in · ${_role}` : '';
     $('last-updated').textContent = `Updated ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
   } catch (err) {
     showWakeBanner(false);
@@ -75,8 +96,9 @@ async function loadAll() {
 }
 
 // ── RENDER: stat row ──────────────────────────────────────────
-function renderStats(week, referrals) {
+function renderStats(week, referrals, today) {
   $('stat-screened').textContent = week.total_screened;
+  $('stat-today').textContent = today.screened_today;
   $('stat-highrisk').textContent = week.high_risk_count;
   $('stat-completion').textContent = `${Math.round(week.referral_completion_rate * 100)}%`;
   const openCount = referrals.filter((r) => !['attended', 'closed'].includes(r.status)).length;
@@ -218,6 +240,171 @@ function renderOutreach(visits) {
     .join('');
 }
 
+// ── RENDER: Miners directory ───────────────────────────────────
+function renderMinersTable() {
+  const tbody = $('miners-tbody');
+  const search = _minerFilter.search.trim().toLowerCase();
+  const tier = _minerFilter.tier;
+
+  const filtered = _miners.filter((m) => {
+    if (tier && m.latest_tier !== tier) return false;
+    if (!search) return true;
+    return (
+      m.name.toLowerCase().includes(search) ||
+      m.phone.toLowerCase().includes(search) ||
+      (m.site || '').toLowerCase().includes(search)
+    );
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">${_miners.length === 0 ? 'No miners registered yet.' : 'No miners match this search.'}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered
+    .map((m) => {
+      const config = m.latest_tier ? TIER_COLOUR[m.latest_tier] : null;
+      const tierCell = m.latest_tier
+        ? `<span class="tier-pill ${m.latest_tier}">${m.latest_tier}</span>`
+        : '<span class="muted">—</span>';
+      return `
+      <tr class="miner-row" data-phone="${escapeHtml(m.phone)}">
+        <td><span class="miner-expand-icon">▸</span></td>
+        <td>${escapeHtml(m.name)}</td>
+        <td class="muted">${escapeHtml(m.phone)}</td>
+        <td class="muted">${escapeHtml(m.site || '—')}</td>
+        <td>${tierCell}</td>
+        <td>${m.screening_count}</td>
+        <td class="muted">${m.last_screened_at ? relativeTime(m.last_screened_at) : 'Never'}</td>
+      </tr>
+      <tr class="miner-detail-row" data-detail-for="${escapeHtml(m.phone)}" hidden>
+        <td colspan="7"><div class="miner-detail"></div></td>
+      </tr>`;
+    })
+    .join('');
+
+  tbody.querySelectorAll('tr.miner-row').forEach((row) => {
+    row.addEventListener('click', () => toggleMinerDetail(row));
+  });
+}
+
+async function toggleMinerDetail(row) {
+  const phone = row.dataset.phone;
+  const detailRow = document.querySelector(`tr.miner-detail-row[data-detail-for="${CSS.escape(phone)}"]`);
+  const isOpen = !detailRow.hidden;
+
+  // Collapse any other open row first — one at a time keeps the table readable.
+  document.querySelectorAll('tr.miner-detail-row').forEach((r) => { r.hidden = true; });
+  document.querySelectorAll('tr.miner-row.expanded').forEach((r) => r.classList.remove('expanded'));
+
+  if (isOpen) return; // was already open — this click just closed it
+
+  detailRow.hidden = false;
+  row.classList.add('expanded');
+  const detailEl = detailRow.querySelector('.miner-detail');
+
+  if (_minerHistoryCache.has(phone)) {
+    detailEl.innerHTML = renderMinerHistoryHtml(_minerHistoryCache.get(phone));
+    return;
+  }
+
+  detailEl.innerHTML = '<p class="miner-detail-loading">Loading history…</p>';
+  try {
+    const worker = await fetchJSON(`/api/workers/${encodeURIComponent(phone)}`);
+    _minerHistoryCache.set(phone, worker);
+    detailEl.innerHTML = renderMinerHistoryHtml(worker);
+  } catch (err) {
+    detailEl.innerHTML = `<p class="muted">Could not load history: ${escapeHtml(err.message || 'unknown error')}</p>`;
+  }
+}
+
+function renderMinerHistoryHtml(worker) {
+  if (!worker.screenings || worker.screenings.length === 0) {
+    return '<p class="muted">No screenings recorded for this miner yet.</p>';
+  }
+  return worker.screenings
+    .map(
+      (s) => `
+      <div class="miner-history-row">
+        <span class="tier-pill ${s.tier || 'GREEN'}">${s.tier || '—'}</span>
+        <span class="muted">${escapeHtml(s.created_at)}</span>
+        <span class="miner-history-advice">${escapeHtml(s.advice_line || '')}</span>
+      </div>`
+    )
+    .join('');
+}
+
+// ── RENDER: All Screenings activity log ────────────────────────
+function renderScreeningsLog(screenings) {
+  const el = $('screenings-log');
+  if (!screenings || screenings.length === 0) {
+    el.innerHTML = '<p class="muted small">No screenings recorded yet.</p>';
+    return;
+  }
+  el.innerHTML = screenings.map((s) => activityRowHtml(s, { showChannel: true })).join('');
+}
+
+// ── RENDER: Watch list ──────────────────────────────────────────
+function renderWatchList(items) {
+  const el = $('watch-list');
+  if (!items || items.length === 0) {
+    el.innerHTML = '<p class="muted small">Nobody on the watch list right now.</p>';
+    return;
+  }
+  el.innerHTML = items.map((w) => activityRowHtml(w, { showChannel: false })).join('');
+}
+
+// Shared row template for the Activity Log and Watch List — both are
+// "miner + tier + when" rows, just sourced from different endpoints
+// (GET /api/screenings vs GET /api/dashboard/today's watch.items).
+function activityRowHtml(item, { showChannel }) {
+  const colour = TIER_COLOUR[item.tier] || '#8BA0B0';
+  const name = item.miner_name || item.name || 'Unknown';
+  return `
+    <div class="activity-row">
+      <span class="activity-tier-dot" style="background:${colour}"></span>
+      <div class="activity-main">
+        <span class="activity-name">${escapeHtml(name)}</span>
+        <span class="tier-pill ${item.tier}" style="margin-left:8px">${item.tier}</span>
+        <div class="activity-meta">${escapeHtml(item.site || item.mine_site || 'Unknown site')}${item.advice_line ? ' · ' + escapeHtml(item.advice_line) : ''}</div>
+      </div>
+      ${showChannel ? `<span class="activity-channel">${escapeHtml(item.channel || '')}</span>` : ''}
+      <span class="activity-time">${relativeTime(item.created_at)}</span>
+    </div>`;
+}
+
+// ── Relative time ("2m ago", "3h ago") ──────────────────────────
+// SQLite stores UTC without a 'Z' suffix — append it so Date parses it as
+// UTC rather than assuming local time, which would throw the diff off by
+// the viewer's own timezone offset.
+function relativeTime(isoLike) {
+  if (!isoLike) return '—';
+  const iso = isoLike.includes('T') ? isoLike : isoLike.replace(' ', 'T') + 'Z';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return isoLike;
+  const diffSec = Math.round((Date.now() - then) / 1000);
+  if (diffSec < 5) return 'just now';
+  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return `${Math.floor(diffSec / 86400)}d ago`;
+}
+
+// ── Auto-refresh ─────────────────────────────────────────────────
+// Every 45s, only while the tab is actually visible — a dashboard left
+// open on a second monitor during the demo stays current without anyone
+// touching Refresh, but a backgrounded tab doesn't keep hammering the API.
+let _autoRefreshTimer = null;
+function startAutoRefresh() {
+  stopAutoRefresh();
+  _autoRefreshTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && _token) loadAll();
+  }, 45000);
+}
+function stopAutoRefresh() {
+  if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+}
+
 // ── UI helpers ────────────────────────────────────────────────
 function showWakeBanner(show) { $('wake-banner').hidden = !show; }
 function showError(msg) { const el = $('error-banner'); el.textContent = `⚠ ${msg}`; el.hidden = false; }
@@ -240,6 +427,7 @@ $('login-form').addEventListener('submit', async (e) => {
     $('login-screen').hidden = true;
     $('dashboard').hidden = false;
     await loadAll();
+    startAutoRefresh();
   } catch (err) {
     $('login-error').textContent = err.message || 'Login failed.';
     $('login-error').hidden = false;
@@ -252,9 +440,19 @@ $('login-form').addEventListener('submit', async (e) => {
 $('refresh-btn').addEventListener('click', loadAll);
 $('logout-btn').addEventListener('click', logout);
 
+$('miner-search').addEventListener('input', (e) => {
+  _minerFilter.search = e.target.value;
+  renderMinersTable();
+});
+$('miner-tier-filter').addEventListener('change', (e) => {
+  _minerFilter.tier = e.target.value;
+  renderMinersTable();
+});
+
 // If a token survived a page refresh (sessionStorage), skip straight to the dashboard.
 if (_token) {
   $('login-screen').hidden = true;
   $('dashboard').hidden = false;
   loadAll();
+  startAutoRefresh();
 }
