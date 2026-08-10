@@ -16,6 +16,7 @@ from models import (
     WatchSection,
 )
 from routers.auth import get_current_user
+from services.outreach import visit_to_out
 from services.population_intelligence import generate_weekly_narrative
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
@@ -82,8 +83,15 @@ def dashboard_today(site: Optional[str] = None):
     'Watch' = miners whose most recent screening is YELLOW (moderate risk,
     "watch closely" per services/tier_messages.py) and who never get a
     referral row at all — so this is sourced from screenings, not referrals.
-    optional ?site= filters all four sections by miners.mine_site
-    (case-insensitive), matching the VHW's current outreach site."""
+    'outreach_visits' (10 August) reuses services/outreach.visit_to_out —
+    the same per-visit shape (screened/expected headcount, report-ready
+    tier_distribution/referral_list) GET /api/outreach returns to a
+    logged-in coordinator, here unauthenticated for the VHW's Outreach
+    Stats screen.
+
+    optional ?site= filters all five sections by miners.mine_site /
+    outreach_visits.site (case-insensitive), matching the VHW's current
+    outreach site."""
     conn = get_connection()
     try:
         site_filter = "AND LOWER(m.mine_site) = LOWER(?)" if site else ""
@@ -130,11 +138,22 @@ def dashboard_today(site: Optional[str] = None):
         ).fetchall()
         watch_items = [WatchItem(**dict(row)) for row in watch_rows]
 
+        # Outreach Stats (10 August) — same shared mapping GET /api/outreach
+        # uses, so a VHW with no login sees exactly the same visit data a
+        # logged-in coordinator would, just scoped to their current site.
+        outreach_filter = "WHERE LOWER(site) = LOWER(?)" if site else ""
+        outreach_rows = conn.execute(
+            f"SELECT * FROM outreach_visits {outreach_filter} ORDER BY scheduled_date DESC",
+            site_args,
+        ).fetchall()
+        outreach_visits = [visit_to_out(conn, row) for row in outreach_rows]
+
         return DashboardTodayOut(
             screened_today=len(todays_log),
             todays_log=todays_log,
             refer_now=ReferNowSection(count=len(refer_now_items), items=refer_now_items),
             watch=WatchSection(count=len(watch_items), items=watch_items),
+            outreach_visits=outreach_visits,
         )
     finally:
         conn.close()

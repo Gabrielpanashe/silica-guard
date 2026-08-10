@@ -63,6 +63,11 @@ export default function ResultScreen({ navigation, route }) {
         advice_line: screening.advice_line,
         provisional: screening.provisional,
         previous_screening_id: screening.previous_screening_id,
+        // Longitudinal Deterioration Detection — the backend has always
+        // returned this (5 August), it was just never captured here, so
+        // a re-screened miner never showed anything different from a
+        // brand-new one. { compared_to_screening_id, changed, summary }.
+        deterioration: screening.deterioration,
       });
       setOffline(false);
     } catch (err) {
@@ -167,6 +172,30 @@ export default function ResultScreen({ navigation, route }) {
           <Text style={s.minerSub}>{miner.mine_site} · {miner.phone}</Text>
         </View>
 
+        {/* Longitudinal Deterioration Detection — only shows on a re-screen
+            (previous_screening_id is null on a worker's first-ever screening,
+            and absent entirely in the offline-fallback path, which has no
+            way to look up a previous screening locally). */}
+        {result.deterioration && result.previous_screening_id && (
+          <View
+            style={[
+              s.deteriorationCard,
+              { borderColor: result.deterioration.changed ? colours.watch : colours.mint },
+            ]}
+          >
+            <Text style={s.cardEyebrow}>SINCE LAST SCREENING</Text>
+            <Text
+              style={[
+                s.deteriorationText,
+                { color: result.deterioration.changed ? colours.watch : colours.offwhite },
+              ]}
+            >
+              {result.deterioration.changed ? '⚠ ' : '✓ '}
+              {result.deterioration.summary}
+            </Text>
+          </View>
+        )}
+
         {/* English explanation */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>CLINICAL EXPLANATION</Text>
@@ -261,6 +290,8 @@ const s = StyleSheet.create({
   cardEyebrow: { fontSize: typography.micro, color: colours.teal, fontWeight: typography.bold, letterSpacing: 2, marginBottom: spacing.xs },
   minerName: { fontSize: typography.subtitle, fontWeight: typography.black, color: colours.white },
   minerSub: { fontSize: typography.caption, color: colours.muted, marginTop: spacing.xs },
+  deteriorationCard: { backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1.5, borderLeftWidth: 4, padding: spacing.lg, marginBottom: spacing.lg },
+  deteriorationText: { fontSize: typography.body, fontWeight: typography.semibold, lineHeight: 21, marginTop: spacing.xs },
   section: { marginBottom: spacing.lg },
   sectionLabel: { fontSize: typography.micro, fontWeight: typography.bold, color: colours.teal, letterSpacing: 2, marginBottom: spacing.md },
   explanationText: { fontSize: typography.body, color: colours.offwhite, lineHeight: 22 },

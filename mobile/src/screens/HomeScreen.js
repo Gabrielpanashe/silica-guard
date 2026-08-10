@@ -1,17 +1,81 @@
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Alert, Linking } from 'react-native';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius } from '../theme';
 import StatCard from '../components/StatCard';
 import SyncPill from '../components/SyncPill';
 import SecondaryButton from '../components/SecondaryButton';
+import { getDashboardToday } from '../services/api';
+
+// Matches the outreach banner below — kept as one constant so the numbers
+// shown and the site the banner claims to be at never disagree. TARGET:
+// once there's a real "which outreach visit is active" signal available
+// without auth, both this and the banner text should come from that
+// instead of being hardcoded here.
+const OUTREACH_SITE = 'Globe & Phoenix Mine';
+
+// The Intelligence Dashboard (dashboard/, 9-10 August) — a separate static
+// web page, not part of this app, deployed to Render as a Static Site
+// (dashboard/index.html + style.css + app.js, no build step). Opened in
+// the phone's own browser, same one-tap pattern as every other secondary
+// action here.
+const DASHBOARD_URL = 'https://silicaguard-dashboard.onrender.com';
+
+const EMPTY_TODAY = {
+  screened_today: 0,
+  todays_log: [],
+  refer_now: { count: 0, items: [] },
+  watch: { count: 0, items: [] },
+};
 
 export default function HomeScreen({ navigation }) {
   const today = new Date().toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  // Mock session stats — will come from local DB / API later
-  const stats = { screened: 0, refer: 0, watch: 0 };
+  // Real numbers from GET /api/dashboard/today (7 August) — previously
+  // hardcoded to zero. Re-fetched every time this screen gains focus (not
+  // just on mount) so returning here after a screening shows the update
+  // without needing a manual refresh. Fails silently to EMPTY_TODAY on any
+  // error (offline, cold Render instance) — this data is never allowed to
+  // block the primary "Screen New Miner" action.
+  const [stats, setStats] = useState(EMPTY_TODAY);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      getDashboardToday(OUTREACH_SITE)
+        .then((data) => { if (!cancelled) setStats(data); })
+        .catch(() => { if (!cancelled) setStats(EMPTY_TODAY); });
+      return () => { cancelled = true; };
+    }, [])
+  );
+
+  const openWorklist = (kind) => {
+    const configByKind = {
+      refer_now: { title: 'Refer Now', shonaTitle: 'Tumira Chipatara Izvozvi', items: stats.refer_now.items },
+      watch:     { title: 'Watch',     shonaTitle: 'Tarisa Zvakanyanya',       items: stats.watch.items },
+      log:       { title: "Today's Log", shonaTitle: 'Zvakaitika Nhasi',       items: stats.todays_log },
+    };
+    navigation.navigate('Worklist', { kind, ...configByKind[kind] });
+  };
+
+  const comingSoon = (feature) =>
+    Alert.alert('Coming soon', `${feature} isn't built yet.`);
+
+  // No site param — Outreach Stats shows every scheduled visit across every
+  // mine, not just wherever this Home screen is currently scoped to. Home's
+  // own live numbers above stay scoped to OUTREACH_SITE (the VHW is
+  // physically at one site during a visit); the stats screen is the
+  // cross-site rollup a coordinator actually needs.
+  const openOutreachStats = () => navigation.navigate('OutreachStats');
+
+  const openDashboard = () => {
+    Linking.openURL(DASHBOARD_URL).catch(() =>
+      Alert.alert('Could not open Dashboard', 'Check your connection and try again.')
+    );
+  };
 
   return (
     <SafeAreaView style={s.root}>
@@ -43,12 +107,28 @@ export default function HomeScreen({ navigation }) {
         </View>
       </View>
 
-      {/* ── STATS ── */}
+      {/* ── STATS — real numbers, tappable (7 August) ── */}
       <View style={s.statsRow}>
-        <StatCard value={stats.screened} label="Screened Today" colour={colours.mint} large />
+        <StatCard
+          value={stats.screened_today}
+          label="Screened Today"
+          colour={colours.mint}
+          large
+          onPress={() => openWorklist('log')}
+        />
         <View style={s.statCol}>
-          <StatCard value={stats.refer} label="Refer Now" colour={colours.refer} />
-          <StatCard value={stats.watch} label="Watch" colour={colours.watch} />
+          <StatCard
+            value={stats.refer_now.count}
+            label="Refer Now"
+            colour={colours.refer}
+            onPress={() => openWorklist('refer_now')}
+          />
+          <StatCard
+            value={stats.watch.count}
+            label="Watch"
+            colour={colours.watch}
+            onPress={() => openWorklist('watch')}
+          />
         </View>
       </View>
 
@@ -68,22 +148,36 @@ export default function HomeScreen({ navigation }) {
         <View style={s.ctaShadow} />
       </TouchableOpacity>
 
-      {/* ── SECONDARY ACTIONS ── */}
+      {/* ── SECONDARY ACTIONS ──
+          "Today's Log" opens WorklistScreen (GET /api/dashboard/today).
+          "Outreach Stats" now opens OutreachStatsScreen too (10 August) —
+          the same endpoint gained an unauthenticated outreach_visits field,
+          reusing the exact mapping GET /api/outreach uses for a logged-in
+          coordinator, so this VHW-facing view can never disagree with it.
+          "Settings" has nothing behind it yet — stays an honest
+          "coming soon" (7 August fix; previously these three navigate()
+          calls all pointed at unregistered screens, which is what was
+          producing the "action NAVIGATE not handled" warning). */}
       <View style={s.secondRow}>
         <SecondaryButton
           icon="📋" label={'Today\'s\nLog'}
           colour={colours.teal}
-          onPress={() => navigation.navigate('Log')}
+          onPress={() => openWorklist('log')}
         />
         <SecondaryButton
           icon="📊" label={'Outreach\nStats'}
           colour={colours.purple}
-          onPress={() => navigation.navigate('Stats')}
+          onPress={openOutreachStats}
+        />
+        <SecondaryButton
+          icon="🖥️" label="Dashboard"
+          colour={colours.mint}
+          onPress={openDashboard}
         />
         <SecondaryButton
           icon="⚙️" label="Settings"
           colour={colours.muted}
-          onPress={() => navigation.navigate('Settings')}
+          onPress={() => comingSoon('Settings')}
         />
       </View>
     </SafeAreaView>

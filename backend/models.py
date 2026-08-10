@@ -175,6 +175,12 @@ class DashboardTodayOut(BaseModel):
     todays_log: List[TodaysLogItem]
     refer_now: ReferNowSection
     watch: WatchSection
+    # 10 August: powers the mobile app's Outreach Stats screen, previously
+    # a "coming soon" placeholder because GET /api/outreach requires auth
+    # and the VHW mobile flow has no login. Same OutreachVisitOut shape as
+    # that authenticated route — see services/outreach.visit_to_out, the
+    # single shared mapping both endpoints use.
+    outreach_visits: List[OutreachVisitOut] = []
 
 
 class MinerSummary(BaseModel):

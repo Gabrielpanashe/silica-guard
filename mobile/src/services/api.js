@@ -113,13 +113,12 @@ export const getWorkerByPhone = async (phone) => {
  *   tier                  "GREEN" | "YELLOW" | "ORANGE" | "RED"
  *   confidence            0.0–1.0
  *   explanation_english   string
+ *   explanation_shona     string  (live since 7 August — always populated)
  *   contributing_factors  string[]
- *   advice_line           null (not built yet)
+ *   advice_line           string  (always populated, template-bound)
  *   previous_screening_id number | null
  *   provisional           boolean
- *
- * STILL TARGET (not in response yet):
- *   explanation_shona, populated advice_line, deterioration object
+ *   deterioration         { compared_to_screening_id, changed, summary }
  *
  * Error 404: unknown miner_id
  * Error 422: empty answers
@@ -195,6 +194,63 @@ export const updateReferralStatus = async (referralId, status) => {
 export const getDashboardWeek = async () => {
   const res = await fetch(`${BASE_URL}/api/dashboard/week`, {
     headers: authHeaders(),
+  });
+  return handleResponse(res);
+};
+
+/**
+ * Today's live VHW numbers — Screened Today / Refer Now / Watch / Today's Log.
+ * GET /api/dashboard/today — unauthenticated (same field-worker precedent
+ * as everything above), live since 7 August.
+ *
+ * @param {string} [site] — optional, filters every section to one mine site
+ *
+ * Response:
+ *   screened_today  number
+ *   todays_log      [{ screening_id, miner_name, phone, mine_site, tier, created_at }]
+ *   refer_now       { count, items: [{ referral_id, miner_name, phone, mine_site, tier, status, deadline }] }
+ *   watch           { count, items: [{ screening_id, miner_name, phone, mine_site, tier, created_at }] }
+ *
+ * refer_now is a live worklist (not scoped to today) — an item drops off
+ * once its status becomes attended/closed. watch reflects each miner's
+ * most recent screening only.
+ *
+ * outreach_visits (live 10 August) — [{ id, site, scheduled_date,
+ * expected_headcount, screened_count, report_generated, tier_distribution,
+ * referral_list }], same shape GET /api/outreach returns to a logged-in
+ * coordinator. tier_distribution/referral_list are null until
+ * report_generated is true. Powers the Outreach Stats screen.
+ */
+export const getDashboardToday = async (site) => {
+  const query = site ? `?site=${encodeURIComponent(site)}` : '';
+  const res = await fetch(`${BASE_URL}/api/dashboard/today${query}`);
+  return handleResponse(res);
+};
+
+// ── MINES ─────────────────────────────────────────────────────
+/**
+ * List mine sites for the outreach-site dropdown.
+ * GET /api/mines — unauthenticated, live since 7 August.
+ *
+ * Response: [{ id, name, district, province }], ordered by district then name.
+ */
+export const getMines = async () => {
+  const res = await fetch(`${BASE_URL}/api/mines`);
+  return handleResponse(res);
+};
+
+/**
+ * Add a mine that isn't in the list yet.
+ * POST /api/mines — unauthenticated.
+ *
+ * @param {object} mine — { name, district, province = "Midlands" }
+ * Error 409: name already registered
+ */
+export const createMine = async ({ name, district, province = 'Midlands' }) => {
+  const res = await fetch(`${BASE_URL}/api/mines`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, district, province }),
   });
   return handleResponse(res);
 };

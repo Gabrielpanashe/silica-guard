@@ -7,6 +7,8 @@ import IntakeScreen from './src/screens/IntakeScreen';
 import QuestionScreen from './src/screens/QuestionScreen';
 import ResultScreen from './src/screens/ResultScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
+import WorklistScreen from './src/screens/WorklistScreen';
+import OutreachStatsScreen from './src/screens/OutreachStatsScreen';
 
 const Stack = createStackNavigator();
 
@@ -19,6 +21,8 @@ export default function App() {
         <Stack.Screen name="Question" component={QuestionScreen} />
         <Stack.Screen name="Result"   component={ResultScreen} />
         <Stack.Screen name="Referral" component={ReferralScreen} />
+        <Stack.Screen name="Worklist" component={WorklistScreen} />
+        <Stack.Screen name="OutreachStats" component={OutreachStatsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

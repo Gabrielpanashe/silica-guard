@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Sequence
 
 from database import get_connection
+from models import OutreachVisitOut, ReferralListItem
 from services import notifications
 
 logger = logging.getLogger("silicaguard.outreach")
@@ -184,3 +185,23 @@ def build_visit_report(conn, visit_row) -> tuple[Optional[dict], Optional[list]]
     ]
 
     return tier_distribution, referral_list
+
+
+def visit_to_out(conn, row) -> OutreachVisitOut:
+    """One shared mapping from an outreach_visits row to the API shape,
+    used by both GET/POST /api/outreach (routers/outreach.py) and
+    GET /api/dashboard/today (routers/dashboard.py, 10 August) — previously
+    duplicated as a private _visit_row_to_out only in routers/outreach.py;
+    factored out here so the VHW's unauthenticated Outreach Stats view and
+    the coordinator's authenticated /api/outreach view can never drift."""
+    tier_distribution, referral_list = build_visit_report(conn, row)
+    return OutreachVisitOut(
+        id=row["id"],
+        site=row["site"],
+        scheduled_date=row["scheduled_date"],
+        expected_headcount=row["expected_headcount"],
+        screened_count=row["screened_count"],
+        report_generated=bool(row["report_generated"]),
+        tier_distribution=tier_distribution,
+        referral_list=[ReferralListItem(**item) for item in referral_list] if referral_list is not None else None,
+    )

@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { colours, typography, spacing, radius } from '../theme';
 
 /**
@@ -8,15 +8,23 @@ import { colours, typography, spacing, radius } from '../theme';
  *   label      — text below the number
  *   colour     — border + number colour (defaults to mint)
  *   large      — bool, makes the number bigger (for "Screened Today")
+ *   onPress    — optional. When provided, the card becomes tappable
+ *                (used for Refer Now / Watch drill-down lists) — omit
+ *                for a plain, non-interactive card.
  */
-export default function StatCard({ value = 0, label = '', colour = colours.mint, large = false }) {
+export default function StatCard({ value = 0, label = '', colour = colours.mint, large = false, onPress }) {
+  const Wrapper = onPress ? TouchableOpacity : View;
   return (
-    <View style={[s.card, { borderColor: colour }, large && s.cardLarge]}>
+    <Wrapper
+      style={[s.card, { borderColor: colour }, large && s.cardLarge]}
+      onPress={onPress}
+      activeOpacity={onPress ? 0.75 : 1}
+    >
       <Text style={[s.value, { color: colour }, large && s.valueLarge]}>
         {value}
       </Text>
       <Text style={s.label}>{label}</Text>
-    </View>
+    </Wrapper>
   );
 }
 

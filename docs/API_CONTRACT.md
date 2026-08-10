@@ -379,7 +379,10 @@ Optional query param `?site=<name>` (case-insensitive exact match against `miner
     "items": [
       { "screening_id": 39, "miner_name": "Blessing Sithole", "phone": "+263771000003", "mine_site": "Globe & Phoenix Mine", "tier": "YELLOW", "created_at": "2026-07-18 11:48:55" }
     ]
-  }
+  },
+  "outreach_visits": [
+    { "id": 2, "site": "Sherwood Mine", "scheduled_date": "2026-07-31", "expected_headcount": 5, "screened_count": 2, "report_generated": true, "tier_distribution": { "GREEN": 1, "YELLOW": 0, "ORANGE": 1, "RED": 0 }, "referral_list": [ { "miner_name": "Kudakwashe Marecha", "tier": "ORANGE", "status": "attended" } ] }
+  ]
 }
 ```
 
@@ -388,6 +391,8 @@ Optional query param `?site=<name>` (case-insensitive exact match against `miner
 `refer_now` is a **live worklist, not scoped to today** — any referral with `status` in `open`/`pre_alerted`/`reminded`/`escalated`. It drops off once `PATCH /api/referrals/{id}` sets `status` to `attended` or `closed` — that's how "have they taken action" gets answered by re-polling this endpoint, using the contact details already in each item.
 
 `watch` = miners whose **most recent** screening (not just any screening) is `YELLOW` — YELLOW never creates a referral, so this is sourced from `screenings`, not `referrals`. A miner whose YELLOW screening was later superseded by a re-screen of any tier drops off this list.
+
+`outreach_visits` (**LIVE 10 August 2026**, same shape as `GET /api/outreach`'s items below) — powers the mobile app's Outreach Stats screen, which previously had no unauthenticated data source to show. Uses the exact same mapping (`services/outreach.visit_to_out`) as the authenticated coordinator route, so the two views can never disagree about a visit's report. `tier_distribution`/`referral_list` are `null` until `report_generated` is `true`.
 
 ### `GET /api/dashboard/week` — LIVE (Population Health Intelligence)
 

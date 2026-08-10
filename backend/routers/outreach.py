@@ -3,9 +3,9 @@ import json
 from fastapi import APIRouter, Depends
 
 from database import get_connection
-from models import OutreachVisitCreate, OutreachVisitOut, ReferralListItem
+from models import OutreachVisitCreate, OutreachVisitOut
 from routers.auth import get_current_user
-from services.outreach import build_visit_report
+from services.outreach import visit_to_out
 
 router = APIRouter(prefix="/api", tags=["outreach"])
 
@@ -13,20 +13,10 @@ router = APIRouter(prefix="/api", tags=["outreach"])
 # /api/screen — this is a coordinator/dashboard action, not a field action.
 # A deliberate deviation from the unauthenticated shape drafted earlier in
 # docs/API_CONTRACT.md's TARGET section for this route.
-
-
-def _visit_row_to_out(conn, row) -> OutreachVisitOut:
-    tier_distribution, referral_list = build_visit_report(conn, row)
-    return OutreachVisitOut(
-        id=row["id"],
-        site=row["site"],
-        scheduled_date=row["scheduled_date"],
-        expected_headcount=row["expected_headcount"],
-        screened_count=row["screened_count"],
-        report_generated=bool(row["report_generated"]),
-        tier_distribution=tier_distribution,
-        referral_list=[ReferralListItem(**item) for item in referral_list] if referral_list is not None else None,
-    )
+#
+# The row->response mapping (previously a private _visit_row_to_out here)
+# moved to services/outreach.visit_to_out on 10 August, shared with
+# GET /api/dashboard/today's new outreach_visits field.
 
 
 @router.post("/outreach", response_model=OutreachVisitOut, status_code=201)
@@ -43,7 +33,7 @@ def create_outreach_visit(payload: OutreachVisitCreate, user: dict = Depends(get
         row = conn.execute(
             "SELECT * FROM outreach_visits WHERE id = ?", (cur.lastrowid,)
         ).fetchone()
-        return _visit_row_to_out(conn, row)
+        return visit_to_out(conn, row)
     finally:
         conn.close()
 
@@ -55,6 +45,6 @@ def list_outreach_visits(user: dict = Depends(get_current_user)):
         rows = conn.execute(
             "SELECT * FROM outreach_visits ORDER BY scheduled_date DESC"
         ).fetchall()
-        return [_visit_row_to_out(conn, row) for row in rows]
+        return [visit_to_out(conn, row) for row in rows]
     finally:
         conn.close()
