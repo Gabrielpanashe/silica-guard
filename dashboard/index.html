@@ -38,10 +38,14 @@
         <span class="brand-word">SILICA</span><span class="brand-accent">Guard<span class="brand-dot">●</span></span>
       </div>
       <div class="topbar-right">
-        <span id="role-badge" class="role-badge"></span>
-        <span id="last-updated" class="muted small"></span>
-        <button id="refresh-btn" class="btn-ghost">↻ Refresh</button>
-        <button id="logout-btn" class="btn-ghost">Sign out</button>
+        <div class="topbar-status">
+          <span id="role-badge" class="role-badge"></span>
+          <span id="last-updated" class="muted small"></span>
+        </div>
+        <div class="topbar-buttons">
+          <button id="refresh-btn" class="btn-ghost">↻ Refresh</button>
+          <button id="logout-btn" class="btn-ghost btn-signout">Sign out</button>
+        </div>
       </div>
     </header>
 
@@ -189,7 +193,29 @@
       <!-- Outreach Planner -->
       <section class="card" id="section-outreach">
         <h2 class="card-h">Outreach Planner</h2>
-        <p class="card-sub">Scheduled site visits — bulk SMS reminders, live screened-count tracking, auto-generated post-visit reports</p>
+        <p class="card-sub">Schedule a site visit — bulk SMS reminders go out 3 days and 1 day before, screened count tracks live on visit day, a post-visit report generates automatically</p>
+
+        <form id="outreach-form" class="outreach-form">
+          <div class="outreach-form-row">
+            <div class="outreach-form-field">
+              <label class="field-label" for="outreach-site-input">Site</label>
+              <input id="outreach-site-input" class="search-input" type="text" list="mines-datalist" placeholder="Select or type a mine…" required autocomplete="off" />
+              <datalist id="mines-datalist"></datalist>
+            </div>
+            <div class="outreach-form-field outreach-form-field-narrow">
+              <label class="field-label" for="outreach-date-input">Visit date</label>
+              <input id="outreach-date-input" class="search-input" type="date" required />
+            </div>
+            <div class="outreach-form-field outreach-form-field-narrow">
+              <label class="field-label" for="outreach-headcount-input">Expected miners</label>
+              <input id="outreach-headcount-input" class="search-input" type="number" min="1" placeholder="e.g. 40" required />
+            </div>
+            <button type="submit" id="outreach-submit-btn" class="btn-ghost btn-schedule">+ Schedule visit</button>
+          </div>
+          <p id="outreach-form-error" class="error-text" hidden></p>
+          <p id="outreach-form-success" class="outreach-form-success" hidden></p>
+        </form>
+
         <div id="outreach-list" class="outreach-list"></div>
       </section>
 

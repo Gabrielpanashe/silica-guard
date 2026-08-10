@@ -68,13 +68,14 @@ async function loadAll() {
   showWakeBanner(true);
   hideError();
   try {
-    const [week, referrals, outreach, miners, screenings, today] = await Promise.all([
+    const [week, referrals, outreach, miners, screenings, today, mines] = await Promise.all([
       fetchJSON('/api/dashboard/week', { headers: authHeaders() }),
       fetchJSON('/api/referrals', { headers: authHeaders() }),
       fetchJSON('/api/outreach', { headers: authHeaders() }),
       fetchJSON('/api/miners', { headers: authHeaders() }),
       fetchJSON('/api/screenings?limit=100', { headers: authHeaders() }),
       fetchJSON('/api/dashboard/today', {}), // unauthenticated by design, no headers needed
+      fetchJSON('/api/mines', {}), // unauthenticated by design, powers the outreach form's site datalist
     ]);
     showWakeBanner(false);
     renderStats(week, referrals, today);
@@ -83,6 +84,7 @@ async function loadAll() {
     renderSiteBreakdown(week.site_breakdown);
     renderReferralTable(referrals);
     renderOutreach(outreach);
+    renderMinesDatalist(mines);
     _miners = miners;
     renderMinersTable();
     renderScreeningsLog(screenings);
@@ -214,15 +216,27 @@ function renderOutreach(visits) {
       const pct = v.expected_headcount > 0 ? Math.min((v.screened_count / v.expected_headcount) * 100, 100) : 0;
       let reportHtml = '';
       if (v.report_generated && v.tier_distribution) {
+        const refs = v.referral_list || [];
+        const attended = refs.filter((r) => ['attended', 'closed'].includes(r.status)).length;
+        const pending = refs.length - attended;
+        const highRisk = (v.tier_distribution.ORANGE ?? 0) + (v.tier_distribution.RED ?? 0);
         const tiers = TIER_ORDER.map((t) => `<span style="color:${TIER_COLOUR[t]}">${t}: ${v.tier_distribution[t] ?? 0}</span>`).join(' &nbsp;·&nbsp; ');
-        const refs = (v.referral_list || [])
+        const refRows = refs
           .map((r) => `<div class="outreach-referral-row"><span>${escapeHtml(r.miner_name)} — ${r.tier}</span><span>${r.status.replace('_', ' ')}</span></div>`)
           .join('');
         reportHtml = `
           <div class="outreach-report">
+            <div class="outreach-summary-row">
+              <div class="outreach-summary-stat"><span class="outreach-summary-value">${v.screened_count}</span><span class="outreach-summary-label">Screened</span></div>
+              <div class="outreach-summary-stat"><span class="outreach-summary-value" style="color:var(--mint)">${attended}</span><span class="outreach-summary-label">Attended</span></div>
+              <div class="outreach-summary-stat"><span class="outreach-summary-value" style="color:var(--watch)">${pending}</span><span class="outreach-summary-label">Pending referral</span></div>
+              <div class="outreach-summary-stat"><span class="outreach-summary-value" style="color:var(--refer)">${highRisk}</span><span class="outreach-summary-label">High risk</span></div>
+            </div>
             <div class="outreach-report-tiers">${tiers}</div>
-            ${refs || '<p class="muted small">No referrals from this visit.</p>'}
+            ${refRows || '<p class="muted small">No referrals from this visit.</p>'}
           </div>`;
+      } else if (!v.report_generated) {
+        reportHtml = `<p class="outreach-pending-note">Report generates automatically once ${escapeHtml(v.scheduled_date)} has passed.</p>`;
       }
       return `
         <div class="outreach-item">
@@ -238,6 +252,53 @@ function renderOutreach(visits) {
         </div>`;
     })
     .join('');
+}
+
+// ── RENDER: mines datalist (Outreach Planner site field) ───────
+function renderMinesDatalist(mines) {
+  const el = $('mines-datalist');
+  el.innerHTML = (mines || []).map((m) => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.district || '')}</option>`).join('');
+}
+
+// ── Outreach Planner: schedule a new visit ──────────────────────
+async function scheduleOutreachVisit(e) {
+  e.preventDefault();
+  const errEl = $('outreach-form-error');
+  const okEl = $('outreach-form-success');
+  errEl.hidden = true;
+  okEl.hidden = true;
+
+  const site = $('outreach-site-input').value.trim();
+  const scheduled_date = $('outreach-date-input').value;
+  const expected_headcount = parseInt($('outreach-headcount-input').value, 10);
+
+  if (!site || !scheduled_date || !expected_headcount || expected_headcount < 1) {
+    errEl.textContent = 'Fill in site, date and expected headcount.';
+    errEl.hidden = false;
+    return;
+  }
+
+  const btn = $('outreach-submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Scheduling…';
+  try {
+    await fetchJSON('/api/outreach', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ site, scheduled_date, expected_headcount, health_workers: [] }),
+    });
+    okEl.textContent = `✓ Visit scheduled at ${site} for ${scheduled_date}.`;
+    okEl.hidden = false;
+    $('outreach-site-input').value = '';
+    $('outreach-headcount-input').value = '';
+    await loadAll();
+  } catch (err) {
+    errEl.textContent = err.message || 'Failed to schedule visit.';
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '+ Schedule visit';
+  }
 }
 
 // ── RENDER: Miners directory ───────────────────────────────────
@@ -448,6 +509,14 @@ $('miner-tier-filter').addEventListener('change', (e) => {
   _minerFilter.tier = e.target.value;
   renderMinersTable();
 });
+
+$('outreach-form').addEventListener('submit', scheduleOutreachVisit);
+// Default the planner's date field to tomorrow — a visit scheduled for
+// today would already be past next scheduler tick's SMS windows.
+{
+  const tomorrow = new Date(Date.now() + 86400000);
+  $('outreach-date-input').value = tomorrow.toISOString().slice(0, 10);
+}
 
 // If a token survived a page refresh (sessionStorage), skip straight to the dashboard.
 if (_token) {

@@ -89,22 +89,29 @@ body {
 .login-footnote { font-size: 11px; color: var(--muted); margin-top: 16px; text-align: center; }
 .error-text { color: var(--refer); font-size: 13px; margin-top: 12px; }
 
-/* ── Topbar ── */
+/* ── Topbar ──
+   Two groups on the right (status, buttons) rather than one flat row, so
+   mobile can collapse them onto a second line as a unit instead of the
+   whole row squeezing/overflowing on a phone-width viewport. */
 .topbar {
   display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; row-gap: 10px;
   padding: 16px 28px; border-bottom: 1px solid var(--border);
   position: sticky; top: 0; background: var(--navy); z-index: 10;
 }
-.topbar-right { display: flex; align-items: center; gap: 14px; }
+.topbar-right { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.topbar-status { display: flex; align-items: center; gap: 10px; }
+.topbar-buttons { display: flex; align-items: center; gap: 10px; padding-left: 22px; border-left: 1px solid var(--border); }
 .btn-ghost {
   background: var(--card); border: 1px solid var(--border-strong); color: var(--offwhite);
   border-radius: 999px; padding: 7px 16px; font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
 .btn-ghost:hover { border-color: var(--teal); color: var(--teal); }
+.btn-signout:hover { border-color: var(--refer); color: var(--refer); }
 .role-badge {
   font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px;
   background: rgba(2,195,154,0.15); color: var(--mint); border: 1px solid rgba(2,195,154,0.4);
-  border-radius: 999px; padding: 4px 10px;
+  border-radius: 999px; padding: 4px 10px; white-space: nowrap;
 }
 
 /* ── Section nav ── */
@@ -225,6 +232,34 @@ body {
 .outreach-report { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12.5px; }
 .outreach-report-tiers { display: flex; gap: 14px; margin-bottom: 8px; flex-wrap: wrap; }
 .outreach-referral-row { display: flex; justify-content: space-between; padding: 4px 0; color: var(--muted); }
+.outreach-pending-note { color: var(--muted); font-size: 12.5px; font-style: italic; margin-top: 10px; }
+
+/* Per-visit summary stats (attended / pending / high-risk) — same "number
+   over label" pattern as the top-level stat row, scaled down for a card. */
+.outreach-summary-row {
+  display: flex; gap: 22px; margin-bottom: 12px; padding-bottom: 12px;
+  border-bottom: 1px solid var(--border); flex-wrap: wrap;
+}
+.outreach-summary-stat { display: flex; flex-direction: column; gap: 2px; }
+.outreach-summary-value { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.outreach-summary-label { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+
+/* Outreach Planner form — schedule a new visit */
+.outreach-form {
+  background: var(--card-2); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 16px; margin: 4px 0 20px;
+}
+.outreach-form-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.outreach-form-field { flex: 2; min-width: 160px; display: flex; flex-direction: column; }
+.outreach-form-field-narrow { flex: 1; min-width: 130px; }
+.outreach-form-field .field-label { margin: 0 0 6px; }
+.btn-schedule {
+  background: var(--teal); color: var(--white); border: 1.5px solid var(--mint);
+  font-weight: 700; padding: 10px 18px; white-space: nowrap;
+}
+.btn-schedule:hover { filter: brightness(1.1); border-color: var(--mint); color: var(--white); }
+.btn-schedule:disabled { opacity: 0.6; cursor: wait; }
+.outreach-form-success { color: var(--mint); font-size: 13px; margin-top: 10px; }
 
 .page-footer { text-align: center; color: var(--muted); font-size: 11.5px; padding: 30px 0 10px; }
 
@@ -286,6 +321,15 @@ body {
   .statrow { grid-template-columns: repeat(2, 1fr); }
   .grid-2 { grid-template-columns: 1fr; }
   .content { padding: 20px 16px 50px; }
-  .topbar { padding: 14px 16px; }
-  .sectionnav { top: 53px; }
+  .topbar { padding: 12px 16px; }
+  /* Right-side group becomes its own full-width row under the brand,
+     rather than four items squeezing into one line — width:100% on a
+     flex child forces it past its siblings onto a new line. */
+  .topbar-right { width: 100%; justify-content: space-between; gap: 10px; }
+  .topbar-buttons { padding-left: 0; border-left: none; }
+  .role-badge { font-size: 10px; padding: 3px 8px; }
+  #last-updated { font-size: 11px; }
+  .sectionnav { top: 92px; }
+  .outreach-form-row { flex-direction: column; align-items: stretch; }
+  .outreach-form-field-narrow { width: 100%; }
 }
