@@ -175,3 +175,32 @@ class DashboardTodayOut(BaseModel):
     todays_log: List[TodaysLogItem]
     refer_now: ReferNowSection
     watch: WatchSection
+
+
+class MinerSummary(BaseModel):
+    """One row per registered miner, for the dashboard's Miners directory —
+    10 August. Distinct from WorkerDetail (routers/workers.py): that's a
+    single-miner deep lookup by phone for the unauthenticated VHW re-screen
+    flow; this is the full roster for a logged-in coordinator."""
+    id: int
+    name: str
+    phone: str
+    site: Optional[str] = None
+    latest_tier: Optional[str] = None
+    screening_count: int
+    last_screened_at: Optional[str] = None
+    created_at: str
+
+
+class ScreeningLogItem(BaseModel):
+    """One row per screening, across every miner and channel — the
+    dashboard's All Screenings activity log, 10 August."""
+    id: int
+    miner_id: int
+    miner_name: str
+    phone: str
+    site: Optional[str] = None
+    tier: Optional[str] = None
+    channel: str
+    advice_line: Optional[str] = None
+    created_at: str
