@@ -26,6 +26,11 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+/* The browser's built-in `[hidden] { display:none }` rule is user-agent-origin,
+   so ANY author rule that sets `display` on the same element (e.g. .login-wrap's
+   `display:flex`) beats it regardless of specificity — the element stays visible
+   even with the hidden attribute set. Force it explicitly, everywhere, always. */
+[hidden] { display: none !important; }
 body {
   background: var(--navy);
   color: var(--offwhite);
