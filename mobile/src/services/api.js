@@ -214,6 +214,12 @@ export const getDashboardWeek = async () => {
  * refer_now is a live worklist (not scoped to today) — an item drops off
  * once its status becomes attended/closed. watch reflects each miner's
  * most recent screening only.
+ *
+ * outreach_visits (live 10 August) — [{ id, site, scheduled_date,
+ * expected_headcount, screened_count, report_generated, tier_distribution,
+ * referral_list }], same shape GET /api/outreach returns to a logged-in
+ * coordinator. tier_distribution/referral_list are null until
+ * report_generated is true. Powers the Outreach Stats screen.
  */
 export const getDashboardToday = async (site) => {
   const query = site ? `?site=${encodeURIComponent(site)}` : '';

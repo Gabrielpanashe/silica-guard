@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Alert, Linking } from 'react-native';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
@@ -14,6 +14,13 @@ import { getDashboardToday } from '../services/api';
 // without auth, both this and the banner text should come from that
 // instead of being hardcoded here.
 const OUTREACH_SITE = 'Globe & Phoenix Mine';
+
+// The Intelligence Dashboard (dashboard/, 9-10 August) — a separate static
+// web page, not part of this app, deployed to Render as a Static Site
+// (dashboard/index.html + style.css + app.js, no build step). Opened in
+// the phone's own browser, same one-tap pattern as every other secondary
+// action here.
+const DASHBOARD_URL = 'https://silicaguard-dashboard.onrender.com';
 
 const EMPTY_TODAY = {
   screened_today: 0,
@@ -56,6 +63,14 @@ export default function HomeScreen({ navigation }) {
 
   const comingSoon = (feature) =>
     Alert.alert('Coming soon', `${feature} isn't built yet.`);
+
+  const openOutreachStats = () => navigation.navigate('OutreachStats', { site: OUTREACH_SITE });
+
+  const openDashboard = () => {
+    Linking.openURL(DASHBOARD_URL).catch(() =>
+      Alert.alert('Could not open Dashboard', 'Check your connection and try again.')
+    );
+  };
 
   return (
     <SafeAreaView style={s.root}>
@@ -129,12 +144,13 @@ export default function HomeScreen({ navigation }) {
       </TouchableOpacity>
 
       {/* ── SECONDARY ACTIONS ──
-          "Today's Log" now opens a real screen (WorklistScreen, backed by
-          GET /api/dashboard/today). "Outreach Stats"/"Settings" have no
-          unauthenticated backend data to show yet — GET /api/outreach
-          requires a coordinator login this app doesn't have a flow for —
-          so they're an honest "coming soon" instead of a route that
-          doesn't exist (7 August fix; previously these three navigate()
+          "Today's Log" opens WorklistScreen (GET /api/dashboard/today).
+          "Outreach Stats" now opens OutreachStatsScreen too (10 August) —
+          the same endpoint gained an unauthenticated outreach_visits field,
+          reusing the exact mapping GET /api/outreach uses for a logged-in
+          coordinator, so this VHW-facing view can never disagree with it.
+          "Settings" has nothing behind it yet — stays an honest
+          "coming soon" (7 August fix; previously these three navigate()
           calls all pointed at unregistered screens, which is what was
           producing the "action NAVIGATE not handled" warning). */}
       <View style={s.secondRow}>
@@ -146,7 +162,12 @@ export default function HomeScreen({ navigation }) {
         <SecondaryButton
           icon="📊" label={'Outreach\nStats'}
           colour={colours.purple}
-          onPress={() => comingSoon('Outreach Stats')}
+          onPress={openOutreachStats}
+        />
+        <SecondaryButton
+          icon="🖥️" label="Dashboard"
+          colour={colours.mint}
+          onPress={openDashboard}
         />
         <SecondaryButton
           icon="⚙️" label="Settings"

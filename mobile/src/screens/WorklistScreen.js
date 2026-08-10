@@ -5,6 +5,19 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius, riskConfig } from '../theme';
 
+// Explicit colour-coded status, not just raw enum text — mint/checkmark for
+// resolved (attended/closed), amber for still pending, red for missed its
+// deadline. Matches the same visual language as dashboard/style.css's
+// .status-pill on the web dashboard, so both frontends read the same way.
+const STATUS_CONFIG = {
+  attended:    { colour: colours.low,   background: 'rgba(2,195,154,0.15)',  label: '✓ Attended' },
+  closed:      { colour: colours.low,   background: 'rgba(2,195,154,0.15)',  label: '✓ Closed' },
+  escalated:   { colour: colours.refer, background: 'rgba(255,59,59,0.15)',  label: '⚠ Escalated' },
+  open:        { colour: colours.watch, background: 'rgba(255,184,0,0.15)', label: 'Open' },
+  pre_alerted: { colour: colours.watch, background: 'rgba(255,184,0,0.15)', label: 'Pre-alerted' },
+  reminded:    { colour: colours.watch, background: 'rgba(255,184,0,0.15)', label: 'Reminded' },
+};
+
 /**
  * WorklistScreen — generic drill-down list for the Home screen's tappable
  * stat cards (Refer Now / Watch) and the Today's Log button. Reads its
@@ -68,10 +81,25 @@ export default function WorklistScreen({ navigation, route }) {
                 </View>
               </View>
 
-              <Text style={s.meta}>
-                {item.mine_site || 'Unknown site'}
-                {kind === 'refer_now' && item.status ? ` · ${item.status.replace('_', ' ')}` : ''}
-              </Text>
+              <View style={s.metaRow}>
+                <Text style={s.meta}>{item.mine_site || 'Unknown site'}</Text>
+                {kind === 'refer_now' && item.status && (
+                  <View
+                    style={[
+                      s.statusPill,
+                      { backgroundColor: (STATUS_CONFIG[item.status] || {}).background || 'rgba(255,255,255,0.08)' },
+                    ]}
+                  >
+                    <Text style={[s.statusPillText, { color: (STATUS_CONFIG[item.status] || {}).colour || colours.muted }]}>
+                      {(STATUS_CONFIG[item.status] || {}).label || item.status.replace('_', ' ')}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {kind === 'watch' && (
+                <Text style={s.watchCaption}>No referral needed yet — informal monitoring only</Text>
+              )}
 
               {kind === 'refer_now' && item.deadline && (
                 <Text style={s.deadline}>⏱ Deadline: {item.deadline}</Text>
@@ -129,7 +157,11 @@ const s = StyleSheet.create({
   name: { fontSize: typography.body, fontWeight: typography.bold, color: colours.white, flex: 1 },
   tierPill: { borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
   tierPillText: { fontSize: typography.micro, fontWeight: typography.black, letterSpacing: 0.5 },
-  meta: { fontSize: typography.caption, color: colours.muted, marginTop: spacing.xs, textTransform: 'capitalize' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs, flexWrap: 'wrap' },
+  meta: { fontSize: typography.caption, color: colours.muted },
+  statusPill: { borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
+  statusPillText: { fontSize: typography.micro, fontWeight: typography.bold, textTransform: 'capitalize' },
+  watchCaption: { fontSize: typography.tiny, color: colours.muted, fontStyle: 'italic', marginTop: spacing.xs },
   deadline: { fontSize: typography.caption, color: colours.muted, marginTop: spacing.xs },
   callRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,

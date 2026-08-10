@@ -1,6 +1,22 @@
 from unittest.mock import patch
 
+import database
 from services.population_intelligence import _fallback_narrative
+
+
+def _seed_outreach_visit(site, scheduled_date, report_generated=0, screened_count=0, expected_headcount=10):
+    conn = database.get_connection()
+    try:
+        cur = conn.execute(
+            """INSERT INTO outreach_visits
+               (site, scheduled_date, expected_headcount, screened_count, health_workers, report_generated)
+               VALUES (?, ?, ?, ?, '[]', ?)""",
+            (site, scheduled_date, expected_headcount, screened_count, report_generated),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
 def _login(client, email="hospital@silicaguard.health", password="hospital123"):
@@ -109,6 +125,64 @@ def test_dashboard_today_site_filter(client):
 
     body = client.get("/api/dashboard/today", params={"site": "Site B"}).json()
     assert body["screened_today"] == 0
+
+
+def test_dashboard_today_includes_outreach_visits(client):
+    _seed_outreach_visit("Sherwood Mine", "2026-08-20", expected_headcount=15, screened_count=3)
+
+    body = client.get("/api/dashboard/today").json()
+
+    assert len(body["outreach_visits"]) == 1
+    visit = body["outreach_visits"][0]
+    assert visit["site"] == "Sherwood Mine"
+    assert visit["expected_headcount"] == 15
+    assert visit["screened_count"] == 3
+    assert visit["report_generated"] is False
+    assert visit["tier_distribution"] is None  # not ready yet
+
+
+def test_dashboard_today_outreach_visit_report_matches_get_outreach(client):
+    """Same shared mapping (services.outreach.visit_to_out) — the
+    unauthenticated dashboard/today view and the authenticated /api/outreach
+    view must never disagree about a completed visit's report."""
+    miner_id = _register(client, "+263791000006", site="Sherwood Mine")
+    visit_id = _seed_outreach_visit("Sherwood Mine", "2026-07-01", report_generated=1)
+
+    with patch("routers.screening.assess_risk", return_value={
+        "tier": "RED", "confidence": 0.9, "contributing_factors": ["x"], "explanation_english": "x",
+    }):
+        client.post(
+            "/api/screen",
+            json={
+                "miner_id": miner_id,
+                "outreach_visit_id": visit_id,
+                "answers": [
+                    {"question_code": f"Q{i}", "answer_value": "x", "answer_score": 1}
+                    for i in range(10)
+                ],
+                "channel": "APP",
+            },
+        )
+
+    today_body = client.get("/api/dashboard/today", params={"site": "Sherwood Mine"}).json()
+    today_visit = next(v for v in today_body["outreach_visits"] if v["id"] == visit_id)
+
+    token = _login(client)
+    outreach_body = client.get(
+        "/api/outreach", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    auth_visit = next(v for v in outreach_body if v["id"] == visit_id)
+
+    assert today_visit["tier_distribution"] == auth_visit["tier_distribution"] == {"GREEN": 0, "YELLOW": 0, "ORANGE": 0, "RED": 1}
+    assert today_visit["referral_list"] == auth_visit["referral_list"]
+
+
+def test_dashboard_today_outreach_visits_site_filtered(client):
+    _seed_outreach_visit("Site A", "2026-08-20")
+    _seed_outreach_visit("Site B", "2026-08-21")
+
+    body = client.get("/api/dashboard/today", params={"site": "site a"}).json()
+    assert [v["site"] for v in body["outreach_visits"]] == ["Site A"]
 
 
 def test_dashboard_requires_auth(client):
