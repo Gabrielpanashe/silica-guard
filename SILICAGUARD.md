@@ -27,7 +27,7 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 
 | Building for 11 August | Deliberately not building | Why not |
 |---|---|---|
-| Practitioner Android app, offline, Teach Mode + screening | Consumer app for artisanal miners | They can't pay; everything they need already works through the health worker, USSD and SMS |
+| Practitioner Android app, offline, screening | Consumer app for artisanal miners | They can't pay; everything they need already works through the health worker, USSD and SMS |
 | Four-tier AI risk stratification | Chest X-ray AI | Needs imaging hardware, labelled local data and regulatory clearance we can't obtain by August |
 | Longitudinal deterioration detection | Voice line / IVR | Africa's Talking Voice doesn't list Zimbabwe — unbounded external risk |
 | Smart referral routing with tracked closure | WhatsApp channel | Needs a smartphone, paid data, Meta business verification, and can't reach a user outside a 24-hour window |
@@ -35,6 +35,9 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 | SMS results, reminders, outreach announcements | Four-week message sequence | Education belongs at the moment of screening, not scattered across weeks |
 | Outreach Planner with auto-generated reports | Peer champion programme | Described in the pilot plan, not built as software |
 | Clinical web dashboard | Enterprise/employer module (bulk workforce upload, campaigns, employer dashboard) | Descoped 5 August 2026 per Dr Bopoto's feedback — formal mining companies already have robust pneumoconiosis programmes; see Section 13 |
+| — | Teach Mode (six illustrated education cards) | Not built. Health education for the demo is delivered verbally by the VHW during the group session, not through the app. |
+
+**Note, added 10 August**: the Clinical web dashboard exists as of today (`dashboard/`, deployed to `https://silicaguard-dashboard.onrender.com`, reachable from a button in the mobile app) — built the night before the demo. It's one static HTML/CSS/JS page (no build step, no React/Vite/Recharts/Leaflet, see Section 5's note), not four role-scoped logins — one unified view of population and referral intelligence. Teach Mode remains genuinely not built.
 
 ## 5. Technology Stack — locked, do not introduce alternatives
 
@@ -43,12 +46,12 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 | Backend | Python FastAPI | All API routes, business logic, AI orchestration |
 | Database | SQLite (MVP) | Migrates to PostgreSQL at pilot scale |
 | Mobile | React Native (Expo) | Offline-first, `expo-sqlite` local storage. **No Flutter.** |
-| Mobile QR | react-native-qrcode-svg | Referral card QR generation on-device |
-| Dashboard | React + Vite + Recharts + Leaflet | Clinical dashboard, role-based views (hospital staff, district health) |
+| Mobile QR | react-native-qrcode-svg | **Target, not built** — the referral card shows a text referral ID, not a generated QR, as of 10 August |
+| Dashboard | React + Vite + Recharts + Leaflet (target) | **As actually shipped 10 August: plain static HTML/CSS/JS, no build step**, deployed to `https://silicaguard-dashboard.onrender.com` — see the Section 4 note above. React/Vite/Recharts/Leaflet remains the intended stack for a properly resourced rebuild; this is documented technical debt, not a stack change. |
 | AI | Google Gemini 2.5 Flash | All four AI modules. Claude API is the documented drop-in alternative if Anthropic billing becomes available. |
 | USSD + SMS | Africa's Talking, called via `httpx` directly | **Not** the official SDK — it fails with an SSL error on Windows in this environment |
 | Backend hosting | Render (free tier) | Sleeps after inactivity; warm it before any demo |
-| Dashboard hosting | Vercel | Static hosting, auto-deploy from repo |
+| Dashboard hosting | Vercel (target) | **As actually shipped: Render Static Site** (`silicaguard-dashboard.onrender.com`), reusing the same account/API key as the backend deploy rather than standing up a second host under time pressure. |
 
 **Permanently removed, do not reintroduce**: Flutter/Dart, chest X-ray AI, WhatsApp as a channel, voice/IVR, the four-week education message sequence, the enterprise/employer module. See Section 12 and Section 13 for why.
 
@@ -77,8 +80,12 @@ backend/
 │   └── ussd_simulator.py        # Interactive local USSD testing
 └── tests/
 
-mobile/        # React Native (Expo) — not yet scaffolded, collaborator's ownership
-dashboard/     # React + Vite — not yet scaffolded, collaborator's ownership
+mobile/        # React Native (Expo) — collaborator's ownership. Home, Intake, Question,
+               # Result, Referral, Worklist, OutreachStats screens; src/services/api.js
+               # is the backend contract client.
+dashboard/     # index.html, style.css, app.js — plain JS, no build step (see Section 5).
+               # Nominally collaborator's ownership; built 10 August under explicit
+               # cross-boundary authorization given the demo timeline.
 docs/
 └── API_CONTRACT.md              # The interface contract between backend and both frontends
 ```
@@ -187,11 +194,13 @@ This is an open question put back to Dr Bopoto directly. Update this section onc
 
 ## 14. Demo Day Scenarios
 
-1. **Teach Mode** (mobile) — six cards on the phone, the moment that answers Dr Gunda's request for education and outreach.
-2. **Screening → tier → personalised advice** (mobile) — screen a returning miner, four-tier result, the change since last screening, then the advice line — different for every miner, drawn from his own answers.
-3. **Smart referral** (mobile + dashboard) — QR referral card, SMS arrives, facility pre-alerted, dashboard status changes live.
-4. **USSD reach** (any phone) — dial the shortcode, self-screen, result message arrives — reaches the miner with no smartphone and no data.
-5. **Dashboards + Outreach Planner** (web) — referral queue with one-tap close, outreach planner scheduling a visit.
+Rewritten 10 August to match what's actually built and rehearsed — Teach Mode and the QR referral card are cut (neither is built); the dashboard scenario reflects the real deployed page, now reachable from the mobile app itself.
+
+1. **Screening → tier → personalised advice → deterioration** (mobile) — screen a returning miner: four-tier result in English and Shona, the advice line drawn from his own weakest answer, and — as of 10 August, now actually visible on screen — the "since last screening" comparison against his previous result.
+2. **Smart referral, proven twice** (mobile) — the Referral Card, then Home's live "Refer Now" worklist showing the same referral with a colour-coded status pill and a tap-to-call phone number.
+3. **USSD reach** (Africa's Talking's sandbox web simulator, framed honestly as simulated over their real infrastructure, not a live carrier dial — no production shortcode is provisioned) — ten fixed Shona questions, no smartphone, no data.
+4. **Intelligence Dashboard** — open it either from a browser (`silicaguard-dashboard.onrender.com`) or by tapping "Dashboard" inside the mobile app itself: live referral queue with one-tap Mark Attended/Closed, the Gemini-generated population narrative, tier distribution, site breakdown, and the Outreach Planner's auto-generated post-visit report — all reading the same live data the mobile app just wrote to.
+5. **Outreach Stats** (mobile) — the same outreach visit data as scenario 4, now also live inside the app itself, not just the web dashboard.
 
 Use one worker throughout, screened at month zero and again later, so the deterioration detection has something real to show.
 
