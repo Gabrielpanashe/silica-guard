@@ -19,8 +19,11 @@ const TIER_ORDER = ['GREEN', 'YELLOW', 'ORANGE', 'RED'];
  * views of this data read the same way.
  *
  * route.params:
- *   site  string (optional) — scopes to one outreach site, same as Home's
- *         OUTREACH_SITE constant
+ *   site  string (optional) — scopes to one outreach site. Omitted by
+ *         default (Home's Outreach Stats button passes no site) so this
+ *         screen shows every scheduled visit across every mine with an
+ *         aggregate rollup on top — a coordinator's cross-site view, not
+ *         just wherever Home happens to be scoped to.
  */
 export default function OutreachStatsScreen({ navigation, route }) {
   const { site } = route.params || {};
@@ -45,6 +48,20 @@ export default function OutreachStatsScreen({ navigation, route }) {
         .finally(() => { if (!cancelled) setLoading(false); });
       return () => { cancelled = true; };
     }, [site])
+  );
+
+  // Cross-site rollup — same "attended = referral status attended/closed"
+  // definition as each card below, just summed across every visit.
+  const totals = visits.reduce(
+    (acc, v) => {
+      const refs = v.referral_list || [];
+      acc.screened += v.screened_count || 0;
+      acc.attended += refs.filter((r) => ['attended', 'closed'].includes(r.status)).length;
+      acc.pending += refs.filter((r) => !['attended', 'closed'].includes(r.status)).length;
+      acc.highRisk += (v.tier_distribution?.ORANGE ?? 0) + (v.tier_distribution?.RED ?? 0);
+      return acc;
+    },
+    { screened: 0, attended: 0, pending: 0, highRisk: 0 }
   );
 
   return (
@@ -82,6 +99,27 @@ export default function OutreachStatsScreen({ navigation, route }) {
           </View>
         )}
 
+        {!loading && !error && visits.length > 0 && (
+          <View style={s.totalsRow}>
+            <View style={s.totalsStat}>
+              <Text style={s.totalsValue}>{visits.length}</Text>
+              <Text style={s.totalsLabel}>Mines</Text>
+            </View>
+            <View style={s.totalsStat}>
+              <Text style={s.totalsValue}>{totals.screened}</Text>
+              <Text style={s.totalsLabel}>Screened</Text>
+            </View>
+            <View style={s.totalsStat}>
+              <Text style={[s.totalsValue, { color: colours.low }]}>{totals.attended}</Text>
+              <Text style={s.totalsLabel}>Attended</Text>
+            </View>
+            <View style={s.totalsStat}>
+              <Text style={[s.totalsValue, { color: colours.refer }]}>{totals.highRisk}</Text>
+              <Text style={s.totalsLabel}>High Risk</Text>
+            </View>
+          </View>
+        )}
+
         {!loading && !error && visits.map((visit) => {
           const pct = visit.expected_headcount > 0
             ? Math.min((visit.screened_count / visit.expected_headcount) * 100, 100)
@@ -109,6 +147,19 @@ export default function OutreachStatsScreen({ navigation, route }) {
 
               {visit.report_generated && visit.tier_distribution && (
                 <View style={s.reportSection}>
+                  <View style={s.summaryRow}>
+                    {[
+                      ['Screened', visit.screened_count, colours.white],
+                      ['Attended', (visit.referral_list || []).filter((r) => ['attended', 'closed'].includes(r.status)).length, colours.low],
+                      ['Pending', (visit.referral_list || []).filter((r) => !['attended', 'closed'].includes(r.status)).length, colours.watch],
+                      ['High Risk', (visit.tier_distribution.ORANGE ?? 0) + (visit.tier_distribution.RED ?? 0), colours.refer],
+                    ].map(([label, value, colour]) => (
+                      <View key={label} style={s.summaryStat}>
+                        <Text style={[s.summaryValue, { color: colour }]}>{value}</Text>
+                        <Text style={s.summaryLabel}>{label}</Text>
+                      </View>
+                    ))}
+                  </View>
                   <View style={s.tierRow}>
                     {TIER_ORDER.map((tier) => (
                       <View key={tier} style={s.tierChip}>
@@ -129,6 +180,10 @@ export default function OutreachStatsScreen({ navigation, route }) {
                     <Text style={s.noReferrals}>No referrals from this visit.</Text>
                   )}
                 </View>
+              )}
+
+              {!visit.report_generated && (
+                <Text style={s.pendingNote}>Report generates automatically once {visit.scheduled_date} has passed.</Text>
               )}
             </View>
           );
@@ -166,6 +221,18 @@ const s = StyleSheet.create({
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
   loadingText: { color: colours.muted, textAlign: 'center', marginTop: spacing.xxl },
 
+  // Cross-site rollup, shown once above every visit card.
+  totalsRow: {
+    flexDirection: 'row', backgroundColor: colours.card, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colours.mid, padding: spacing.lg,
+    marginBottom: spacing.lg, justifyContent: 'space-between',
+  },
+  totalsStat: { alignItems: 'center', flex: 1 },
+  totalsValue: { fontSize: typography.title, fontWeight: typography.black, color: colours.white },
+  totalsLabel: { fontSize: typography.micro, color: colours.muted, fontWeight: typography.semibold, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
+
+  pendingNote: { fontSize: typography.caption, color: colours.muted, fontStyle: 'italic', marginTop: spacing.md },
+
   emptyState: { alignItems: 'center', paddingTop: spacing.xxl * 2, gap: spacing.md },
   emptyEmoji: { fontSize: 40 },
   emptyText: { fontSize: typography.body, color: colours.muted, textAlign: 'center', paddingHorizontal: spacing.xl },
@@ -189,6 +256,10 @@ const s = StyleSheet.create({
   progressText: { fontSize: typography.tiny, color: colours.muted },
 
   reportSection: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colours.mid },
+  summaryRow: { flexDirection: 'row', marginBottom: spacing.md, gap: spacing.md },
+  summaryStat: { flex: 1 },
+  summaryValue: { fontSize: typography.subtitle, fontWeight: typography.black },
+  summaryLabel: { fontSize: typography.micro, color: colours.muted, fontWeight: typography.semibold, marginTop: 1, textTransform: 'uppercase' },
   tierRow: { flexDirection: 'row', gap: spacing.lg, marginBottom: spacing.sm },
   tierChip: { alignItems: 'center' },
   tierChipCount: { fontSize: typography.subtitle, fontWeight: typography.black },

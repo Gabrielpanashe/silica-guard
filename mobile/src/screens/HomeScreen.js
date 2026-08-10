@@ -64,7 +64,12 @@ export default function HomeScreen({ navigation }) {
   const comingSoon = (feature) =>
     Alert.alert('Coming soon', `${feature} isn't built yet.`);
 
-  const openOutreachStats = () => navigation.navigate('OutreachStats', { site: OUTREACH_SITE });
+  // No site param — Outreach Stats shows every scheduled visit across every
+  // mine, not just wherever this Home screen is currently scoped to. Home's
+  // own live numbers above stay scoped to OUTREACH_SITE (the VHW is
+  // physically at one site during a visit); the stats screen is the
+  // cross-site rollup a coordinator actually needs.
+  const openOutreachStats = () => navigation.navigate('OutreachStats');
 
   const openDashboard = () => {
     Linking.openURL(DASHBOARD_URL).catch(() =>
