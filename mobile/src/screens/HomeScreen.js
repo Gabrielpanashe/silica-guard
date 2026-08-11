@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Alert, Linking } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ScrollView, Alert, Linking } from 'react-native';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
@@ -22,6 +22,7 @@ const EMPTY_TODAY = {
   todays_log: [],
   refer_now: { count: 0, items: [] },
   watch: { count: 0, items: [] },
+  outreach_visits: [],
 };
 
 export default function HomeScreen({ navigation }) {
@@ -86,6 +87,13 @@ export default function HomeScreen({ navigation }) {
       <View style={s.blob1} />
       <View style={s.blob2} />
       <View style={s.blob3} />
+
+      {/* Whole body now scrolls (10 August) — was a fixed, non-scrolling
+          layout, which left a large dead gap below the secondary-action
+          row on anything taller than the shortest phones, and would have
+          clipped content once the Outreach Planner preview below made the
+          page taller than the screen on smaller devices. */}
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
       {/* ── HEADER ── */}
       <View style={s.header}>
@@ -197,6 +205,55 @@ export default function HomeScreen({ navigation }) {
           onPress={() => comingSoon('Settings')}
         />
       </View>
+
+      {/* ── OUTREACH PLANNER preview (10 August) ──
+          Same site-scoped outreach_visits GET /api/dashboard/today already
+          returns for the stats above — no extra network call. Read-only:
+          scheduling a visit is POST /api/outreach, which requires a
+          dashboard login the VHW app deliberately doesn't have (same
+          unauthenticated-by-design boundary as every other VHW-facing
+          endpoint). "Manage" hands off to the web Dashboard, which does
+          have the real schedule-a-visit form. */}
+      <View style={s.plannerCard}>
+        <View style={s.plannerHead}>
+          <Text style={s.eyebrow}>OUTREACH PLANNER</Text>
+          <TouchableOpacity onPress={openOutreachStats}>
+            <Text style={s.plannerLink}>View all →</Text>
+          </TouchableOpacity>
+        </View>
+
+        {stats.outreach_visits.length === 0 && (
+          <Text style={s.plannerEmpty}>No visits scheduled for {mine?.name || site} yet.</Text>
+        )}
+
+        {stats.outreach_visits.slice(0, 3).map((v) => {
+          const pct = v.expected_headcount > 0
+            ? Math.min((v.screened_count / v.expected_headcount) * 100, 100)
+            : 0;
+          return (
+            <View key={v.id} style={s.plannerRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.plannerDate}>{v.scheduled_date}</Text>
+                <View style={s.plannerProgressTrack}>
+                  <View style={[s.plannerProgressFill, { width: `${pct}%` }]} />
+                </View>
+                <Text style={s.plannerMeta}>{v.screened_count} / {v.expected_headcount} screened</Text>
+              </View>
+              <View style={[s.plannerBadge, v.report_generated ? s.plannerBadgeReady : s.plannerBadgePending]}>
+                <Text style={[s.plannerBadgeText, { color: v.report_generated ? colours.mint : colours.watch }]}>
+                  {v.report_generated ? 'Ready' : 'Pending'}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+
+        <TouchableOpacity style={s.plannerManageBtn} onPress={openDashboard} activeOpacity={0.85}>
+          <Text style={s.plannerManageText}>Schedule a visit on the Dashboard →</Text>
+        </TouchableOpacity>
+      </View>
+
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -347,5 +404,87 @@ const s = StyleSheet.create({
     marginHorizontal: spacing.xl,
     marginTop: spacing.md,
     gap: spacing.md,
+  },
+
+  scroll: { paddingBottom: spacing.xxl },
+
+  plannerCard: {
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.lg,
+    backgroundColor: colours.card,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: colours.purple,
+    padding: spacing.lg,
+  },
+  plannerHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  plannerLink: {
+    fontSize: typography.tiny,
+    fontWeight: typography.bold,
+    color: colours.purple,
+  },
+  plannerEmpty: {
+    fontSize: typography.caption,
+    color: colours.muted,
+    paddingVertical: spacing.sm,
+  },
+  plannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 0.5,
+    borderTopColor: colours.mid,
+  },
+  plannerDate: {
+    fontSize: typography.caption,
+    fontWeight: typography.bold,
+    color: colours.white,
+  },
+  plannerProgressTrack: {
+    height: 5,
+    backgroundColor: colours.mid,
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginTop: spacing.xs,
+  },
+  plannerProgressFill: {
+    height: '100%',
+    backgroundColor: colours.mint,
+    borderRadius: 999,
+  },
+  plannerMeta: {
+    fontSize: typography.tiny,
+    color: colours.muted,
+    marginTop: spacing.xs,
+  },
+  plannerBadge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  },
+  plannerBadgeReady: { backgroundColor: 'rgba(2,195,154,0.15)' },
+  plannerBadgePending: { backgroundColor: 'rgba(255,184,0,0.15)' },
+  plannerBadgeText: {
+    fontSize: typography.micro,
+    fontWeight: typography.black,
+    textTransform: 'uppercase',
+  },
+  plannerManageBtn: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 0.5,
+    borderTopColor: colours.mid,
+  },
+  plannerManageText: {
+    fontSize: typography.tiny,
+    color: colours.teal,
+    fontWeight: typography.semibold,
+    textAlign: 'center',
   },
 });
