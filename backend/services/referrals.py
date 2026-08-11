@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from services import notifications
+from services import email_notifications, notifications
 from services.facility_matching import select_facility
 
 # Urgency windows per SILICAGUARD.md Section 7 Pillar 2 (fixed by the
@@ -65,3 +65,20 @@ def create_referral_and_notify(
             (referral_id,),
         )
         conn.commit()
+
+    # Demo-only email pre-alert (10 August) — a second, independent channel
+    # alongside the SMS pre-alert above. Deliberately doesn't affect
+    # pre_alert_sent/status — that field's contract is "the SMS to the
+    # nurse's phone succeeded" and email failing/succeeding shouldn't
+    # change what it means. Never raises; a failed email must never break
+    # a screening that otherwise completed successfully.
+    email_notifications.send_referral_alert_email(
+        miner_id,
+        miner_name,
+        phone_number,
+        mine_site,
+        tier,
+        facility_name,
+        deadline.strftime("%Y-%m-%d %H:%M UTC"),
+        contributing_factors,
+    )

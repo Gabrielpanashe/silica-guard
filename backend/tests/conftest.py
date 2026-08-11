@@ -20,7 +20,7 @@ os.environ.setdefault("SCHEDULER_ENABLED", "false")
 
 import database  # noqa: E402
 import main  # noqa: E402
-from services import notifications  # noqa: E402
+from services import email_notifications, notifications  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +44,15 @@ def _mock_notifications(monkeypatch):
     )
     monkeypatch.setattr(
         notifications, "send_outreach_announcement", lambda *a, **k: True
+    )
+    # services/email_notifications.py (10 August) — same reasoning: without
+    # this, every test that creates an ORANGE/RED referral would actually
+    # run the real function (its own no-credentials guard means no network
+    # call, since EMAIL_ADDRESS/EMAIL_APP_PASSWORD are never set in tests,
+    # but it would still write a real 'skipped' row to `notifications`,
+    # inconsistent with every other channel being fully mocked here).
+    monkeypatch.setattr(
+        email_notifications, "send_referral_alert_email", lambda *a, **k: True
     )
 
 
