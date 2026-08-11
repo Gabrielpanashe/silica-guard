@@ -9,21 +9,24 @@ import ResultScreen from './src/screens/ResultScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
 import WorklistScreen from './src/screens/WorklistScreen';
 import OutreachStatsScreen from './src/screens/OutreachStatsScreen';
+import { OutreachSiteProvider } from './src/context/OutreachSiteContext';
 
 const Stack = createStackNavigator();
 
 export default function App() {
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Home"     component={HomeScreen} />
-        <Stack.Screen name="Intake"   component={IntakeScreen} />
-        <Stack.Screen name="Question" component={QuestionScreen} />
-        <Stack.Screen name="Result"   component={ResultScreen} />
-        <Stack.Screen name="Referral" component={ReferralScreen} />
-        <Stack.Screen name="Worklist" component={WorklistScreen} />
-        <Stack.Screen name="OutreachStats" component={OutreachStatsScreen} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <OutreachSiteProvider>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Home"     component={HomeScreen} />
+          <Stack.Screen name="Intake"   component={IntakeScreen} />
+          <Stack.Screen name="Question" component={QuestionScreen} />
+          <Stack.Screen name="Result"   component={ResultScreen} />
+          <Stack.Screen name="Referral" component={ReferralScreen} />
+          <Stack.Screen name="Worklist" component={WorklistScreen} />
+          <Stack.Screen name="OutreachStats" component={OutreachStatsScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </OutreachSiteProvider>
   );
 }

@@ -9,10 +9,13 @@ from services.outreach import visit_to_out
 
 router = APIRouter(prefix="/api", tags=["outreach"])
 
-# Requires auth (get_current_user), unlike POST /api/workers or POST
-# /api/screen — this is a coordinator/dashboard action, not a field action.
-# A deliberate deviation from the unauthenticated shape drafted earlier in
-# docs/API_CONTRACT.md's TARGET section for this route.
+# GET stays authenticated — the web dashboard's coordinator view. POST was
+# authenticated too until 12 August: originally a deliberate deviation from
+# docs/API_CONTRACT.md's TARGET section (a coordinator/dashboard action, not
+# a field action), but the demo needed a VHW to schedule a visit straight
+# from the mobile app, which has no login. Explicit scope call: demonstrate
+# the functionality now, revisit the auth boundary later — not a decision
+# to make silently, flagged in CLAUDE.md's sprint status.
 #
 # The row->response mapping (previously a private _visit_row_to_out here)
 # moved to services/outreach.visit_to_out on 10 August, shared with
@@ -20,7 +23,7 @@ router = APIRouter(prefix="/api", tags=["outreach"])
 
 
 @router.post("/outreach", response_model=OutreachVisitOut, status_code=201)
-def create_outreach_visit(payload: OutreachVisitCreate, user: dict = Depends(get_current_user)):
+def create_outreach_visit(payload: OutreachVisitCreate):
     conn = get_connection()
     try:
         cur = conn.execute(

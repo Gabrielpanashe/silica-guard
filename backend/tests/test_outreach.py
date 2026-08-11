@@ -195,12 +195,18 @@ def _login(client):
     return resp.json()["access_token"]
 
 
-def test_create_outreach_visit_requires_auth(client):
+def test_create_outreach_visit_works_without_auth(client):
+    """POST /api/outreach became unauthenticated 12 August — the mobile
+    Outreach Planner schedules visits directly from the field, same
+    unauthenticated-by-design boundary as POST /api/workers and
+    POST /api/screen. GET (the coordinator dashboard's view) still requires
+    auth — see test_list_outreach_visits_requires_auth below."""
     resp = client.post(
         "/api/outreach",
         json={"site": "Sherwood Mine", "scheduled_date": "2026-09-01", "expected_headcount": 40},
     )
-    assert resp.status_code == 401
+    assert resp.status_code == 201
+    assert resp.json()["site"] == "Sherwood Mine"
 
 
 def test_list_outreach_visits_requires_auth(client):

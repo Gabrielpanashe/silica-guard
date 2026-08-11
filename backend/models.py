@@ -132,6 +132,20 @@ class MineOut(BaseModel):
     province: str
 
 
+class FacilityOut(BaseModel):
+    """GET /api/facilities (12 August) — powers the mobile Outreach
+    Planner's "nearest hospital" preview when scheduling a visit. Same
+    rows services/facility_matching.py already uses internally for
+    referral routing, just exposed read-only now."""
+    id: int
+    name: str
+    level: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+
+
 class TodaysLogItem(BaseModel):
     screening_id: int
     miner_name: str

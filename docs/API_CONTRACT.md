@@ -137,6 +137,23 @@ For the case where a VHW's site genuinely isn't in the list yet. Unauthenticated
 
 ---
 
+## Facilities
+
+### `GET /api/facilities` — LIVE (12 August 2026)
+
+Powers the mobile Outreach Planner's "nearest hospital" preview when scheduling a visit. **Unauthenticated**, same precedent as `GET /api/mines`. Read-only view of the same rows `backend/services/facility_matching.py` already uses internally for referral routing.
+
+**Response 200**
+```json
+[
+  { "id": 1, "name": "Kwekwe District Hospital", "level": "district_hospital", "address": "Corner Robert Mugabe / Sixth Ave, Kwekwe", "phone": "055-24000", "latitude": -18.9281, "longitude": 29.8149 },
+  { "id": 2, "name": "Sherwood Clinic", "level": "clinic", "address": "Sherwood Mine, Kwekwe", "phone": "055-24101", "latitude": null, "longitude": null }
+]
+```
+Ordered by `level`, then `name`.
+
+---
+
 ## Screening
 
 ### `POST /api/screen` — LIVE (four-tier)
@@ -296,7 +313,7 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 ### `POST /api/outreach` — LIVE
 
-Requires `Authorization: Bearer <token>` — a coordinator/dashboard action, not a field action (deliberately not the unauthenticated shape this section originally drafted). Schedules a visit; the 3-day/1-day-before bulk SMS announcement to every worker registered at that site is triggered later by the same in-process scheduler as the referral cascade (`backend/services/outreach.py`, `run_scheduled_outreach`), not synchronously on this call.
+**Unauthenticated as of 12 August 2026** — was `Authorization: Bearer <token>`-gated (a coordinator/dashboard action, not a field action) until the mobile Outreach Planner needed to schedule a visit directly from a VHW's phone, which has no login. Explicit scope decision to demonstrate the functionality now rather than build mobile auth first — flagged in `CLAUDE.md`'s sprint status, not a silent change. `GET /api/outreach` below is unaffected and still requires auth (the dashboard's coordinator view). Schedules a visit; the 3-day/1-day-before bulk SMS announcement to every worker registered at that site is triggered later by the same in-process scheduler as the referral cascade (`backend/services/outreach.py`, `run_scheduled_outreach`), not synchronously on this call.
 
 **Request**
 ```json

@@ -1,19 +1,17 @@
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Alert, Linking } from 'react-native';
-import { useCallback, useState } from 'react';
+import {
+  StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ScrollView,
+  Modal, TextInput, Alert, Linking,
+} from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius } from '../theme';
 import StatCard from '../components/StatCard';
 import SyncPill from '../components/SyncPill';
 import SecondaryButton from '../components/SecondaryButton';
-import { getDashboardToday } from '../services/api';
-
-// Matches the outreach banner below — kept as one constant so the numbers
-// shown and the site the banner claims to be at never disagree. TARGET:
-// once there's a real "which outreach visit is active" signal available
-// without auth, both this and the banner text should come from that
-// instead of being hardcoded here.
-const OUTREACH_SITE = 'Globe & Phoenix Mine';
+import MineSitePicker from '../components/MineSitePicker';
+import { useOutreachSite } from '../context/OutreachSiteContext';
+import { getDashboardToday, getFacilities, createOutreachVisit } from '../services/api';
 
 // The Intelligence Dashboard (dashboard/, 9-10 August) — a separate static
 // web page, not part of this app, deployed to Render as a Static Site
@@ -27,6 +25,7 @@ const EMPTY_TODAY = {
   todays_log: [],
   refer_now: { count: 0, items: [] },
   watch: { count: 0, items: [] },
+  outreach_visits: [],
 };
 
 export default function HomeScreen({ navigation }) {
@@ -34,23 +33,102 @@ export default function HomeScreen({ navigation }) {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
+  // Which mine the VHW is at today — shared app-wide (10 August, previously
+  // a hardcoded OUTREACH_SITE constant here). Real numbers below are
+  // filtered by this; changing it re-fetches immediately.
+  const { site, setSite, mine, setMine } = useOutreachSite();
+
   // Real numbers from GET /api/dashboard/today (7 August) — previously
   // hardcoded to zero. Re-fetched every time this screen gains focus (not
-  // just on mount) so returning here after a screening shows the update
-  // without needing a manual refresh. Fails silently to EMPTY_TODAY on any
-  // error (offline, cold Render instance) — this data is never allowed to
-  // block the primary "Screen New Miner" action.
+  // just on mount) AND whenever the selected site changes, so returning
+  // here after a screening — or switching mines — shows the update without
+  // needing a manual refresh. Fails silently to EMPTY_TODAY on any error
+  // (offline, cold Render instance) — this data is never allowed to block
+  // the primary "Screen New Miner" action.
   const [stats, setStats] = useState(EMPTY_TODAY);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      getDashboardToday(OUTREACH_SITE)
+      getDashboardToday(site)
         .then((data) => { if (!cancelled) setStats(data); })
         .catch(() => { if (!cancelled) setStats(EMPTY_TODAY); });
       return () => { cancelled = true; };
-    }, [])
+    }, [site])
   );
+
+  const refreshStats = useCallback(() => {
+    return getDashboardToday(site)
+      .then((data) => setStats(data))
+      .catch(() => setStats(EMPTY_TODAY));
+  }, [site]);
+
+  // Outreach Planner — schedule a visit inline from Home (12 August).
+  // POST /api/outreach is unauthenticated as of today specifically for
+  // this — see routers/outreach.py for the tradeoff.
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [plannerSite, setPlannerSite] = useState(site);
+  const [plannerMine, setPlannerMine] = useState(mine);
+  const [plannerDate, setPlannerDate] = useState('');
+  const [plannerHeadcount, setPlannerHeadcount] = useState('');
+  const [plannerSubmitting, setPlannerSubmitting] = useState(false);
+  const [plannerError, setPlannerError] = useState(null);
+  const [facilities, setFacilities] = useState([]);
+
+  useEffect(() => {
+    getFacilities().then(setFacilities).catch(() => setFacilities([]));
+  }, []);
+
+  const openPlanner = () => {
+    setPlannerSite(site);
+    setPlannerMine(mine);
+    setPlannerDate(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+    setPlannerHeadcount('');
+    setPlannerError(null);
+    setPlannerOpen(true);
+  };
+
+  // Mirrors services/facility_matching.py's matching rule client-side —
+  // district_hospital is always the fallback/RED match; a clinic matches
+  // if its name contains the mine's first word (e.g. "Sherwood Mine" ->
+  // "Sherwood Clinic"). Informational preview only, not stored on the
+  // visit — the real match happens server-side per-referral at
+  // screening time, same as it always has.
+  const nearestHospital = facilities.find((f) => f.level === 'district_hospital');
+  const nearestClinic = plannerMine
+    ? facilities.find(
+        (f) => f.level === 'clinic' &&
+          f.name.toLowerCase().includes(plannerMine.name.split(' ')[0].toLowerCase())
+      )
+    : null;
+
+  const submitPlanner = async () => {
+    setPlannerError(null);
+    const headcount = parseInt(plannerHeadcount, 10);
+    if (!plannerSite.trim() || !plannerDate.trim() || !headcount || headcount < 1) {
+      setPlannerError('Fill in site, date and expected headcount.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(plannerDate.trim())) {
+      setPlannerError('Date must be in YYYY-MM-DD format, e.g. 2026-08-20.');
+      return;
+    }
+    setPlannerSubmitting(true);
+    try {
+      await createOutreachVisit({
+        site: plannerSite.trim(),
+        scheduled_date: plannerDate.trim(),
+        expected_headcount: headcount,
+      });
+      setPlannerOpen(false);
+      await refreshStats();
+      Alert.alert('Visit scheduled', `${plannerSite.trim()} on ${plannerDate.trim()}.`);
+    } catch (e) {
+      setPlannerError(e.message || 'Failed to schedule visit.');
+    } finally {
+      setPlannerSubmitting(false);
+    }
+  };
 
   const openWorklist = (kind) => {
     const configByKind = {
@@ -66,7 +144,7 @@ export default function HomeScreen({ navigation }) {
 
   // No site param — Outreach Stats shows every scheduled visit across every
   // mine, not just wherever this Home screen is currently scoped to. Home's
-  // own live numbers above stay scoped to OUTREACH_SITE (the VHW is
+  // own live numbers above stay scoped to the selected site (the VHW is
   // physically at one site during a visit); the stats screen is the
   // cross-site rollup a coordinator actually needs.
   const openOutreachStats = () => navigation.navigate('OutreachStats');
@@ -86,6 +164,13 @@ export default function HomeScreen({ navigation }) {
       <View style={s.blob2} />
       <View style={s.blob3} />
 
+      {/* Whole body now scrolls (10 August) — was a fixed, non-scrolling
+          layout, which left a large dead gap below the secondary-action
+          row on anything taller than the shortest phones, and would have
+          clipped content once the Outreach Planner preview below made the
+          page taller than the screen on smaller devices. */}
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+
       {/* ── HEADER ── */}
       <View style={s.header}>
         <View>
@@ -98,14 +183,30 @@ export default function HomeScreen({ navigation }) {
         </View>
       </View>
 
-      {/* ── OUTREACH BANNER ── */}
-      <View style={s.outreachBanner}>
-        <Text style={s.eyebrow}>TODAY'S OUTREACH SITE</Text>
-        <Text style={s.outreachName}>Globe &{'\n'}Phoenix Mine</Text>
-        <View style={s.outreachTag}>
-          <Text style={s.outreachTagText}>Kwekwe District · Midlands</Text>
-        </View>
-      </View>
+      {/* ── OUTREACH BANNER — now a real mine picker (10 August), was
+          hardcoded "Globe & Phoenix Mine" text with nothing behind it.
+          Whole card is the tap target, reusing MineSitePicker's list/modal
+          via renderTrigger so there's one single mines-picking
+          implementation, not two. ── */}
+      <MineSitePicker
+        value={site}
+        onChange={setSite}
+        onSelectMine={setMine}
+        renderTrigger={(open) => (
+          <TouchableOpacity style={s.outreachBanner} onPress={open} activeOpacity={0.85}>
+            <View style={s.outreachTop}>
+              <Text style={s.eyebrow}>TODAY'S OUTREACH SITE</Text>
+              <Text style={s.changeHint}>Change ▾</Text>
+            </View>
+            <Text style={s.outreachName}>{mine?.name || site}</Text>
+            <View style={s.outreachTag}>
+              <Text style={s.outreachTagText}>
+                {mine?.district ? `${mine.district} District · ${mine.province}` : 'Tap to confirm today’s site'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+      />
 
       {/* ── STATS — real numbers, tappable (7 August) ── */}
       <View style={s.statsRow}>
@@ -180,6 +281,144 @@ export default function HomeScreen({ navigation }) {
           onPress={() => comingSoon('Settings')}
         />
       </View>
+
+      {/* ── OUTREACH PLANNER preview (10 August) ──
+          Same site-scoped outreach_visits GET /api/dashboard/today already
+          returns for the stats above — no extra network call. Read-only:
+          scheduling a visit is POST /api/outreach, which requires a
+          dashboard login the VHW app deliberately doesn't have (same
+          unauthenticated-by-design boundary as every other VHW-facing
+          endpoint). "Manage" hands off to the web Dashboard, which does
+          have the real schedule-a-visit form. */}
+      <View style={s.plannerCard}>
+        <View style={s.plannerHead}>
+          <Text style={s.eyebrow}>OUTREACH PLANNER</Text>
+          <TouchableOpacity onPress={openOutreachStats}>
+            <Text style={s.plannerLink}>View all →</Text>
+          </TouchableOpacity>
+        </View>
+
+        {stats.outreach_visits.length === 0 && (
+          <Text style={s.plannerEmpty}>No visits scheduled for {mine?.name || site} yet.</Text>
+        )}
+
+        {stats.outreach_visits.slice(0, 3).map((v) => {
+          const pct = v.expected_headcount > 0
+            ? Math.min((v.screened_count / v.expected_headcount) * 100, 100)
+            : 0;
+          return (
+            <View key={v.id} style={s.plannerRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.plannerDate}>{v.scheduled_date}</Text>
+                <View style={s.plannerProgressTrack}>
+                  <View style={[s.plannerProgressFill, { width: `${pct}%` }]} />
+                </View>
+                <Text style={s.plannerMeta}>{v.screened_count} / {v.expected_headcount} screened</Text>
+              </View>
+              <View style={[s.plannerBadge, v.report_generated ? s.plannerBadgeReady : s.plannerBadgePending]}>
+                <Text style={[s.plannerBadgeText, { color: v.report_generated ? colours.mint : colours.watch }]}>
+                  {v.report_generated ? 'Ready' : 'Pending'}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+
+        <TouchableOpacity style={s.plannerScheduleBtn} onPress={openPlanner} activeOpacity={0.85}>
+          <Text style={s.plannerScheduleText}>+ Schedule a visit</Text>
+        </TouchableOpacity>
+      </View>
+
+      </ScrollView>
+
+      {/* ── Schedule Visit modal ── */}
+      <Modal visible={plannerOpen} animationType="slide" transparent onRequestClose={() => setPlannerOpen(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalSheet}>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <View style={s.modalHeader}>
+                <Text style={s.modalTitle}>Schedule Outreach Visit</Text>
+                <TouchableOpacity onPress={() => setPlannerOpen(false)}>
+                  <Text style={s.modalClose}>Done</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={s.modalFieldLabel}>Mine</Text>
+              <MineSitePicker
+                value={plannerSite}
+                onChange={setPlannerSite}
+                onSelectMine={setPlannerMine}
+              />
+
+              {/* Location + nearest facility context — province, district,
+                  town come from the mines table via MineSitePicker's
+                  selection; nearest hospital/clinic from GET /api/facilities,
+                  matched client-side the same way the backend does at
+                  referral time. */}
+              {plannerMine && (
+                <View style={s.locationCard}>
+                  <View style={s.locationRow}>
+                    <Text style={s.locationLabel}>District</Text>
+                    <Text style={s.locationValue}>{plannerMine.district || '—'}</Text>
+                  </View>
+                  <View style={s.locationRow}>
+                    <Text style={s.locationLabel}>Province</Text>
+                    <Text style={s.locationValue}>{plannerMine.province || '—'}</Text>
+                  </View>
+                  <View style={s.locationRow}>
+                    <Text style={s.locationLabel}>Nearest hospital</Text>
+                    <Text style={s.locationValue}>{nearestHospital?.name || 'Not on file'}</Text>
+                  </View>
+                  {nearestClinic && (
+                    <View style={s.locationRow}>
+                      <Text style={s.locationLabel}>Nearest clinic</Text>
+                      <Text style={s.locationValue}>{nearestClinic.name}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              <Text style={s.modalFieldLabel}>Visit date</Text>
+              <TextInput
+                style={s.modalInput}
+                value={plannerDate}
+                onChangeText={setPlannerDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={colours.muted}
+              />
+
+              <Text style={s.modalFieldLabel}>Expected miners</Text>
+              <TextInput
+                style={s.modalInput}
+                value={plannerHeadcount}
+                onChangeText={setPlannerHeadcount}
+                placeholder="e.g. 40"
+                placeholderTextColor={colours.muted}
+                keyboardType="number-pad"
+              />
+
+              {plannerError && <Text style={s.plannerErrorText}>{plannerError}</Text>}
+
+              <TouchableOpacity
+                style={[s.modalSubmitBtn, plannerSubmitting && { opacity: 0.6 }]}
+                onPress={submitPlanner}
+                disabled={plannerSubmitting}
+                activeOpacity={0.85}
+              >
+                <Text style={s.modalSubmitText}>
+                  {plannerSubmitting ? 'Scheduling…' : 'Schedule Visit'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={openDashboard} style={{ marginTop: spacing.md }}>
+                <Text style={s.plannerManageText}>Manage all visits on the Dashboard →</Text>
+              </TouchableOpacity>
+
+              <View style={{ height: spacing.xxl }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -240,12 +479,22 @@ const s = StyleSheet.create({
     borderColor: colours.teal,
     borderLeftWidth: 5,
   },
+  outreachTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
   eyebrow: {
     fontSize: typography.micro,
     fontWeight: typography.bold,
     color: colours.teal,
     letterSpacing: 2,
-    marginBottom: spacing.sm,
+  },
+  changeHint: {
+    fontSize: typography.tiny,
+    fontWeight: typography.semibold,
+    color: colours.muted,
   },
   outreachName: {
     fontSize: 30,
@@ -321,4 +570,129 @@ const s = StyleSheet.create({
     marginTop: spacing.md,
     gap: spacing.md,
   },
+
+  scroll: { paddingBottom: spacing.xxl },
+
+  plannerCard: {
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.lg,
+    backgroundColor: colours.card,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
+    borderColor: colours.purple,
+    padding: spacing.lg,
+  },
+  plannerHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  plannerLink: {
+    fontSize: typography.tiny,
+    fontWeight: typography.bold,
+    color: colours.purple,
+  },
+  plannerEmpty: {
+    fontSize: typography.caption,
+    color: colours.muted,
+    paddingVertical: spacing.sm,
+  },
+  plannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 0.5,
+    borderTopColor: colours.mid,
+  },
+  plannerDate: {
+    fontSize: typography.caption,
+    fontWeight: typography.bold,
+    color: colours.white,
+  },
+  plannerProgressTrack: {
+    height: 5,
+    backgroundColor: colours.mid,
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginTop: spacing.xs,
+  },
+  plannerProgressFill: {
+    height: '100%',
+    backgroundColor: colours.mint,
+    borderRadius: 999,
+  },
+  plannerMeta: {
+    fontSize: typography.tiny,
+    color: colours.muted,
+    marginTop: spacing.xs,
+  },
+  plannerBadge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+  },
+  plannerBadgeReady: { backgroundColor: 'rgba(2,195,154,0.15)' },
+  plannerBadgePending: { backgroundColor: 'rgba(255,184,0,0.15)' },
+  plannerBadgeText: {
+    fontSize: typography.micro,
+    fontWeight: typography.black,
+    textTransform: 'uppercase',
+  },
+  plannerManageText: {
+    fontSize: typography.tiny,
+    color: colours.teal,
+    fontWeight: typography.semibold,
+    textAlign: 'center',
+  },
+  plannerScheduleBtn: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 0.5,
+    borderTopColor: colours.mid,
+    alignItems: 'center',
+  },
+  plannerScheduleText: {
+    fontSize: typography.caption,
+    color: colours.purple,
+    fontWeight: typography.bold,
+  },
+
+  // ── Schedule Visit modal ──
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalSheet: {
+    backgroundColor: colours.navy, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
+    maxHeight: '88%', paddingHorizontal: spacing.xl, paddingTop: spacing.lg,
+    borderWidth: 1, borderColor: colours.mid, borderBottomWidth: 0,
+  },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  modalTitle: { fontSize: typography.subtitle, fontWeight: typography.black, color: colours.white },
+  modalClose: { fontSize: typography.body, color: colours.teal, fontWeight: typography.semibold },
+  modalFieldLabel: {
+    fontSize: typography.caption, color: colours.muted, fontWeight: typography.semibold,
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: spacing.xs, marginTop: spacing.md,
+  },
+  modalInput: {
+    backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1.5, borderColor: colours.mid,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, fontSize: typography.body, color: colours.white,
+  },
+  locationCard: {
+    backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1, borderColor: colours.mid,
+    padding: spacing.md, marginTop: spacing.md, gap: spacing.xs,
+  },
+  locationRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  locationLabel: { fontSize: typography.tiny, color: colours.muted },
+  locationValue: { fontSize: typography.tiny, color: colours.white, fontWeight: typography.semibold, flexShrink: 1, textAlign: 'right' },
+  plannerErrorText: {
+    fontSize: typography.caption, color: colours.refer, marginTop: spacing.md, textAlign: 'center',
+  },
+  modalSubmitBtn: {
+    backgroundColor: colours.purple, borderRadius: radius.md, paddingVertical: spacing.md,
+    alignItems: 'center', marginTop: spacing.lg, borderWidth: 1.5, borderColor: colours.purple,
+  },
+  modalSubmitText: { fontSize: typography.body, fontWeight: typography.black, color: colours.white },
 });
