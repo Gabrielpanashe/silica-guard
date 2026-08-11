@@ -1,5 +1,8 @@
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ScrollView, Alert, Linking } from 'react-native';
-import { useCallback, useState } from 'react';
+import {
+  StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ScrollView,
+  Modal, TextInput, Alert, Linking,
+} from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius } from '../theme';
@@ -8,7 +11,7 @@ import SyncPill from '../components/SyncPill';
 import SecondaryButton from '../components/SecondaryButton';
 import MineSitePicker from '../components/MineSitePicker';
 import { useOutreachSite } from '../context/OutreachSiteContext';
-import { getDashboardToday } from '../services/api';
+import { getDashboardToday, getFacilities, createOutreachVisit } from '../services/api';
 
 // The Intelligence Dashboard (dashboard/, 9-10 August) — a separate static
 // web page, not part of this app, deployed to Render as a Static Site
@@ -53,6 +56,79 @@ export default function HomeScreen({ navigation }) {
       return () => { cancelled = true; };
     }, [site])
   );
+
+  const refreshStats = useCallback(() => {
+    return getDashboardToday(site)
+      .then((data) => setStats(data))
+      .catch(() => setStats(EMPTY_TODAY));
+  }, [site]);
+
+  // Outreach Planner — schedule a visit inline from Home (12 August).
+  // POST /api/outreach is unauthenticated as of today specifically for
+  // this — see routers/outreach.py for the tradeoff.
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [plannerSite, setPlannerSite] = useState(site);
+  const [plannerMine, setPlannerMine] = useState(mine);
+  const [plannerDate, setPlannerDate] = useState('');
+  const [plannerHeadcount, setPlannerHeadcount] = useState('');
+  const [plannerSubmitting, setPlannerSubmitting] = useState(false);
+  const [plannerError, setPlannerError] = useState(null);
+  const [facilities, setFacilities] = useState([]);
+
+  useEffect(() => {
+    getFacilities().then(setFacilities).catch(() => setFacilities([]));
+  }, []);
+
+  const openPlanner = () => {
+    setPlannerSite(site);
+    setPlannerMine(mine);
+    setPlannerDate(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+    setPlannerHeadcount('');
+    setPlannerError(null);
+    setPlannerOpen(true);
+  };
+
+  // Mirrors services/facility_matching.py's matching rule client-side —
+  // district_hospital is always the fallback/RED match; a clinic matches
+  // if its name contains the mine's first word (e.g. "Sherwood Mine" ->
+  // "Sherwood Clinic"). Informational preview only, not stored on the
+  // visit — the real match happens server-side per-referral at
+  // screening time, same as it always has.
+  const nearestHospital = facilities.find((f) => f.level === 'district_hospital');
+  const nearestClinic = plannerMine
+    ? facilities.find(
+        (f) => f.level === 'clinic' &&
+          f.name.toLowerCase().includes(plannerMine.name.split(' ')[0].toLowerCase())
+      )
+    : null;
+
+  const submitPlanner = async () => {
+    setPlannerError(null);
+    const headcount = parseInt(plannerHeadcount, 10);
+    if (!plannerSite.trim() || !plannerDate.trim() || !headcount || headcount < 1) {
+      setPlannerError('Fill in site, date and expected headcount.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(plannerDate.trim())) {
+      setPlannerError('Date must be in YYYY-MM-DD format, e.g. 2026-08-20.');
+      return;
+    }
+    setPlannerSubmitting(true);
+    try {
+      await createOutreachVisit({
+        site: plannerSite.trim(),
+        scheduled_date: plannerDate.trim(),
+        expected_headcount: headcount,
+      });
+      setPlannerOpen(false);
+      await refreshStats();
+      Alert.alert('Visit scheduled', `${plannerSite.trim()} on ${plannerDate.trim()}.`);
+    } catch (e) {
+      setPlannerError(e.message || 'Failed to schedule visit.');
+    } finally {
+      setPlannerSubmitting(false);
+    }
+  };
 
   const openWorklist = (kind) => {
     const configByKind = {
@@ -248,12 +324,101 @@ export default function HomeScreen({ navigation }) {
           );
         })}
 
-        <TouchableOpacity style={s.plannerManageBtn} onPress={openDashboard} activeOpacity={0.85}>
-          <Text style={s.plannerManageText}>Schedule a visit on the Dashboard →</Text>
+        <TouchableOpacity style={s.plannerScheduleBtn} onPress={openPlanner} activeOpacity={0.85}>
+          <Text style={s.plannerScheduleText}>+ Schedule a visit</Text>
         </TouchableOpacity>
       </View>
 
       </ScrollView>
+
+      {/* ── Schedule Visit modal ── */}
+      <Modal visible={plannerOpen} animationType="slide" transparent onRequestClose={() => setPlannerOpen(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalSheet}>
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <View style={s.modalHeader}>
+                <Text style={s.modalTitle}>Schedule Outreach Visit</Text>
+                <TouchableOpacity onPress={() => setPlannerOpen(false)}>
+                  <Text style={s.modalClose}>Done</Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={s.modalFieldLabel}>Mine</Text>
+              <MineSitePicker
+                value={plannerSite}
+                onChange={setPlannerSite}
+                onSelectMine={setPlannerMine}
+              />
+
+              {/* Location + nearest facility context — province, district,
+                  town come from the mines table via MineSitePicker's
+                  selection; nearest hospital/clinic from GET /api/facilities,
+                  matched client-side the same way the backend does at
+                  referral time. */}
+              {plannerMine && (
+                <View style={s.locationCard}>
+                  <View style={s.locationRow}>
+                    <Text style={s.locationLabel}>District</Text>
+                    <Text style={s.locationValue}>{plannerMine.district || '—'}</Text>
+                  </View>
+                  <View style={s.locationRow}>
+                    <Text style={s.locationLabel}>Province</Text>
+                    <Text style={s.locationValue}>{plannerMine.province || '—'}</Text>
+                  </View>
+                  <View style={s.locationRow}>
+                    <Text style={s.locationLabel}>Nearest hospital</Text>
+                    <Text style={s.locationValue}>{nearestHospital?.name || 'Not on file'}</Text>
+                  </View>
+                  {nearestClinic && (
+                    <View style={s.locationRow}>
+                      <Text style={s.locationLabel}>Nearest clinic</Text>
+                      <Text style={s.locationValue}>{nearestClinic.name}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              <Text style={s.modalFieldLabel}>Visit date</Text>
+              <TextInput
+                style={s.modalInput}
+                value={plannerDate}
+                onChangeText={setPlannerDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={colours.muted}
+              />
+
+              <Text style={s.modalFieldLabel}>Expected miners</Text>
+              <TextInput
+                style={s.modalInput}
+                value={plannerHeadcount}
+                onChangeText={setPlannerHeadcount}
+                placeholder="e.g. 40"
+                placeholderTextColor={colours.muted}
+                keyboardType="number-pad"
+              />
+
+              {plannerError && <Text style={s.plannerErrorText}>{plannerError}</Text>}
+
+              <TouchableOpacity
+                style={[s.modalSubmitBtn, plannerSubmitting && { opacity: 0.6 }]}
+                onPress={submitPlanner}
+                disabled={plannerSubmitting}
+                activeOpacity={0.85}
+              >
+                <Text style={s.modalSubmitText}>
+                  {plannerSubmitting ? 'Scheduling…' : 'Schedule Visit'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={openDashboard} style={{ marginTop: spacing.md }}>
+                <Text style={s.plannerManageText}>Manage all visits on the Dashboard →</Text>
+              </TouchableOpacity>
+
+              <View style={{ height: spacing.xxl }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -475,16 +640,59 @@ const s = StyleSheet.create({
     fontWeight: typography.black,
     textTransform: 'uppercase',
   },
-  plannerManageBtn: {
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 0.5,
-    borderTopColor: colours.mid,
-  },
   plannerManageText: {
     fontSize: typography.tiny,
     color: colours.teal,
     fontWeight: typography.semibold,
     textAlign: 'center',
   },
+  plannerScheduleBtn: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 0.5,
+    borderTopColor: colours.mid,
+    alignItems: 'center',
+  },
+  plannerScheduleText: {
+    fontSize: typography.caption,
+    color: colours.purple,
+    fontWeight: typography.bold,
+  },
+
+  // ── Schedule Visit modal ──
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalSheet: {
+    backgroundColor: colours.navy, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
+    maxHeight: '88%', paddingHorizontal: spacing.xl, paddingTop: spacing.lg,
+    borderWidth: 1, borderColor: colours.mid, borderBottomWidth: 0,
+  },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  modalTitle: { fontSize: typography.subtitle, fontWeight: typography.black, color: colours.white },
+  modalClose: { fontSize: typography.body, color: colours.teal, fontWeight: typography.semibold },
+  modalFieldLabel: {
+    fontSize: typography.caption, color: colours.muted, fontWeight: typography.semibold,
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: spacing.xs, marginTop: spacing.md,
+  },
+  modalInput: {
+    backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1.5, borderColor: colours.mid,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, fontSize: typography.body, color: colours.white,
+  },
+  locationCard: {
+    backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1, borderColor: colours.mid,
+    padding: spacing.md, marginTop: spacing.md, gap: spacing.xs,
+  },
+  locationRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  locationLabel: { fontSize: typography.tiny, color: colours.muted },
+  locationValue: { fontSize: typography.tiny, color: colours.white, fontWeight: typography.semibold, flexShrink: 1, textAlign: 'right' },
+  plannerErrorText: {
+    fontSize: typography.caption, color: colours.refer, marginTop: spacing.md, textAlign: 'center',
+  },
+  modalSubmitBtn: {
+    backgroundColor: colours.purple, borderRadius: radius.md, paddingVertical: spacing.md,
+    alignItems: 'center', marginTop: spacing.lg, borderWidth: 1.5, borderColor: colours.purple,
+  },
+  modalSubmitText: { fontSize: typography.body, fontWeight: typography.black, color: colours.white },
 });
