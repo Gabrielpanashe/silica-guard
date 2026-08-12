@@ -85,6 +85,20 @@ class ReferralStatusUpdate(BaseModel):
     status: str
 
 
+class ReferralNotifyRequest(BaseModel):
+    """POST /api/referrals/notify-email (12 August) — fired when the VHW
+    taps 'Generate Referral Card' on the mobile app, so the email pre-alert
+    has a visible, on-demand trigger tied to that exact moment in the demo,
+    not just a silent send that already happened at screening time."""
+    phone: str
+
+
+class ReferralNotifyOut(BaseModel):
+    sent: bool
+    tier: str
+    facility_name: Optional[str] = None
+
+
 class LoginRequest(BaseModel):
     email: str
     password: str

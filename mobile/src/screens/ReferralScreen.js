@@ -4,7 +4,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect, useState } from 'react';
 import { colours, typography, spacing, radius, riskConfig } from '../theme';
+import { notifyReferralEmail } from '../services/api';
 
 // Generate a readable miner ID from phone + timestamp
 const generateReferralId = (phone) => {
@@ -29,6 +31,24 @@ export default function ReferralScreen({ navigation, route }) {
   const deadline   = formatDeadline(result.tier);
   const isRed      = result.tier === 'RED';
 
+  // Fires the moment this card is generated — a real, live email send tied
+  // to this exact screen mount (12 August), not just the automatic one
+  // that already happened at screening time server-side (which still
+  // fires too, independently — see services/referrals.
+  // create_referral_and_notify). This also replaces the old unverified
+  // "SilicaGuard automatically pre-alerts..." banner text with an actual
+  // confirmed-or-not status, closing a real gap: this screen previously
+  // made zero network calls of its own.
+  const [emailStatus, setEmailStatus] = useState('sending'); // sending | sent | failed
+
+  useEffect(() => {
+    let cancelled = false;
+    notifyReferralEmail(miner.phone)
+      .then((r) => { if (!cancelled) setEmailStatus(r.sent ? 'sent' : 'failed'); })
+      .catch(() => { if (!cancelled) setEmailStatus('failed'); });
+    return () => { cancelled = true; };
+  }, [miner.phone]);
+
   return (
     <SafeAreaView style={s.root}>
       <StatusBar style="light" />
@@ -50,20 +70,28 @@ export default function ReferralScreen({ navigation, route }) {
       >
 
         {/* ── PRE-ALERT CONFIRMATION ──
-            Softer, accurate copy — this screen makes no network call of its
-            own, so it can't actually confirm delivery. The real pre-alert
-            SMS already fired server-side at screening time (see
-            services/referrals.create_referral_and_notify in the backend);
-            this banner describes that automatic behaviour rather than
-            asserting a live confirmation this screen never checked. */}
+            Live status now (12 August) — this screen calls
+            POST /api/referrals/notify-email on mount and reflects the real
+            result, instead of an unverified claim with zero network call
+            behind it. The SMS pre-alert + first email both already fired
+            automatically at screening time regardless of this screen; this
+            is a second, visible, on-demand confirmation. */}
         <View style={[s.alertBanner, { borderColor: config.colour, backgroundColor: config.background }]}>
-          <Text style={s.alertIcon}>🏥</Text>
+          <Text style={s.alertIcon}>
+            {emailStatus === 'sending' ? '⏳' : emailStatus === 'sent' ? '📧' : '⚠️'}
+          </Text>
           <View style={s.alertText}>
             <Text style={[s.alertTitle, { color: config.colour }]}>
-              Referral Recorded
+              {emailStatus === 'sending' ? 'Notifying hospital…'
+                : emailStatus === 'sent' ? 'Hospital Notified by Email'
+                : 'Email Notification Failed'}
             </Text>
             <Text style={s.alertSub}>
-              SilicaGuard automatically pre-alerts the hospital when this screening is submitted.
+              {emailStatus === 'sending'
+                ? 'Sending referral details to the hospital now…'
+                : emailStatus === 'sent'
+                ? `A referral alert email was just sent for ${miner.name}.`
+                : 'Could not confirm the email send — the hospital was still pre-alerted by SMS at screening time.'}
             </Text>
           </View>
         </View>

@@ -293,3 +293,25 @@ export const createOutreachVisit = async ({ site, scheduled_date, expected_headc
   });
   return handleResponse(res);
 };
+
+// ── REFERRALS (mobile-facing) ───────────────────────────────
+/**
+ * Fires the hospital referral alert email for a miner's most recent
+ * referral — called by ReferralScreen when the card is generated (12
+ * August), so the demo has a live, on-demand email trigger tied to that
+ * exact moment. The same email also fires automatically server-side at
+ * screening time regardless of this call.
+ * POST /api/referrals/notify-email — unauthenticated.
+ *
+ * @param {string} phone
+ * Response: { sent: boolean, tier: string, facility_name: string|null }
+ * Error 404: worker not found, or worker has no referral on record.
+ */
+export const notifyReferralEmail = async (phone) => {
+  const res = await fetch(`${BASE_URL}/api/referrals/notify-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone }),
+  });
+  return handleResponse(res);
+};
