@@ -1,7 +1,8 @@
 import {
   StyleSheet, Text, View, TouchableOpacity,
-  SafeAreaView, ScrollView, ActivityIndicator,
+  ScrollView, ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius, riskConfig } from '../theme';
