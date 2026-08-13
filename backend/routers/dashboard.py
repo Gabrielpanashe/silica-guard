@@ -1,3 +1,4 @@
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -5,15 +6,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from database import get_connection
 from models import (
     DashboardTodayOut,
+    MinerSummary,
     ReferNowItem,
     ReferNowSection,
+    ReferralNotifyOut,
+    ReferralNotifyRequest,
     ReferralOut,
     ReferralStatusUpdate,
+    ScreeningLogItem,
     TodaysLogItem,
     WatchItem,
     WatchSection,
 )
 from routers.auth import get_current_user
+from services import email_notifications
+from services.outreach import visit_to_out
 from services.population_intelligence import generate_weekly_narrative
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
@@ -75,13 +82,28 @@ def dashboard_today(site: Optional[str] = None):
     'Refer Now' is a live worklist, not scoped to today — a referral from
     three days ago that's still open belongs on it; it drops off once its
     status becomes 'attended' or 'closed', which is how "have they taken
-    action" gets answered by re-polling this endpoint.
+    action" gets answered by re-polling this endpoint. 12 August: narrowed
+    to RED only (was any open referral, i.e. ORANGE or RED) — a VHW-facing
+    scope decision for Home's worklist specifically; ORANGE referrals are
+    still created and tracked exactly as before, still visible on the web
+    dashboard's full referral queue (GET /api/referrals, unfiltered by
+    tier) — they just no longer surface on this specific mobile worklist.
 
-    'Watch' = miners whose most recent screening is YELLOW (moderate risk,
-    "watch closely" per services/tier_messages.py) and who never get a
-    referral row at all — so this is sourced from screenings, not referrals.
-    optional ?site= filters all four sections by miners.mine_site
-    (case-insensitive), matching the VHW's current outreach site."""
+    'Watch' = miners whose most recent screening is ORANGE (12 August, was
+    YELLOW) — "keep an eye on them, not yet critical" per this same Home
+    worklist's new tier split (RED = act now, ORANGE = watch). Still
+    sourced from screenings, not referrals, same as before — an ORANGE
+    miner appearing here doesn't mean they lack a referral (they still get
+    one), it's this list's own membership rule.
+    'outreach_visits' (10 August) reuses services/outreach.visit_to_out —
+    the same per-visit shape (screened/expected headcount, report-ready
+    tier_distribution/referral_list) GET /api/outreach returns to a
+    logged-in coordinator, here unauthenticated for the VHW's Outreach
+    Stats screen.
+
+    optional ?site= filters all five sections by miners.mine_site /
+    outreach_visits.site (case-insensitive), matching the VHW's current
+    outreach site."""
     conn = get_connection()
     try:
         site_filter = "AND LOWER(m.mine_site) = LOWER(?)" if site else ""
@@ -105,6 +127,7 @@ def dashboard_today(site: Optional[str] = None):
                 JOIN miners m ON m.id = r.miner_id
                 JOIN screenings s ON s.id = r.screening_id
                 WHERE r.status IN ({",".join("?" * len(_OPEN_REFERRAL_STATUSES))})
+                  AND s.tier = 'RED'
                 {site_filter}
                 ORDER BY r.deadline ASC""",
             (*_OPEN_REFERRAL_STATUSES, *site_args),
@@ -116,7 +139,7 @@ def dashboard_today(site: Optional[str] = None):
                        m.mine_site, s.tier, s.created_at
                 FROM screenings s
                 JOIN miners m ON m.id = s.miner_id
-                WHERE s.tier = 'YELLOW'
+                WHERE s.tier = 'ORANGE'
                   AND s.id = (
                       SELECT s2.id FROM screenings s2
                       WHERE s2.miner_id = m.id
@@ -128,11 +151,22 @@ def dashboard_today(site: Optional[str] = None):
         ).fetchall()
         watch_items = [WatchItem(**dict(row)) for row in watch_rows]
 
+        # Outreach Stats (10 August) — same shared mapping GET /api/outreach
+        # uses, so a VHW with no login sees exactly the same visit data a
+        # logged-in coordinator would, just scoped to their current site.
+        outreach_filter = "WHERE LOWER(site) = LOWER(?)" if site else ""
+        outreach_rows = conn.execute(
+            f"SELECT * FROM outreach_visits {outreach_filter} ORDER BY scheduled_date DESC",
+            site_args,
+        ).fetchall()
+        outreach_visits = [visit_to_out(conn, row) for row in outreach_rows]
+
         return DashboardTodayOut(
             screened_today=len(todays_log),
             todays_log=todays_log,
             refer_now=ReferNowSection(count=len(refer_now_items), items=refer_now_items),
             watch=WatchSection(count=len(watch_items), items=watch_items),
+            outreach_visits=outreach_visits,
         )
     finally:
         conn.close()
@@ -243,5 +277,102 @@ def update_referral_status(
             _REFERRAL_SELECT + " WHERE r.id = ?", (referral_id,)
         ).fetchone()
         return _referral_row_to_dict(row)
+    finally:
+        conn.close()
+
+
+@router.post("/referrals/notify-email", response_model=ReferralNotifyOut)
+def notify_referral_email(payload: ReferralNotifyRequest):
+    """Unauthenticated (mobile-facing), 12 August — fires when the VHW taps
+    'Generate Referral Card' on the app, giving the demo a live, watchable
+    email moment tied to that exact tap rather than a silent send that
+    already happened at referral-creation time inside POST /api/screen
+    (services/referrals.create_referral_and_notify). This is a deliberate
+    re-send of the same email, not the only time it fires — the automatic
+    one still fires too, since a hospital shouldn't wait on a miner to tap
+    a button to be pre-alerted."""
+    conn = get_connection()
+    try:
+        miner = conn.execute(
+            "SELECT * FROM miners WHERE phone = ?", (payload.phone,)
+        ).fetchone()
+        if miner is None:
+            raise HTTPException(status_code=404, detail="Worker not found")
+
+        row = conn.execute(
+            """SELECT r.deadline, r.facility_id, f.name AS facility_name,
+                      s.tier, s.ai_contributing_factors
+               FROM referrals r
+               JOIN screenings s ON s.id = r.screening_id
+               LEFT JOIN facilities f ON f.id = r.facility_id
+               WHERE r.miner_id = ?
+               ORDER BY r.created_at DESC, r.id DESC
+               LIMIT 1""",
+            (miner["id"],),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No referral found for this worker")
+
+        factors = json.loads(row["ai_contributing_factors"]) if row["ai_contributing_factors"] else []
+        sent = email_notifications.send_referral_alert_email(
+            miner["id"],
+            miner["name"],
+            miner["phone"],
+            miner["mine_site"],
+            row["tier"],
+            row["facility_name"] or "Kwekwe District Hospital",
+            row["deadline"] or "",
+            factors,
+        )
+        return ReferralNotifyOut(sent=sent, tier=row["tier"], facility_name=row["facility_name"])
+    finally:
+        conn.close()
+
+
+@router.get("/miners", response_model=list[MinerSummary])
+def list_miners(user: dict = Depends(get_current_user)):
+    """Every registered miner, most recently active first — the dashboard's
+    Miners directory (10 August). Distinct from GET /api/workers/{phone}
+    (unauthenticated, single-miner lookup for the VHW re-screen flow): this
+    is the full roster for a logged-in coordinator, so it's authenticated
+    like /api/referrals and /api/dashboard/week."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT m.id, m.name, m.phone, m.mine_site AS site, m.created_at,
+                      COUNT(s.id) AS screening_count,
+                      MAX(s.created_at) AS last_screened_at,
+                      (SELECT s2.tier FROM screenings s2
+                       WHERE s2.miner_id = m.id
+                       ORDER BY s2.created_at DESC, s2.id DESC LIMIT 1) AS latest_tier
+               FROM miners m
+               LEFT JOIN screenings s ON s.miner_id = m.id
+               GROUP BY m.id
+               ORDER BY COALESCE(MAX(s.created_at), m.created_at) DESC"""
+        ).fetchall()
+        return [MinerSummary(**dict(row)) for row in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/screenings", response_model=list[ScreeningLogItem])
+def list_screenings(limit: int = 200, user: dict = Depends(get_current_user)):
+    """Every screening across every miner and channel (APP/USSD), most
+    recent first — the dashboard's All Screenings activity log (10 August).
+    `limit` (default 200) caps the response; the demo dataset is small
+    enough this rarely matters, but a growing pilot deployment shouldn't
+    return an unbounded list to a browser tab."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT s.id, s.miner_id, m.name AS miner_name, m.phone,
+                      m.mine_site AS site, s.tier, s.channel, s.advice_line, s.created_at
+               FROM screenings s
+               JOIN miners m ON m.id = s.miner_id
+               ORDER BY s.created_at DESC, s.id DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        return [ScreeningLogItem(**dict(row)) for row in rows]
     finally:
         conn.close()

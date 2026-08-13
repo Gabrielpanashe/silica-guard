@@ -68,15 +68,21 @@ def _send_sms(to: str, message: str) -> bool:
         return False
 
 
-def _log_notification(worker_id: int, template: str, payload: str, delivery_status: str) -> None:
+def _log_notification(
+    worker_id: int, template: str, payload: str, delivery_status: str, channel: str = "sms"
+) -> None:
     """Best-effort audit write — a logging failure must never surface as if
-    the SMS itself failed, so this swallows its own exceptions."""
+    the SMS itself failed, so this swallows its own exceptions. `channel`
+    defaults to 'sms' (every existing call site is unaffected); 10 August
+    added 'email' for services/email_notifications.py's referral alert —
+    same notifications table, so both channels show up in one audit trail
+    rather than two."""
     conn = get_connection()
     try:
         conn.execute(
             """INSERT INTO notifications (worker_id, channel, template, payload, delivery_status)
-               VALUES (?, 'sms', ?, ?, ?)""",
-            (worker_id, template, payload, delivery_status),
+               VALUES (?, ?, ?, ?, ?)""",
+            (worker_id, channel, template, payload, delivery_status),
         )
         conn.commit()
     except Exception:

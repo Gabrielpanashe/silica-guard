@@ -137,6 +137,23 @@ For the case where a VHW's site genuinely isn't in the list yet. Unauthenticated
 
 ---
 
+## Facilities
+
+### `GET /api/facilities` — LIVE (12 August 2026)
+
+Powers the mobile Outreach Planner's "nearest hospital" preview when scheduling a visit. **Unauthenticated**, same precedent as `GET /api/mines`. Read-only view of the same rows `backend/services/facility_matching.py` already uses internally for referral routing.
+
+**Response 200**
+```json
+[
+  { "id": 1, "name": "Kwekwe District Hospital", "level": "district_hospital", "address": "Corner Robert Mugabe / Sixth Ave, Kwekwe", "phone": "055-24000", "latitude": -18.9281, "longitude": 29.8149 },
+  { "id": 2, "name": "Sherwood Clinic", "level": "clinic", "address": "Sherwood Mine, Kwekwe", "phone": "055-24101", "latitude": null, "longitude": null }
+]
+```
+Ordered by `level`, then `name`.
+
+---
+
 ## Screening
 
 ### `POST /api/screen` — LIVE (four-tier)
@@ -217,6 +234,29 @@ CON Une kuhema (cough) inoenderera kupfuura mavhiki matatu here?
 
 ## Referrals
 
+### `GET /api/miners` — LIVE (10 August 2026)
+
+Requires `Authorization: Bearer <token>`. The dashboard's Miners directory — every registered miner, most recently active first. Distinct from `GET /api/workers/{phone}` (unauthenticated, single-miner lookup for the VHW re-screen flow) — this is the full roster for a logged-in coordinator.
+
+**Response 200**
+```json
+[
+  { "id": 14, "name": "Tendai Moyo", "phone": "+263771234567", "site": "Sherwood Mine", "latest_tier": "ORANGE", "screening_count": 2, "last_screened_at": "2026-08-09 10:33:51", "created_at": "2026-07-01 08:00:00" }
+]
+```
+`latest_tier`/`last_screened_at` are `null` for a miner with no screenings yet (registered but not yet screened). `latest_tier` is the miner's **most recent** screening's tier, not their first or their worst.
+
+### `GET /api/screenings` — LIVE (10 August 2026)
+
+Requires `Authorization: Bearer <token>`. The dashboard's All Screenings activity log — every screening across every miner and channel (`APP`/`USSD`), most recent first. Optional `?limit=` (default 200) caps the response.
+
+**Response 200**
+```json
+[
+  { "id": 41, "miner_id": 14, "miner_name": "Tendai Moyo", "phone": "+263771234567", "site": "Sherwood Mine", "tier": "RED", "channel": "APP", "advice_line": "A cough that has lasted this long needs to be checked by a clinician as soon as possible.", "created_at": "2026-08-09 10:33:51" }
+]
+```
+
 ### `GET /api/referrals` — LIVE (Smart Referral Router: facility matching + reminder/escalation cascade)
 
 Requires `Authorization: Bearer <token>`.
@@ -273,7 +313,7 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 ### `POST /api/outreach` — LIVE
 
-Requires `Authorization: Bearer <token>` — a coordinator/dashboard action, not a field action (deliberately not the unauthenticated shape this section originally drafted). Schedules a visit; the 3-day/1-day-before bulk SMS announcement to every worker registered at that site is triggered later by the same in-process scheduler as the referral cascade (`backend/services/outreach.py`, `run_scheduled_outreach`), not synchronously on this call.
+**Unauthenticated as of 12 August 2026** — was `Authorization: Bearer <token>`-gated (a coordinator/dashboard action, not a field action) until the mobile Outreach Planner needed to schedule a visit directly from a VHW's phone, which has no login. Explicit scope decision to demonstrate the functionality now rather than build mobile auth first — flagged in `CLAUDE.md`'s sprint status, not a silent change. `GET /api/outreach` below is unaffected and still requires auth (the dashboard's coordinator view). Schedules a visit; the 3-day/1-day-before bulk SMS announcement to every worker registered at that site is triggered later by the same in-process scheduler as the referral cascade (`backend/services/outreach.py`, `run_scheduled_outreach`), not synchronously on this call.
 
 **Request**
 ```json
@@ -356,7 +396,10 @@ Optional query param `?site=<name>` (case-insensitive exact match against `miner
     "items": [
       { "screening_id": 39, "miner_name": "Blessing Sithole", "phone": "+263771000003", "mine_site": "Globe & Phoenix Mine", "tier": "YELLOW", "created_at": "2026-07-18 11:48:55" }
     ]
-  }
+  },
+  "outreach_visits": [
+    { "id": 2, "site": "Sherwood Mine", "scheduled_date": "2026-07-31", "expected_headcount": 5, "screened_count": 2, "report_generated": true, "tier_distribution": { "GREEN": 1, "YELLOW": 0, "ORANGE": 1, "RED": 0 }, "referral_list": [ { "miner_name": "Kudakwashe Marecha", "tier": "ORANGE", "status": "attended" } ] }
+  ]
 }
 ```
 
@@ -365,6 +408,8 @@ Optional query param `?site=<name>` (case-insensitive exact match against `miner
 `refer_now` is a **live worklist, not scoped to today** — any referral with `status` in `open`/`pre_alerted`/`reminded`/`escalated`. It drops off once `PATCH /api/referrals/{id}` sets `status` to `attended` or `closed` — that's how "have they taken action" gets answered by re-polling this endpoint, using the contact details already in each item.
 
 `watch` = miners whose **most recent** screening (not just any screening) is `YELLOW` — YELLOW never creates a referral, so this is sourced from `screenings`, not `referrals`. A miner whose YELLOW screening was later superseded by a re-screen of any tier drops off this list.
+
+`outreach_visits` (**LIVE 10 August 2026**, same shape as `GET /api/outreach`'s items below) — powers the mobile app's Outreach Stats screen, which previously had no unauthenticated data source to show. Uses the exact same mapping (`services/outreach.visit_to_out`) as the authenticated coordinator route, so the two views can never disagree about a visit's report. `tier_distribution`/`referral_list` are `null` until `report_generated` is `true`.
 
 ### `GET /api/dashboard/week` — LIVE (Population Health Intelligence)
 
@@ -401,6 +446,8 @@ Requires `Authorization: Bearer <token>`.
 | `/api/workers` | POST | LIVE |
 | `/api/workers/{phone}` | GET | LIVE |
 | `/api/mines` | GET, POST | LIVE |
+| `/api/miners` | GET | LIVE (dashboard Miners directory) |
+| `/api/screenings` | GET | LIVE (dashboard All Screenings log) |
 | `/api/screen` | POST | LIVE (four-tier, hard safety overrides, deterioration detection, advice line + Shona explanation, result SMS for all four tiers) |
 | `/api/ussd` | POST | LIVE (four-tier) |
 | `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |

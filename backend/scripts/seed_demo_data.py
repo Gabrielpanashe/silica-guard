@@ -44,7 +44,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from database import get_connection, init_db  # noqa: E402
+from models import ScreeningAnswerIn  # noqa: E402
 from questions import SCREENING_QUESTIONS  # noqa: E402
+from services.advice_engine import personalised_advice_line  # noqa: E402
 
 # Option index (0-based) per question, in SCREENING_QUESTIONS order, per tier profile.
 GREEN_PROFILE = [0, 3, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -120,12 +122,21 @@ def _insert_screening(
     previous_screening_id: int | None = None,
     outreach_visit_id: int | None = None,
 ) -> int:
+    answers = _answers_for(profile)
+    # advice_line (10 August) — this script never calls the live AI
+    # pipeline, so it never got one before; reuses the real
+    # personalised_advice_line logic (same weakest-answer selection a live
+    # screening uses) rather than inventing separate canned text, so the
+    # seeded history in the Screening History card reads exactly like a
+    # real one, not a placeholder.
+    advice_line = personalised_advice_line([ScreeningAnswerIn(**a) for a in answers])
+
     cur = conn.execute(
         """INSERT INTO screenings
            (miner_id, previous_screening_id, screened_by, channel, tier,
             risk_confidence, ai_explanation_english, ai_contributing_factors,
-            provisional, fallback_used, synced, created_at, outreach_visit_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)""",
+            advice_line, provisional, fallback_used, synced, created_at, outreach_visit_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)""",
         (
             miner_id,
             previous_screening_id,
@@ -135,13 +146,14 @@ def _insert_screening(
             confidence,
             explanation_english,
             json.dumps(contributing_factors),
+            advice_line,
             _iso(created_at),
             outreach_visit_id,
         ),
     )
     screening_id = cur.lastrowid
 
-    for answer in _answers_for(profile):
+    for answer in answers:
         conn.execute(
             """INSERT INTO screening_answers
                (screening_id, question_code, question_text, answer_value, answer_score)
