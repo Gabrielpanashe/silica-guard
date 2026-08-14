@@ -32,6 +32,35 @@ Any change to the database schema or an API response shape must be announced in 
 - **USSD and SMS**: Africa's Talking, called directly over `httpx` — **not** the official SDK, which fails with an SSL error on Windows in this environment.
 - **No WhatsApp. No voice/IVR. No Flutter. No chest X-ray model.** These were built or considered in earlier versions (v1.0–v3.0) and were deliberately removed. Do not reintroduce them.
 
+## Development commands
+
+Backend only — `mobile/` has its own `mobile/CLAUDE.md`; `dashboard/` is a no-build-step static page (see "Current sprint status"). Full day-to-day procedures (add an endpoint, add a DB field, call the AI, add a screening question, the offline-flow test) live in `SKILL.md` — this is just the commands.
+
+```
+cd backend
+python -m venv venv && ./venv/Scripts/activate           # first time, Windows
+pip install -r requirements.txt -r requirements-dev.txt
+copy .env.example .env                                    # then fill in real values
+uvicorn main:app --reload                                  # http://127.0.0.1:8000, docs at /docs
+
+pytest                                                      # full suite
+pytest tests/test_screening.py                              # one file
+pytest tests/test_screening.py::test_name -v                # one test
+
+./venv/Scripts/python.exe scripts/seed_demo_data.py         # reproducible demo dataset, no Gemini key needed
+./venv/Scripts/python.exe scripts/ussd_simulator.py          # local USSD flow without an AT sandbox number
+```
+
+No linter/formatter is configured in `requirements-dev.txt` — don't invent a lint command.
+
+## Architecture
+
+Backend is thin-router/fat-service, no ORM. `routers/<area>.py` parses the HTTP request and calls into `services/<area>.py`, which holds the actual logic; `models.py` has the Pydantic request/response schemas; `database.py` holds the schema as a raw `CREATE TABLE IF NOT EXISTS` SQL string plus a `sqlite3` connection helper (no migration framework — see SKILL.md's "add a database field" for why a schema change needs a deleted local `.db` or a hand-written `ALTER TABLE`). `main.py` registers routers and owns the two APScheduler jobs (`services.referral_cascade.run_scheduled_cascade`, `services.outreach.run_scheduled_outreach`) on one lifespan-scoped `BackgroundScheduler` — forced off under pytest (`SCHEDULER_ENABLED=false` in `tests/conftest.py`) so no test starts a background thread.
+
+`POST /api/screen` (`routers/screening.py`) is the core request and shows the intended call order for new work in this area: persist the raw answers first (so a downstream failure never loses data) → `services/ai_risk_engine.py` (Gemini call against `prompts/risk_engine_prompt.txt`, strict-JSON parse that strips markdown fences) → `services/deterioration.py` (trajectory vs. `previous_screening_id`, can escalate the tier) → `services/safety_overrides.py` (hard red-flag rules in plain Python, applied last so the model can never downgrade a RED) → `services/advice_engine.py` / `services/explanation_shona.py` (template-bound, not model-generated free text) → `services/referrals.py` + `services/facility_matching.py` for ORANGE/RED → `services/notifications.py` (SMS, Africa's Talking REST API over `httpx`, never their SDK) and `services/email_notifications.py`. Every AI call's input and output is persisted on the `screenings` row together, for audit — this is a non-negotiable rule, not a style choice.
+
+The `miners` table (API-facing as "worker") is the identity anchor: `phone` is unique and everything else — screenings, referrals, deterioration comparisons, outreach linkage — hangs off `miner_id`/`worker_id`. `docs/API_CONTRACT.md` is the live source of truth for request/response shapes (with LIVE vs TARGET markers per route); `SILICAGUARD.md` has the full annotated project tree (Section 6), schema (Section 7) and the four AI modules in depth (Section 10).
+
 ## The four AI modules — and nothing else is AI
 
 1. **Risk Stratification Engine** — screening answers → four-tier classification, reasoning like an occupational health physician, output includes the personalised advice line.
