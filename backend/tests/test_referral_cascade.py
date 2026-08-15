@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 import database
+from db_models import Miner, Referral, Screening
 from services.referral_cascade import next_cascade_action, process_due_referrals
 
 NOW = datetime(2026, 8, 10, 12, 0, 0)
@@ -74,114 +75,123 @@ def test_unknown_tier_returns_none():
     assert next_cascade_action("GREEN", "open", 0, NOW - timedelta(days=30), NOW) is None
 
 
-# --- process_due_referrals: integration against a raw connection ---
+# --- process_due_referrals: integration against a real ORM session ---
 
 
 @pytest.fixture
-def conn(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DATABASE_URL", str(tmp_path / "cascade_test.db"))
-    database.init_db()
-    connection = database.get_connection()
-    yield connection
-    connection.close()
+def db(tmp_path):
+    # Builds its own throwaway engine explicitly rather than monkeypatching
+    # database.DATABASE_URL and calling database.SessionLocal() — see
+    # tests/test_outreach.py's `db` fixture for why that pattern silently
+    # leaks into the real dev database (SessionLocal is bound once at
+    # import time and isn't affected by monkeypatching afterward).
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
-
-def _seed_referral(conn, tier, status, created_at, reminder_stage=0, phone="+263700111222"):
-    conn.execute(
-        "INSERT INTO miners (name, phone, mine_site) VALUES (?, ?, ?)",
-        ("Cascade Test Miner", phone, "Test Site"),
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'cascade_test.db'}", connect_args={"check_same_thread": False}
     )
-    miner_id = conn.execute("SELECT id FROM miners WHERE phone = ?", (phone,)).fetchone()["id"]
-    cur = conn.execute(
-        "INSERT INTO screenings (miner_id, tier) VALUES (?, ?)", (miner_id, tier)
-    )
-    screening_id = cur.lastrowid
-    cur = conn.execute(
-        """INSERT INTO referrals
-           (screening_id, miner_id, hospital, deadline, status, reminder_stage, created_at)
-           VALUES (?, ?, 'Kwekwe District Hospital', ?, ?, ?, ?)""",
-        (
-            screening_id,
-            miner_id,
-            created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            status,
-            reminder_stage,
-            created_at.strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-    conn.commit()
-    return cur.lastrowid, miner_id
+    database.enable_sqlite_foreign_keys(engine)
+    database.init_db(target_engine=engine)
+    session = sessionmaker(bind=engine)()
+    yield session
+    session.close()
 
 
-def test_process_due_referrals_sends_reminder_and_updates_row(conn):
+def _seed_referral(db, tier, status, created_at, reminder_stage=0, phone="+263700111222"):
+    miner = Miner(name="Cascade Test Miner", phone=phone, mine_site="Test Site")
+    db.add(miner)
+    db.flush()
+    screening = Screening(miner_id=miner.id, tier=tier)
+    db.add(screening)
+    db.flush()
+    referral = Referral(
+        screening_id=screening.id,
+        miner_id=miner.id,
+        hospital="Kwekwe District Hospital",
+        deadline=created_at,
+        status=status,
+        reminder_stage=reminder_stage,
+        created_at=created_at,
+    )
+    db.add(referral)
+    db.commit()
+    return referral.id, miner.id
+
+
+def test_process_due_referrals_sends_reminder_and_updates_row(db):
     referral_id, worker_id = _seed_referral(
-        conn, "RED", "pre_alerted", NOW - timedelta(hours=25), phone="+263700111001"
+        db, "RED", "pre_alerted", NOW - timedelta(hours=25), phone="+263700111001"
     )
 
     with patch("services.notifications.send_referral_reminder") as mock_remind:
-        process_due_referrals(conn, now=NOW)
+        process_due_referrals(db, now=NOW)
 
     mock_remind.assert_called_once_with(worker_id, "+263700111001", "RED", 1)
-    row = conn.execute("SELECT status, reminder_stage FROM referrals WHERE id = ?", (referral_id,)).fetchone()
-    assert row["status"] == "reminded"
-    assert row["reminder_stage"] == 1
+    referral = db.get(Referral, referral_id)
+    assert referral.status == "reminded"
+    assert referral.reminder_stage == 1
 
 
-def test_process_due_referrals_escalates_and_updates_row(conn):
+def test_process_due_referrals_escalates_and_updates_row(db):
     referral_id, worker_id = _seed_referral(
-        conn, "RED", "reminded", NOW - timedelta(hours=50), reminder_stage=1, phone="+263700111002"
+        db, "RED", "reminded", NOW - timedelta(hours=50), reminder_stage=1, phone="+263700111002"
     )
 
     with patch("services.notifications.send_referral_escalation") as mock_escalate:
-        process_due_referrals(conn, now=NOW)
+        process_due_referrals(db, now=NOW)
 
     mock_escalate.assert_called_once_with(worker_id, "Cascade Test Miner", "+263700111002", "RED")
-    row = conn.execute("SELECT status FROM referrals WHERE id = ?", (referral_id,)).fetchone()
-    assert row["status"] == "escalated"
+    assert db.get(Referral, referral_id).status == "escalated"
 
 
-def test_process_due_referrals_ignores_referrals_not_yet_due(conn):
+def test_process_due_referrals_ignores_referrals_not_yet_due(db):
     referral_id, _ = _seed_referral(
-        conn, "ORANGE", "open", NOW - timedelta(hours=1), phone="+263700111003"
+        db, "ORANGE", "open", NOW - timedelta(hours=1), phone="+263700111003"
     )
 
     with patch("services.notifications.send_referral_reminder") as mock_remind, patch(
         "services.notifications.send_referral_escalation"
     ) as mock_escalate:
-        process_due_referrals(conn, now=NOW)
+        process_due_referrals(db, now=NOW)
 
     mock_remind.assert_not_called()
     mock_escalate.assert_not_called()
-    row = conn.execute("SELECT status FROM referrals WHERE id = ?", (referral_id,)).fetchone()
-    assert row["status"] == "open"
+    assert db.get(Referral, referral_id).status == "open"
 
 
-def test_process_due_referrals_ignores_closed_referrals_even_if_overdue(conn):
-    _seed_referral(conn, "RED", "closed", NOW - timedelta(days=10), phone="+263700111004")
+def test_process_due_referrals_ignores_closed_referrals_even_if_overdue(db):
+    _seed_referral(db, "RED", "closed", NOW - timedelta(days=10), phone="+263700111004")
 
     with patch("services.notifications.send_referral_escalation") as mock_escalate:
-        process_due_referrals(conn, now=NOW)
+        process_due_referrals(db, now=NOW)
 
     mock_escalate.assert_not_called()
 
 
-def test_one_bad_row_does_not_abort_the_batch(conn):
+def test_one_bad_row_does_not_abort_the_batch(db):
     """A referral with an unparsable created_at shouldn't stop a second,
     valid referral in the same batch from being processed."""
+    from sqlalchemy import text
+
     good_id, _ = _seed_referral(
-        conn, "RED", "open", NOW - timedelta(hours=25), phone="+263700111005"
+        db, "RED", "open", NOW - timedelta(hours=25), phone="+263700111005"
     )
     bad_id, _ = _seed_referral(
-        conn, "RED", "open", NOW - timedelta(hours=25), phone="+263700111006"
+        db, "RED", "open", NOW - timedelta(hours=25), phone="+263700111006"
     )
-    conn.execute(
-        "UPDATE referrals SET created_at = 'not-a-real-timestamp' WHERE id = ?", (bad_id,)
+    # Bypasses the ORM deliberately — a raw UPDATE is the only way to get a
+    # value this malformed into the column at all, since the ORM's own type
+    # system would reject/convert it on a normal assignment.
+    db.execute(
+        text("UPDATE referrals SET created_at = 'not-a-real-timestamp' WHERE id = :id"),
+        {"id": bad_id},
     )
-    conn.commit()
+    db.commit()
+    db.expire_all()  # forget any cached row state so the bad value is re-read from the DB
 
     with patch("services.notifications.send_referral_reminder") as mock_remind:
-        process_due_referrals(conn, now=NOW)
+        process_due_referrals(db, now=NOW)
 
-    good_row = conn.execute("SELECT status FROM referrals WHERE id = ?", (good_id,)).fetchone()
-    assert good_row["status"] == "reminded"
+    assert db.get(Referral, good_id).status == "reminded"
     mock_remind.assert_called_once()

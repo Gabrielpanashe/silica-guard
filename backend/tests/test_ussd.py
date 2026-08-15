@@ -89,8 +89,7 @@ def test_completed_session_persists_to_database(client):
         client, "s6", "+263770000006", ["1", "4", "1", "1", "1", "1", "1", "1", "1", "1"]
     )
 
-    conn = sqlite3.connect(database.DATABASE_URL)
-    conn.row_factory = sqlite3.Row
+    conn = database.get_connection()
     row = conn.execute(
         "SELECT s.*, m.phone FROM screenings s JOIN miners m ON m.id = s.miner_id "
         "WHERE m.phone = ?",
@@ -119,8 +118,7 @@ def test_green_result_sends_screening_result_sms_not_referral(client):
     mock_sms.assert_called_once()
     assert mock_sms.call_args[0][2] == "GREEN"
 
-    conn = sqlite3.connect(database.DATABASE_URL)
-    conn.row_factory = sqlite3.Row
+    conn = database.get_connection()
     referral = conn.execute(
         "SELECT r.* FROM referrals r JOIN miners m ON m.id = r.miner_id WHERE m.phone = ?",
         ("+263770000008",),

@@ -1,3 +1,4 @@
+import re
 from unittest.mock import patch
 
 import database
@@ -223,4 +224,92 @@ def test_patch_unknown_referral_404(client):
     resp = client.patch(
         "/api/referrals/999999", json={"status": "closed"}, headers=headers
     )
+    assert resp.status_code == 404
+
+
+# --- Referral code (14 August 2026, master doc v6.0 Section 1.1) ---
+
+_CODE_PATTERN = re.compile(r"^SG-[A-Z0-9]{4}$")
+
+
+def test_referral_gets_a_code_matching_the_sg_format(client):
+    miner_id = _register_miner(client, phone="+263711110010")
+    with patch("routers.screening.assess_risk", return_value=RED_RESULT):
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+
+    token = _login(client)
+    referral = client.get(
+        "/api/referrals", headers={"Authorization": f"Bearer {token}"}
+    ).json()[0]
+    assert _CODE_PATTERN.match(referral["referral_code"])
+
+
+def test_lookup_referral_by_code_unauthenticated(client):
+    miner_id = _register_miner(client, phone="+263711110011")
+    with patch("routers.screening.assess_risk", return_value=RED_RESULT):
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+
+    token = _login(client)
+    referral = client.get(
+        "/api/referrals", headers={"Authorization": f"Bearer {token}"}
+    ).json()[0]
+    code = referral["referral_code"]
+
+    # No Authorization header at all — this is the point.
+    resp = client.get(f"/api/referrals/lookup/{code}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["referral_code"] == code
+    assert body["tier"] == "RED"
+    assert body["miner_name"] == "Referral Test Miner"
+    assert body["status"] == "pre_alerted"
+    assert body["attended_at"] is None
+
+
+def test_lookup_unknown_code_404(client):
+    resp = client.get("/api/referrals/lookup/SG-ZZZZ")
+    assert resp.status_code == 404
+
+
+def test_confirm_attendance_marks_referral_attended(client):
+    miner_id = _register_miner(client, phone="+263711110012")
+    with patch("routers.screening.assess_risk", return_value=RED_RESULT):
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+
+    token = _login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    referral = client.get("/api/referrals", headers=headers).json()[0]
+    code = referral["referral_code"]
+
+    resp = client.post(f"/api/referrals/lookup/{code}/confirm-attendance")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "attended"
+    assert body["attended_at"] is not None
+
+    # Confirmed on the authenticated view too, not just the response echo.
+    updated = client.get("/api/referrals", headers=headers).json()[0]
+    assert updated["status"] == "attended"
+    assert updated["attended_at"] is not None
+
+
+def test_confirm_attendance_twice_returns_409(client):
+    miner_id = _register_miner(client, phone="+263711110013")
+    with patch("routers.screening.assess_risk", return_value=RED_RESULT):
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+
+    token = _login(client)
+    referral = client.get(
+        "/api/referrals", headers={"Authorization": f"Bearer {token}"}
+    ).json()[0]
+    code = referral["referral_code"]
+
+    first = client.post(f"/api/referrals/lookup/{code}/confirm-attendance")
+    assert first.status_code == 200
+    second = client.post(f"/api/referrals/lookup/{code}/confirm-attendance")
+    assert second.status_code == 409
+
+
+def test_confirm_attendance_unknown_code_404(client):
+    resp = client.post("/api/referrals/lookup/SG-ZZZZ/confirm-attendance")
     assert resp.status_code == 404

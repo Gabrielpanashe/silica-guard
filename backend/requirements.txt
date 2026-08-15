@@ -11,3 +11,11 @@ pydantic
 # Router's reminder/escalation cascade (main.py's lifespan) needs the
 # synchronous BackgroundScheduler from the 3.x line.
 apscheduler>=3.10,<4
+# ORM + migrations (14 August 2026, master doc v6.0 Section 16.2). SQLAlchemy
+# targets both SQLite (local/dev/tests, default) and Postgres (production,
+# via Supabase) through one engine URL — see backend/database.py. psycopg is
+# only imported when a postgresql:// URL is actually used, so local SQLite
+# dev never needs it installed to run.
+sqlalchemy>=2.0,<3
+alembic>=1.13,<2
+psycopg[binary]>=3.1,<4

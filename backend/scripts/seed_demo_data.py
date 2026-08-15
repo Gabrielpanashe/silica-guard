@@ -43,10 +43,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database import get_connection, init_db  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
+
+from database import get_fresh_session, init_db  # noqa: E402
+from db_models import Facility, Miner, Mine, OutreachVisit, Referral, Screening, ScreeningAnswer  # noqa: E402
 from models import ScreeningAnswerIn  # noqa: E402
 from questions import SCREENING_QUESTIONS  # noqa: E402
 from services.advice_engine import personalised_advice_line  # noqa: E402
+from services.referrals import _generate_referral_code  # noqa: E402
 
 # Option index (0-based) per question, in SCREENING_QUESTIONS order, per tier profile.
 GREEN_PROFILE = [0, 3, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -57,7 +61,7 @@ ORANGE_PROFILE = [3, 0, 2, 0, 0, 0, 0, 0, 0, 0]
 # TB, prior lung diagnosis) -> RED regardless of score.
 RED_PROFILE = [3, 0, 2, 3, 2, 2, 2, 2, 2, 1]
 
-_now = datetime.now(timezone.utc)
+_now = datetime.now(timezone.utc).replace(tzinfo=None)
 
 # Midlands province mine sites for the VHW's outreach-site dropdown
 # (7 August 2026) — a curated suggestion list, not a hard foreign key
@@ -81,10 +85,6 @@ MIDLANDS_MINES = [
 ]
 
 
-def _iso(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-
 def _answers_for(profile: list[int]) -> list[dict]:
     answers = []
     for question, option_index in zip(SCREENING_QUESTIONS, profile):
@@ -100,16 +100,15 @@ def _answers_for(profile: list[int]) -> list[dict]:
     return answers
 
 
-def _insert_worker(conn, name: str, phone: str, mine_site: str) -> int:
-    cur = conn.execute(
-        "INSERT INTO miners (name, phone, mine_site) VALUES (?, ?, ?)",
-        (name, phone, mine_site),
-    )
-    return cur.lastrowid
+def _insert_worker(db, name: str, phone: str, mine_site: str) -> int:
+    miner = Miner(name=name, phone=phone, mine_site=mine_site)
+    db.add(miner)
+    db.flush()
+    return miner.id
 
 
 def _insert_screening(
-    conn,
+    db,
     miner_id: int,
     profile: list[int],
     tier: str,
@@ -131,46 +130,40 @@ def _insert_screening(
     # real one, not a placeholder.
     advice_line = personalised_advice_line([ScreeningAnswerIn(**a) for a in answers])
 
-    cur = conn.execute(
-        """INSERT INTO screenings
-           (miner_id, previous_screening_id, screened_by, channel, tier,
-            risk_confidence, ai_explanation_english, ai_contributing_factors,
-            advice_line, provisional, fallback_used, synced, created_at, outreach_visit_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)""",
-        (
-            miner_id,
-            previous_screening_id,
-            screened_by,
-            channel,
-            tier,
-            confidence,
-            explanation_english,
-            json.dumps(contributing_factors),
-            advice_line,
-            _iso(created_at),
-            outreach_visit_id,
-        ),
+    screening = Screening(
+        miner_id=miner_id,
+        previous_screening_id=previous_screening_id,
+        screened_by=screened_by,
+        channel=channel,
+        tier=tier,
+        risk_confidence=confidence,
+        ai_explanation_english=explanation_english,
+        ai_contributing_factors=json.dumps(contributing_factors),
+        advice_line=advice_line,
+        provisional=0,
+        fallback_used=0,
+        synced=1,
+        created_at=created_at,
+        outreach_visit_id=outreach_visit_id,
     )
-    screening_id = cur.lastrowid
+    db.add(screening)
+    db.flush()
 
     for answer in answers:
-        conn.execute(
-            """INSERT INTO screening_answers
-               (screening_id, question_code, question_text, answer_value, answer_score)
-               VALUES (?, ?, ?, ?, ?)""",
-            (
-                screening_id,
-                answer["question_code"],
-                answer["question_text"],
-                answer["answer_value"],
-                answer["answer_score"],
-            ),
+        db.add(
+            ScreeningAnswer(
+                screening_id=screening.id,
+                question_code=answer["question_code"],
+                question_text=answer["question_text"],
+                answer_value=answer["answer_value"],
+                answer_score=answer["answer_score"],
+            )
         )
-    return screening_id
+    return screening.id
 
 
 def _insert_referral(
-    conn,
+    db,
     screening_id: int,
     miner_id: int,
     status: str,
@@ -183,128 +176,113 @@ def _insert_referral(
     attended_at: datetime | None = None,
     closed_at: datetime | None = None,
 ) -> None:
-    conn.execute(
-        """INSERT INTO referrals
-           (screening_id, miner_id, hospital, facility_id, deadline,
-            pre_alert_sent, status, reminder_stage, attended_at, closed_at,
-            created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            screening_id,
-            miner_id,
-            facility_name,
-            facility_id,
-            _iso(deadline),
-            1 if pre_alert_sent else 0,
-            status,
-            reminder_stage,
-            _iso(attended_at) if attended_at else None,
-            _iso(closed_at) if closed_at else None,
-            _iso(created_at),
-        ),
+    db.add(
+        Referral(
+            screening_id=screening_id,
+            miner_id=miner_id,
+            hospital=facility_name,
+            facility_id=facility_id,
+            # Seeded referrals get a real code too (14 August, master doc
+            # v6.0 Section 1.1), same generator create_referral_and_notify
+            # uses for a live referral — so the dashboard's referral list
+            # and the lookup page have something real to demo without
+            # needing a live screening first.
+            referral_code=_generate_referral_code(db),
+            deadline=deadline,
+            pre_alert_sent=1 if pre_alert_sent else 0,
+            status=status,
+            reminder_stage=reminder_stage,
+            attended_at=attended_at,
+            closed_at=closed_at,
+            created_at=created_at,
+        )
     )
 
 
 def seed() -> None:
     init_db()
-    conn = get_connection()
+    db = get_fresh_session()
     try:
         # Clear in FK-dependency order so this is safe to re-run from any state.
-        conn.execute("DELETE FROM referrals")
-        conn.execute("DELETE FROM screening_answers")
-        conn.execute("DELETE FROM screenings")
-        conn.execute("DELETE FROM miners")
-        conn.execute("DELETE FROM outreach_visits")
-        conn.execute("DELETE FROM facilities")
-        conn.execute("DELETE FROM mines")
-        conn.commit()
+        db.query(Referral).delete()
+        db.query(ScreeningAnswer).delete()
+        db.query(Screening).delete()
+        db.query(Miner).delete()
+        db.query(OutreachVisit).delete()
+        db.query(Facility).delete()
+        db.query(Mine).delete()
+        db.commit()
 
         # --- Mines dropdown list (Midlands province) ---
         for name, district in MIDLANDS_MINES:
-            conn.execute(
-                "INSERT INTO mines (name, district, province) VALUES (?, ?, 'Midlands')",
-                (name, district),
-            )
-        conn.commit()
+            db.add(Mine(name=name, district=district, province="Midlands"))
+        db.commit()
 
         # --- Facilities, seeded first so referrals below can carry a real
         # facility_id (Smart Referral Router facility matching). ---
-        hospital_cur = conn.execute(
-            "INSERT INTO facilities (name, level, address, phone, latitude, longitude) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "Kwekwe District Hospital",
-                "district_hospital",
-                "Corner Robert Mugabe / Sixth Ave, Kwekwe",
-                "055-24000",
-                -18.9281,
-                29.8149,
-            ),
+        hospital = Facility(
+            name="Kwekwe District Hospital",
+            level="district_hospital",
+            address="Corner Robert Mugabe / Sixth Ave, Kwekwe",
+            phone="055-24000",
+            latitude=-18.9281,
+            longitude=29.8149,
         )
-        hospital_id = hospital_cur.lastrowid
-        hospital_name = "Kwekwe District Hospital"
+        db.add(hospital)
+        db.flush()
+        hospital_id = hospital.id
+        hospital_name = hospital.name
 
-        clinic_cur = conn.execute(
-            "INSERT INTO facilities (name, level, address, phone, latitude, longitude) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "Sherwood Clinic",
-                "clinic",
-                "Sherwood Mine, Kwekwe",
-                "055-24101",
-                -18.8931,
-                29.7872,
-            ),
+        sherwood_clinic = Facility(
+            name="Sherwood Clinic",
+            level="clinic",
+            address="Sherwood Mine, Kwekwe",
+            phone="055-24101",
+            latitude=-18.8931,
+            longitude=29.7872,
         )
-        sherwood_clinic_id = clinic_cur.lastrowid
-        sherwood_clinic_name = "Sherwood Clinic"
+        db.add(sherwood_clinic)
+        db.flush()
+        sherwood_clinic_id = sherwood_clinic.id
+        sherwood_clinic_name = sherwood_clinic.name
 
         # --- Outreach visits, seeded before the screenings below so two of
         # them can carry a real outreach_visit_id. ---
-        future_visit_cur = conn.execute(
-            "INSERT INTO outreach_visits "
-            "(site, scheduled_date, expected_headcount, screened_count, "
-            "health_workers, report_generated, sms_3day_sent, sms_1day_sent) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "Globe & Phoenix Mine",
-                (_now + timedelta(days=13)).strftime("%Y-%m-%d"),
-                40,
-                0,
-                json.dumps(["Grace Chikwanha"]),
-                0,
-                0,
-                0,
-            ),
+        future_visit = OutreachVisit(
+            site="Globe & Phoenix Mine",
+            scheduled_date=(_now + timedelta(days=13)).date(),
+            expected_headcount=40,
+            screened_count=0,
+            health_workers='["Grace Chikwanha"]',
+            report_generated=0,
+            sms_3day_sent=0,
+            sms_1day_sent=0,
         )
-        future_visit_id = future_visit_cur.lastrowid
+        db.add(future_visit)
+        db.flush()
 
         # Past visit, already fully processed by the scheduled cascade (both
         # announcements sent, report ready) — linked screenings below give
         # GET /api/outreach a real report to show, not an empty shell.
-        past_visit_cur = conn.execute(
-            "INSERT INTO outreach_visits "
-            "(site, scheduled_date, expected_headcount, screened_count, "
-            "health_workers, report_generated, sms_3day_sent, sms_1day_sent) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "Sherwood Mine",
-                (_now - timedelta(days=9)).strftime("%Y-%m-%d"),
-                5,
-                2,
-                json.dumps(["Grace Chikwanha"]),
-                1,
-                1,
-                1,
-            ),
+        past_visit = OutreachVisit(
+            site="Sherwood Mine",
+            scheduled_date=(_now - timedelta(days=9)).date(),
+            expected_headcount=5,
+            screened_count=2,
+            health_workers='["Grace Chikwanha"]',
+            report_generated=1,
+            sms_3day_sent=1,
+            sms_1day_sent=1,
         )
-        past_visit_id = past_visit_cur.lastrowid
+        db.add(past_visit)
+        db.flush()
+        past_visit_id = past_visit.id
 
         # --- Farai Ncube — Sherwood Mine — GREEN, single screening, from the
         # past outreach visit above ---
-        farai_id = _insert_worker(conn, "Farai Ncube", "+263771000002", "Sherwood Mine")
+        farai_id = _insert_worker(db, "Farai Ncube", "+263771000002", "Sherwood Mine")
         _insert_screening(
-            conn,
+            db,
             farai_id,
             GREEN_PROFILE,
             "GREEN",
@@ -318,11 +296,9 @@ def seed() -> None:
         )
 
         # --- Blessing Sithole — Globe & Phoenix Mine — YELLOW, single screening ---
-        blessing_id = _insert_worker(
-            conn, "Blessing Sithole", "+263771000003", "Globe & Phoenix Mine"
-        )
+        blessing_id = _insert_worker(db, "Blessing Sithole", "+263771000003", "Globe & Phoenix Mine")
         _insert_screening(
-            conn,
+            db,
             blessing_id,
             YELLOW_PROFILE,
             "YELLOW",
@@ -335,12 +311,10 @@ def seed() -> None:
         )
 
         # --- Tapiwa Gumbo — Globe & Phoenix Mine — RED, referral closed ---
-        tapiwa_id = _insert_worker(
-            conn, "Tapiwa Gumbo", "+263771000004", "Globe & Phoenix Mine"
-        )
+        tapiwa_id = _insert_worker(db, "Tapiwa Gumbo", "+263771000004", "Globe & Phoenix Mine")
         tapiwa_created = _now - timedelta(days=25)
         tapiwa_screening_id = _insert_screening(
-            conn,
+            db,
             tapiwa_id,
             RED_PROFILE,
             "RED",
@@ -352,7 +326,7 @@ def seed() -> None:
             tapiwa_created,
         )
         _insert_referral(
-            conn,
+            db,
             tapiwa_screening_id,
             tapiwa_id,
             "closed",
@@ -366,12 +340,10 @@ def seed() -> None:
         )
 
         # --- Nyasha Chitiyo — Kwekwe Consolidated — RED, referral open ---
-        nyasha_id = _insert_worker(
-            conn, "Nyasha Chitiyo", "+263771000005", "Kwekwe Consolidated"
-        )
+        nyasha_id = _insert_worker(db, "Nyasha Chitiyo", "+263771000005", "Kwekwe Consolidated")
         nyasha_created = _now - timedelta(days=2)
         nyasha_screening_id = _insert_screening(
-            conn,
+            db,
             nyasha_id,
             RED_PROFILE,
             "RED",
@@ -383,7 +355,7 @@ def seed() -> None:
             nyasha_created,
         )
         _insert_referral(
-            conn,
+            db,
             nyasha_screening_id,
             nyasha_id,
             "open",
@@ -395,12 +367,10 @@ def seed() -> None:
         )
 
         # --- Kudakwashe Marecha — Sherwood Mine — ORANGE, referral attended (not yet closed) ---
-        kuda_id = _insert_worker(
-            conn, "Kudakwashe Marecha", "+263771000007", "Sherwood Mine"
-        )
+        kuda_id = _insert_worker(db, "Kudakwashe Marecha", "+263771000007", "Sherwood Mine")
         kuda_created = _now - timedelta(days=6)
         kuda_screening_id = _insert_screening(
-            conn,
+            db,
             kuda_id,
             ORANGE_PROFILE,
             "ORANGE",
@@ -413,7 +383,7 @@ def seed() -> None:
             outreach_visit_id=past_visit_id,
         )
         _insert_referral(
-            conn,
+            db,
             kuda_screening_id,
             kuda_id,
             "attended",
@@ -429,11 +399,9 @@ def seed() -> None:
         )
 
         # --- Rutendo Marufu — Kwekwe Consolidated — GREEN, single screening ---
-        rutendo_id = _insert_worker(
-            conn, "Rutendo Marufu", "+263771000006", "Kwekwe Consolidated"
-        )
+        rutendo_id = _insert_worker(db, "Rutendo Marufu", "+263771000006", "Kwekwe Consolidated")
         _insert_screening(
-            conn,
+            db,
             rutendo_id,
             GREEN_PROFILE,
             "GREEN",
@@ -446,9 +414,9 @@ def seed() -> None:
         )
 
         # --- Tendai Moyo — Sherwood Mine — YELLOW then RED (two screenings) ---
-        tendai_id = _insert_worker(conn, "Tendai Moyo", "+263771000001", "Sherwood Mine")
+        tendai_id = _insert_worker(db, "Tendai Moyo", "+263771000001", "Sherwood Mine")
         tendai_first_id = _insert_screening(
-            conn,
+            db,
             tendai_id,
             YELLOW_PROFILE,
             "YELLOW",
@@ -461,7 +429,7 @@ def seed() -> None:
         )
         tendai_second_created = _now - timedelta(days=1)
         tendai_second_id = _insert_screening(
-            conn,
+            db,
             tendai_id,
             RED_PROFILE,
             "RED",
@@ -474,7 +442,7 @@ def seed() -> None:
             previous_screening_id=tendai_first_id,
         )
         _insert_referral(
-            conn,
+            db,
             tendai_second_id,
             tendai_id,
             "pre_alerted",
@@ -489,12 +457,10 @@ def seed() -> None:
         # --- Tatenda Moyana — Globe & Phoenix Mine — ORANGE, mid-cascade
         # 'reminded' state. No clinic at this site in the seed data, so the
         # ORANGE match falls back to the hospital, same as the live rule. ---
-        tatenda_id = _insert_worker(
-            conn, "Tatenda Moyana", "+263771000008", "Globe & Phoenix Mine"
-        )
+        tatenda_id = _insert_worker(db, "Tatenda Moyana", "+263771000008", "Globe & Phoenix Mine")
         tatenda_created = _now - timedelta(days=5)
         tatenda_screening_id = _insert_screening(
-            conn,
+            db,
             tatenda_id,
             ORANGE_PROFILE,
             "ORANGE",
@@ -506,7 +472,7 @@ def seed() -> None:
             tatenda_created,
         )
         _insert_referral(
-            conn,
+            db,
             tatenda_screening_id,
             tatenda_id,
             "reminded",
@@ -520,12 +486,10 @@ def seed() -> None:
 
         # --- Farai Chikara — Kwekwe Consolidated — RED, 'escalated' (missed
         # the 48h emergency window entirely). ---
-        farai_c_id = _insert_worker(
-            conn, "Farai Chikara", "+263771000009", "Kwekwe Consolidated"
-        )
+        farai_c_id = _insert_worker(db, "Farai Chikara", "+263771000009", "Kwekwe Consolidated")
         farai_c_created = _now - timedelta(days=3)
         farai_c_screening_id = _insert_screening(
-            conn,
+            db,
             farai_c_id,
             RED_PROFILE,
             "RED",
@@ -537,7 +501,7 @@ def seed() -> None:
             farai_c_created,
         )
         _insert_referral(
-            conn,
+            db,
             farai_c_screening_id,
             farai_c_id,
             "escalated",
@@ -549,22 +513,15 @@ def seed() -> None:
             reminder_stage=1,  # the 24h reminder went out before he missed the 48h deadline
         )
 
-        conn.commit()
+        db.commit()
 
         counts = {
-            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in (
-                "miners",
-                "screenings",
-                "referrals",
-                "facilities",
-                "outreach_visits",
-                "mines",
-            )
+            model.__tablename__: db.scalar(select(func.count()).select_from(model))
+            for model in (Miner, Screening, Referral, Facility, OutreachVisit, Mine)
         }
-        site_count = conn.execute(
-            "SELECT COUNT(DISTINCT mine_site) FROM miners WHERE mine_site IS NOT NULL"
-        ).fetchone()[0]
+        site_count = db.scalar(
+            select(func.count(func.distinct(Miner.mine_site))).where(Miner.mine_site.is_not(None))
+        )
         print(
             f"Seeded: {counts['miners']} miners, {counts['screenings']} screenings, "
             f"{counts['referrals']} referrals across {site_count} sites "
@@ -573,7 +530,7 @@ def seed() -> None:
             f"{counts['mines']} mines in the outreach-site dropdown."
         )
     finally:
-        conn.close()
+        db.close()
 
 
 if __name__ == "__main__":
