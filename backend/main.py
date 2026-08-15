@@ -1,6 +1,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -10,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from database import init_db
 from routers import auth, dashboard, facilities, mines, outreach, referral_lookup, screening, ussd, workers
@@ -90,3 +92,17 @@ app.include_router(referral_lookup.router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# USSD web simulator (14 August 2026, master doc v6.0 Section 16.1) — a
+# self-contained static page (backend/static/ussd_simulator.html, no build
+# step, no new dependency) that POSTs the exact same fields a real Africa's
+# Talking webhook would to the existing /api/ussd route above. Served
+# directly rather than mounted via StaticFiles for one file — see
+# SKILL.md's "run the USSD web simulator" note.
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@app.get("/ussd-simulator")
+def ussd_simulator_page():
+    return FileResponse(_STATIC_DIR / "ussd_simulator.html")

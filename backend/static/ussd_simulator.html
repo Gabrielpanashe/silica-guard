@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SilicaGuard — USSD Simulator</title>
+<style>
+  /*
+    Master doc v6.0 Section 16.1 (14 August 2026): "Build a feature-phone
+    simulator as a small web page — a keypad and a green screen rendered in
+    the browser. When the presenter dials the code, it sends exactly the
+    payload a real USSD gateway sends... Our backend cannot tell the
+    difference, because there is none." This page POSTs the same
+    sessionId/phoneNumber/serviceCode/text fields backend/scripts/
+    ussd_simulator.py's CLI version does, to the same live /api/ussd
+    endpoint — this is the real code path, not a mock of the screening
+    logic. Only the telephone network itself is simulated.
+
+    No build step, no external requests (CSP-safe, works offline once
+    loaded) — plain HTML/CSS/JS, matching the project's own dashboard/
+    precedent (see SILICAGUARD.md Section 5).
+  */
+  :root {
+    --bezel: #1c1f22;
+    --bezel-edge: #2c3136;
+    --screen-bg: #0b1f14;
+    --screen-fg: #4ade80;
+    --screen-dim: #1f6b3f;
+    --key-bg: #2a2f35;
+    --key-bg-hover: #363c44;
+    --key-fg: #e5e7eb;
+    --accent: #4ade80;
+    --danger: #ef4444;
+    --page-bg: #0d0f11;
+    --page-fg: #d1d5db;
+    --muted: #8b94a0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--page-bg);
+    color: var(--page-fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 1rem 3rem;
+  }
+  header { text-align: center; margin-bottom: 1.5rem; max-width: 34rem; }
+  header h1 { font-size: 1.15rem; margin: 0 0 .35rem; letter-spacing: .02em; }
+  header p { margin: 0; color: var(--muted); font-size: .85rem; line-height: 1.5; }
+  header code { color: var(--accent); }
+
+  .phone {
+    width: min(22rem, 92vw);
+    background: linear-gradient(180deg, var(--bezel), #15171a);
+    border: 1px solid var(--bezel-edge);
+    border-radius: 1.75rem;
+    padding: 1.1rem;
+    box-shadow: 0 20px 60px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+
+  .setup { display: flex; flex-direction: column; gap: .6rem; margin-bottom: .9rem; }
+  .setup label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .setup input {
+    width: 100%;
+    background: #101317;
+    border: 1px solid #2b3038;
+    color: var(--key-fg);
+    border-radius: .5rem;
+    padding: .55rem .65rem;
+    font-size: .95rem;
+    font-family: inherit;
+  }
+  .setup input:disabled { opacity: .5; }
+
+  .screen-frame {
+    background: #05100a;
+    border: 1px solid #0f2b1c;
+    border-radius: .6rem;
+    padding: .15rem;
+    margin-bottom: .9rem;
+  }
+  .screen {
+    background: var(--screen-bg);
+    color: var(--screen-fg);
+    font-family: "Courier New", ui-monospace, monospace;
+    font-size: .88rem;
+    line-height: 1.5;
+    padding: .85rem .8rem;
+    min-height: 9.5rem;
+    max-height: 16rem;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-radius: .4rem;
+    text-shadow: 0 0 6px rgba(74, 222, 128, .35);
+  }
+  .screen .placeholder { color: var(--screen-dim); }
+  .screen .ended { color: #fca5a5; text-shadow: 0 0 6px rgba(252,165,165,.35); }
+  .status-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: .68rem;
+    color: var(--screen-dim);
+    padding: .3rem .85rem 0;
+    font-family: ui-monospace, monospace;
+  }
+
+  .input-row { display: flex; gap: .5rem; margin-bottom: .9rem; }
+  .input-row input {
+    flex: 1;
+    background: #101317;
+    border: 1px solid #2b3038;
+    color: var(--key-fg);
+    border-radius: .5rem;
+    padding: .6rem .7rem;
+    font-size: 1rem;
+    font-family: ui-monospace, monospace;
+    text-align: center;
+  }
+  .input-row input:disabled { opacity: .4; }
+
+  .keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: .5rem;
+    margin-bottom: .9rem;
+  }
+  .key {
+    background: var(--key-bg);
+    color: var(--key-fg);
+    border: 1px solid #383e46;
+    border-radius: .5rem;
+    padding: .7rem 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    transition: background .1s ease;
+  }
+  .key:hover { background: var(--key-bg-hover); }
+  .key:active { background: #1f2329; }
+  .key:disabled { opacity: .35; cursor: not-allowed; }
+  .key .sub { display: block; font-size: .6rem; font-weight: 400; color: var(--muted); margin-top: .1rem; }
+
+  .action-row { display: flex; gap: .5rem; }
+  .btn {
+    flex: 1;
+    border: none;
+    border-radius: .6rem;
+    padding: .7rem 0;
+    font-size: .9rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-call { background: var(--accent); color: #05170d; }
+  .btn-call:hover:not(:disabled) { background: #6ee7a0; }
+  .btn-send { background: #2563eb; color: #eef2ff; }
+  .btn-send:hover:not(:disabled) { background: #3b76ff; }
+  .btn-end { background: var(--danger); color: #fff1f1; }
+  .btn-end:hover:not(:disabled) { background: #f47171; }
+
+  footer { margin-top: 1.5rem; max-width: 30rem; text-align: center; font-size: .72rem; color: var(--muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SilicaGuard USSD Simulator</h1>
+  <p>
+    A browser stand-in for the telephone network only. Every request below hits the
+    real <code>/api/ussd</code> endpoint with the same fields a live Africa's Talking
+    gateway would send — same session logic, same scoring, same record in the same
+    database. See master doc v6.0 §16.1.
+  </p>
+</header>
+
+<div class="phone">
+  <div class="setup">
+    <label for="phoneInput">Simulated phone number</label>
+    <input id="phoneInput" type="text" value="+263771112222" autocomplete="off">
+  </div>
+
+  <div class="screen-frame">
+    <div class="screen" id="screen"><span class="placeholder">Press CALL to dial *384*1#…</span></div>
+  </div>
+  <div class="status-row">
+    <span id="sessionLabel">no session</span>
+    <span id="serviceCodeLabel">*384*1#</span>
+  </div>
+
+  <div class="input-row" style="margin-top:.9rem;">
+    <input id="choiceInput" type="text" inputmode="numeric" placeholder="choice" disabled>
+  </div>
+
+  <div class="keypad">
+    <button class="key" data-digit="1">1</button>
+    <button class="key" data-digit="2">2<span class="sub">ABC</span></button>
+    <button class="key" data-digit="3">3<span class="sub">DEF</span></button>
+    <button class="key" data-digit="4">4<span class="sub">GHI</span></button>
+    <button class="key" data-digit="5">5<span class="sub">JKL</span></button>
+    <button class="key" data-digit="6">6<span class="sub">MNO</span></button>
+    <button class="key" data-digit="7">7<span class="sub">PQRS</span></button>
+    <button class="key" data-digit="8">8<span class="sub">TUV</span></button>
+    <button class="key" data-digit="9">9<span class="sub">WXYZ</span></button>
+    <button class="key" data-digit="*">*</button>
+    <button class="key" data-digit="0">0</button>
+    <button class="key" id="backspaceKey" data-digit="⌫">⌫</button>
+  </div>
+
+  <div class="action-row">
+    <button class="btn btn-call" id="callBtn">CALL</button>
+    <button class="btn btn-send" id="sendBtn" disabled>SEND</button>
+    <button class="btn btn-end" id="endBtn" disabled>END</button>
+  </div>
+</div>
+
+<footer>
+  Not connected to a mobile network — this page talks directly to this server's own
+  <code>/api/ussd</code> route. The result SMS it triggers is real (Africa's Talking),
+  same as it is for the CLI simulator (<code>scripts/ussd_simulator.py</code>).
+</footer>
+
+<script>
+(function () {
+  const SERVICE_CODE = "*384*1#";
+  const ENDPOINT = "/api/ussd";
+
+  const screenEl = document.getElementById("screen");
+  const sessionLabel = document.getElementById("sessionLabel");
+  const phoneInput = document.getElementById("phoneInput");
+  const choiceInput = document.getElementById("choiceInput");
+  const callBtn = document.getElementById("callBtn");
+  const sendBtn = document.getElementById("sendBtn");
+  const endBtn = document.getElementById("endBtn");
+  const backspaceKey = document.getElementById("backspaceKey");
+  const keys = Array.from(document.querySelectorAll(".key"));
+
+  let sessionId = null;
+  let choices = [];
+  let ended = true;
+
+  function newSessionId() {
+    return "sim-" + Math.random().toString(16).slice(2, 10);
+  }
+
+  function setScreen(text, isEnded) {
+    screenEl.textContent = text;
+    screenEl.classList.toggle("ended", !!isEnded);
+  }
+
+  function setControlsForSession(active) {
+    phoneInput.disabled = active;
+    choiceInput.disabled = !active;
+    sendBtn.disabled = !active;
+    endBtn.disabled = !active;
+    callBtn.disabled = active;
+    keys.forEach((k) => { k.disabled = !active; });
+    if (active) choiceInput.focus();
+  }
+
+  async function postUssd(text) {
+    const body = new URLSearchParams({
+      sessionId: sessionId,
+      phoneNumber: phoneInput.value.trim() || "+263771112222",
+      serviceCode: SERVICE_CODE,
+      text: text,
+    });
+    const resp = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    if (!resp.ok) {
+      throw new Error("Server returned " + resp.status);
+    }
+    return resp.text();
+  }
+
+  function handleReply(raw) {
+    const spaceIdx = raw.indexOf(" ");
+    const prefix = spaceIdx === -1 ? raw : raw.slice(0, spaceIdx);
+    const message = spaceIdx === -1 ? "" : raw.slice(spaceIdx + 1);
+
+    if (prefix === "END") {
+      setScreen(message + "\n\n[Session ended]", true);
+      ended = true;
+      setControlsForSession(false);
+      sessionLabel.textContent = sessionId + " (ended)";
+    } else {
+      setScreen(message, false);
+      choiceInput.value = "";
+    }
+  }
+
+  async function dial() {
+    sessionId = newSessionId();
+    choices = [];
+    ended = false;
+    sessionLabel.textContent = sessionId;
+    setScreen("Dialing " + SERVICE_CODE + " …");
+    setControlsForSession(true);
+    try {
+      const raw = await postUssd("");
+      handleReply(raw);
+    } catch (err) {
+      setScreen("Could not reach the server.\n" + err.message, true);
+      setControlsForSession(false);
+    }
+  }
+
+  async function send() {
+    const choice = choiceInput.value.trim();
+    if (!choice || ended) return;
+    choices.push(choice);
+    setScreen("…");
+    setControlsForSession(false);
+    try {
+      const raw = await postUssd(choices.join("*"));
+      handleReply(raw);
+      if (!ended) setControlsForSession(true);
+    } catch (err) {
+      setScreen("Could not reach the server.\n" + err.message, true);
+    }
+  }
+
+  function endSession() {
+    ended = true;
+    setScreen("[Session ended by presenter]", true);
+    setControlsForSession(false);
+    sessionLabel.textContent = sessionId ? sessionId + " (ended)" : "no session";
+  }
+
+  callBtn.addEventListener("click", dial);
+  sendBtn.addEventListener("click", send);
+  endBtn.addEventListener("click", endSession);
+  choiceInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send();
+  });
+
+  keys.forEach((key) => {
+    key.addEventListener("click", () => {
+      const digit = key.dataset.digit;
+      if (digit === "⌫") {
+        choiceInput.value = choiceInput.value.slice(0, -1);
+      } else {
+        choiceInput.value += digit;
+      }
+      choiceInput.focus();
+    });
+  });
+
+  setControlsForSession(false);
+})();
+</script>
+
+</body>
+</html>
