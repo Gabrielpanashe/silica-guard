@@ -32,6 +32,8 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
+To try the USSD web simulator without a phone or an Africa's Talking sandbox number, once it's built this sprint (master doc v6.0 Section 16.1 — not yet live as of 14 August): open `http://127.0.0.1:8000/ussd-simulator` in a browser while the server is running. It's a keypad + green-screen page that sends the exact form fields (`sessionId`, `phoneNumber`, `serviceCode`, `text`) a real Africa's Talking webhook would, against the real `/api/ussd` endpoint — same code path as `ussd_simulator.py` below, just in a browser instead of a terminal.
+
 ### Mobile (React Native / Expo)
 
 Not yet scaffolded in this repo. Once the collaborator initialises it: `cd mobile && npm install && npx expo start`. Points at the backend's `DATABASE_URL`-independent API base URL — check `docs/API_CONTRACT.md` for the current base URL to use.
@@ -52,6 +54,8 @@ Follow the existing pattern in `backend/routers/` and `backend/services/`:
 6. **Update `docs/API_CONTRACT.md`** with the new route's method, path, request/response shape and error cases before merging. The collaborator builds against this document, not against reading your Python.
 
 ## How to add or change a database field
+
+**This procedure describes the pre-migration state (as of 14 August 2026).** A SQLAlchemy ORM + Alembic migration is in progress this sprint (master doc v6.0 Section 16.2, tracked in `CLAUDE.md`'s "Current sprint status") — once it lands, this becomes: edit the field on the relevant model, `alembic revision --autogenerate -m "..."`, review the generated migration by hand, `alembic upgrade head`. Rewrite this section when that happens; until then, the procedure below is still accurate.
 
 The schema lives as raw SQL in `backend/database.py` (`SCHEMA` string, `CREATE TABLE IF NOT EXISTS`). There is no ORM and no migration framework yet — SQLite is on the MVP tier.
 
