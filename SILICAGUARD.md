@@ -1,6 +1,6 @@
 # SilicaGuard — Product & Technical Reference
 
-Version 4.0 shape. This document mirrors the master reference document (`SilicaGuardcompletedocumentation_final.docx`, v4.0, FINAL) — if the two ever disagree, the `.docx` wins and this file needs updating. **As of 5 August 2026 this file reflects the artisanal-only scope pivot (see Section 13); the `.docx` has not been manually updated to match yet — see Section 13 for what still needs transferring.** For day-to-day working rules see `CLAUDE.md` and `SKILL.md`; for exact request/response shapes see `docs/API_CONTRACT.md`.
+Version 6.0 shape. This document mirrors the master reference document (`SilicaGuard_MasterDocument_Reference_v6.docx`, v6.0, "Final Showcase Edition") — if the two ever disagree, the `.docx` wins and this file needs updating. v6.0 explicitly supersedes v5.0 and every earlier version, including v4.0 (which this file previously tracked). **As of 14 August 2026 this file reflects v6.0's deadline change, the QR→referral-code reframe, and the assigned backend roadmap for the 14–20 August build window (see Section 16 and `CLAUDE.md`'s "Current sprint status" for what's actually landed vs. still pending).** For day-to-day working rules see `CLAUDE.md` and `SKILL.md`; for exact request/response shapes see `docs/API_CONTRACT.md`.
 
 ## 1. Project Identity
 
@@ -8,10 +8,11 @@ Version 4.0 shape. This document mirrors the master reference document (`SilicaG
 |---|---|
 | Product | SilicaGuard — Occupational Lung Health Platform, Module 1: Silicosis |
 | Deployment channels | Android practitioner app (React Native / Expo) · USSD · SMS · Web browser |
-| Team | Panashe M. Chandiwana — AI & Backend Engineer · Mobile & UX/UI Engineer · Mr Gabriel — Clinical Lead |
+| Team | Panashe M. Chandiwana — AI & Backend Engineer · Takudzwa — Mobile, Web & Design Engineer · Gabriel — Clinical Lead, Research & Pilot Lead |
 | Pilot location | Kwekwe District, Midlands Province, Zimbabwe |
-| Sprint window | 1–11 August 2026, feature freeze end of Day 8 |
-| Prototype presentation | 11 August 2026 |
+| Build window | **14–20 August 2026** (changed 14 August, master doc v6.0 — supersedes the original 1–11 August window) |
+| Submission | **Monday 24 August 2026** — final deck AND a mandatory 5-minute prototype video, both due |
+| Final in-person showcase | **Friday 28 August 2026** — Top 10, live prototype must still be running |
 
 ## 2. The Problem in One Paragraph
 
@@ -25,16 +26,18 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 
 ## 4. What We're Building, and What We're Deliberately Not
 
-| Building for 11 August | Deliberately not building | Why not |
+| Building for 20 August (feature freeze) | Deliberately not building | Why not |
 |---|---|---|
 | Practitioner Android app, offline, screening | Consumer app for artisanal miners | They can't pay; everything they need already works through the health worker, USSD and SMS |
 | Four-tier AI risk stratification | Chest X-ray AI | Needs imaging hardware, labelled local data and regulatory clearance we can't obtain by August |
 | Longitudinal deterioration detection | Voice line / IVR | Africa's Talking Voice doesn't list Zimbabwe — unbounded external risk |
 | Smart referral routing with tracked closure | WhatsApp channel | Needs a smartphone, paid data, Meta business verification, and can't reach a user outside a 24-hour window |
-| USSD self-screening | Recorded audio modules | A live health worker in Shona is better, and costs a day less to build |
+| USSD self-screening (+ our own web simulator, master doc v6.0 Section 16.1) | Recorded audio modules | A live health worker in Shona is better, and costs a day less to build |
 | SMS results, reminders, outreach announcements | Four-week message sequence | Education belongs at the moment of screening, not scattered across weeks |
 | Outreach Planner with auto-generated reports | Peer champion programme | Described in the pilot plan, not built as software |
 | Clinical web dashboard | Enterprise/employer module (bulk workforce upload, campaigns, employer dashboard) | Descoped 5 August 2026 per Dr Bopoto's feedback — formal mining companies already have robust pneumoconiosis programmes; see Section 13 |
+| Referral code (`SG-4K7Q` style, SMS + hospital lookup page) | QR referral card | Reframed 14 August, master doc v6.0 Section 1.1 — a QR needs hospital-side scanning we don't control, no printer at a mine site, and is useless to a USSD self-screener. A human-typeable code works everywhere a QR wouldn't; a QR can auto-fill it later as a convenience layer, not a replacement. |
+| PostgreSQL via Supabase, SQLAlchemy + Alembic | — | Migration in progress this sprint, master doc v6.0 Section 16.2; see Section 7 |
 | — | Teach Mode (six illustrated education cards) | Not built. Health education for the demo is delivered verbally by the VHW during the group session, not through the app. |
 
 **Note, added 10 August**: the Clinical web dashboard exists as of today (`dashboard/`, deployed to `https://silicaguard-dashboard.onrender.com`, reachable from a button in the mobile app) — built the night before the demo. It's one static HTML/CSS/JS page (no build step, no React/Vite/Recharts/Leaflet, see Section 5's note), not four role-scoped logins — one unified view of population and referral intelligence. Teach Mode remains genuinely not built.
@@ -44,9 +47,9 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 | Layer | Technology | Notes |
 |---|---|---|
 | Backend | Python FastAPI | All API routes, business logic, AI orchestration |
-| Database | SQLite (MVP) | Migrates to PostgreSQL at pilot scale |
+| Database | SQLite → **migrating to PostgreSQL via Supabase this sprint** (target: full SQLAlchemy models + Alembic migrations, master doc v6.0 Section 16.2) | Until the migration lands, still raw `sqlite3`, no ORM — see `CLAUDE.md`'s Architecture section for the current-truth state |
 | Mobile | React Native (Expo) | Offline-first, `expo-sqlite` local storage. **No Flutter.** |
-| Mobile QR | react-native-qrcode-svg | **Target, not built** — the referral card shows a text referral ID, not a generated QR, as of 10 August |
+| Referral code | Plain human-readable code (`SG-4K7Q`), generated backend-side | **Superseded the QR plan 14 August** (master doc v6.0 Section 1.1) — no `react-native-qrcode-svg`, no QR generation planned. Sent by SMS; a hospital staff member types it into a simple web page to open the record and confirm attendance. |
 | Dashboard | React + Vite + Recharts + Leaflet (target) | **As actually shipped 10 August: plain static HTML/CSS/JS, no build step**, deployed to `https://silicaguard-dashboard.onrender.com` — see the Section 4 note above. React/Vite/Recharts/Leaflet remains the intended stack for a properly resourced rebuild; this is documented technical debt, not a stack change. |
 | AI | Google Gemini 2.5 Flash | All four AI modules. Claude API is the documented drop-in alternative if Anthropic billing becomes available. |
 | USSD + SMS | Africa's Talking, called via `httpx` directly | **Not** the official SDK — it fails with an SSL error on Windows in this environment |
@@ -57,10 +60,12 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 
 ## 6. Project Structure
 
+**This tree is illustrative, not exhaustive** — `routers/`, `services/`, and `tests/` have grown well beyond the files listed below since this section was last fully rewritten; treat it as "the pattern," and check the directories directly for the current full list. Two things are new/planned as of 14 August (master doc v6.0, not yet built — see `CLAUDE.md`'s "Current sprint status"): the SQLAlchemy models/engine (replacing the raw-SQL `database.py` described below once the ORM migration lands) and `backend/static/ussd_simulator.html` (the new USSD web simulator).
+
 ```
 backend/
 ├── main.py                      # FastAPI app, router registration
-├── database.py                  # Raw SQL schema + sqlite3 connection helper
+├── database.py                  # Raw SQL schema + sqlite3 connection helper (pre-ORM-migration)
 ├── models.py                    # Pydantic request/response schemas
 ├── questions.py                 # The screening question bank (shared codes with mobile)
 ├── prompts/
@@ -77,29 +82,29 @@ backend/
 │   └── ussd_handler.py          # Pure decision tree, no AI call
 ├── scripts/
 │   ├── seed_demo_data.py        # One-command reproducible demo dataset
-│   └── ussd_simulator.py        # Interactive local USSD testing
+│   └── ussd_simulator.py        # Interactive local USSD testing (CLI) — a browser
+│                                 # version is planned this sprint, served as a static page
 └── tests/
 
-mobile/        # React Native (Expo) — collaborator's ownership. Home, Intake, Question,
+mobile/        # React Native (Expo) — Takudzwa's ownership. Home, Intake, Question,
                # Result, Referral, Worklist, OutreachStats screens; src/services/api.js
                # is the backend contract client.
 dashboard/     # index.html, style.css, app.js — plain JS, no build step (see Section 5).
-               # Nominally collaborator's ownership; built 10 August under explicit
-               # cross-boundary authorization given the demo timeline.
+               # Takudzwa's ownership; merged to main.
 docs/
 └── API_CONTRACT.md              # The interface contract between backend and both frontends
 ```
 
 ## 7. Database Schema
 
-Raw SQL lives in `backend/database.py`. **The tables below are the v4.0 target shape** — check `CLAUDE.md`'s "Current sprint status" and `docs/API_CONTRACT.md` for what's actually live today versus still pending migration.
+Raw SQL lives in `backend/database.py` (pre-ORM-migration — see Section 5). **The tables below are the target shape** — check `CLAUDE.md`'s "Current sprint status" and `docs/API_CONTRACT.md` for what's actually live today versus still pending migration.
 
 | Table | Key fields | Purpose |
 |---|---|---|
 | `workers` (currently `miners`) | `id, phone (unique, persistent identity), name, site, job_role, created_at` | The worker register. Phone number is the identity across all screenings. |
 | `screenings` | `id, worker_id, previous_screening_id, tier, confidence, advice_line, channel, provisional, created_at` | One row per screening. `previous_screening_id` enables deterioration detection. |
 | `screening_answers` | `id, screening_id, question_code, answer_value, answer_score` | Individual answers, retained for audit and re-evaluation. |
-| `referrals` | `id, screening_id, worker_id, facility_id, urgency, deadline, status, pre_alert_sent, attended_at, closed_at` | Full referral lifecycle with timestamps on every transition. |
+| `referrals` | `id, screening_id, worker_id, facility_id, referral_code, urgency, deadline, status, pre_alert_sent, attended_at, closed_at` | Full referral lifecycle with timestamps on every transition. `referral_code` (e.g. `SG-4K7Q`) is new as of 14 August, master doc v6.0 Section 1.1 — a short human-readable code, not a QR, sent by SMS and entered on a hospital web page to confirm attendance. Not yet built as of this writing. |
 | `facilities` | `id, name, level, address, phone, latitude, longitude` | Facility register used by the Smart Referral Router. |
 | `notifications` | `id, worker_id, channel, template, payload, sent_at, delivery_status` | Every SMS sent, for audit and delivery reporting. |
 | `outreach_visits` | `id, site, scheduled_date, expected_headcount, screened_count, health_workers, report_generated` | Outreach planner. |
@@ -116,6 +121,8 @@ See `docs/API_CONTRACT.md` for the full contract with request/response examples 
 | `/api/screen` | POST | Submit a screening; returns tier, confidence, factors, explanation, advice line, deterioration result |
 | `/api/ussd` | POST | Africa's Talking USSD webhook. Deterministic tree, no model call inside the session. |
 | `/api/referrals` | GET, PATCH | Referral queue; update status and record outcome |
+| `/api/referrals/lookup/{code}` | GET | **Not yet built** — hospital staff enter a referral code, get the record back. Unauthenticated by deliberate precedent (hospital staff has no login), same as `/api/screen` and `GET /api/workers/{phone}`. |
+| `/api/referrals/lookup/{code}/confirm-attendance` | POST | **Not yet built** — closes the loop: marks the referral attended. This is what makes referral completion rate (the headline KPI) measurable end to end. |
 | `/api/outreach` | POST, GET | Schedule a visit, trigger bulk SMS, retrieve post-visit report |
 | `/api/dashboard/week` | GET | Weekly Population Intelligence narrative and headline metrics |
 | `/api/auth/login` | POST | JWT authentication with role claim: `practitioner`, `clinical` |
@@ -150,7 +157,8 @@ Defined verbatim in `backend/questions.py` (`SCREENING_QUESTIONS`), bilingual Sh
 | Area | Status | Why |
 |---|---|---|
 | Chest X-ray AI | Removed, stays removed | Needs imaging hardware we don't control, labelled local radiologist data we don't have, and regulatory clearance unobtainable by August |
-| Voice line / IVR | Removed, stays removed | Africa's Talking Voice doesn't list Zimbabwe; an unbounded external risk on an 11-day sprint |
+| Voice line / IVR | Removed, stays removed | Africa's Talking Voice doesn't list Zimbabwe; an unbounded external risk on a short sprint |
+| QR referral card | Reframed 14 August into a plain referral code (`SG-4K7Q`), not a scanned QR | Master doc v6.0 Section 1.1 — a QR needs hospital-side scanning we don't control and a printer at the mine site we don't have, and it's useless to a USSD self-screener. A typed code works everywhere; a QR can auto-fill it later as a convenience layer, not a replacement. |
 | Recorded audio education modules | Removed, replaced by Teach Mode script cards | Saves a day of recording/editing/re-takes; a live health worker in Shona is better than a recording |
 | Four-week message sequence | Removed, replaced by personalised advice at the moment of screening | Education at the moment of attention beats messages scattered across weeks nobody reads |
 | WhatsApp | Stays out of the MVP | Needs a smartphone, paid data, Meta business verification, and can't reach a user outside a 24-hour window |
@@ -190,15 +198,15 @@ This is an open question put back to Dr Bopoto directly. Update this section onc
 |---|---|---|---|
 | 5 August 2026 | PDF response | Formal mining companies already have robust pneumoconiosis programmes — not innovative to target them. Focus only on artisanal miners, uncovered by NSSA or any existing programme. | Removed the entire Enterprise/formal-sector pillar, the employer role, and the employer revenue model. Repositioned product as artisanal-miner-only. Follow-up question sent to Dr Bopoto on realistic funding sources now that employers are out of scope. |
 
-**Still to do**: the `.docx` master reference document has not been manually updated to match — it still contains the full "Pillar 4 — Enterprise Occupational Health" section, the employer/insurer revenue model, the Day 7 "Enterprise module" sprint-plan entry, the Day 8 employer stakeholder interview, and the enterprise API routes/schema. See the handoff checklist provided alongside this pivot for the exact sections to edit.
+**Resolved 14 August**: the old `SilicaGuardcompletedocumentation_final.docx` (v4.0) never got manually updated for this pivot — but it no longer matters. `SilicaGuard_MasterDocument_Reference_v6.docx` supersedes it entirely and already reflects the artisanal-only scope as settled fact (Section 1: "already decided... strip these from the codebase, from SILICAGUARD.md, from the deck"). Treat v4.0 as retired, not as a document still owed an edit.
 
 ## 14. Demo Day Scenarios
 
-Rewritten 10 August to match what's actually built and rehearsed — Teach Mode and the QR referral card are cut (neither is built); the dashboard scenario reflects the real deployed page, now reachable from the mobile app itself.
+Last rewritten 10 August; touched again 14 August for the master doc v6.0 changes below — Teach Mode is cut (not built). This list will need one more pass once the referral code and USSD web simulator (both in progress this sprint) actually land — until then the last two bullets describe the plan, not what's live.
 
 1. **Screening → tier → personalised advice → deterioration** (mobile) — screen a returning miner: four-tier result in English and Shona, the advice line drawn from his own weakest answer, and — as of 10 August, now actually visible on screen — the "since last screening" comparison against his previous result.
-2. **Smart referral, proven twice** (mobile) — the Referral Card, then Home's live "Refer Now" worklist showing the same referral with a colour-coded status pill and a tap-to-call phone number.
-3. **USSD reach** (Africa's Talking's sandbox web simulator, framed honestly as simulated over their real infrastructure, not a live carrier dial — no production shortcode is provisioned) — ten fixed Shona questions, no smartphone, no data.
+2. **Smart referral, proven twice** (mobile) — the Referral Card, then Home's live "Refer Now" worklist showing the same referral with a colour-coded status pill and a tap-to-call phone number. **Target once the referral code lands**: the card shows the code, and a second screen shows a hospital-side lookup confirming attendance by code — this is the master doc's Section 6 shot list, "a referral created, with facility, deadline and code."
+3. **USSD reach** — **target**: our own USSD web simulator (master doc v6.0 Section 16.1, in progress this sprint) — a keypad/green-screen page hitting the real `/api/ussd` endpoint, framed on stage as "our simulator, their SMS" (the shortcode application is a regulatory process on the operator's timeline, not ours to control). Until it lands, fall back to the CLI simulator or Africa's Talking's own sandbox web simulator, both framed honestly as simulated.
 4. **Intelligence Dashboard** — open it either from a browser (`silicaguard-dashboard.onrender.com`) or by tapping "Dashboard" inside the mobile app itself: live referral queue with one-tap Mark Attended/Closed, the Gemini-generated population narrative, tier distribution, site breakdown, and the Outreach Planner's auto-generated post-visit report — all reading the same live data the mobile app just wrote to.
 5. **Outreach Stats** (mobile) — the same outreach visit data as scenario 4, now also live inside the app itself, not just the web dashboard.
 

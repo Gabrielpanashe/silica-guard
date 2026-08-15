@@ -7,7 +7,7 @@ Every route is marked:
 - **LIVE (shape will change)** — implemented today, but in an older pre-v4.0 shape; the target v4.0 shape is also shown.
 - **TARGET (not yet built)** — specified by the v4.0 reference document, not implemented yet. Shape shown is the plan, not a guarantee — it may shift slightly during implementation. Check back or ask before building a hard dependency on field names here.
 
-Base URL: local dev is `http://127.0.0.1:8000`. **Deployed: `https://silicaguard-backend.onrender.com`** (Render free tier — sleeps after inactivity, warm it with `/api/health` a few minutes before any demo; also note the DB reseeds on every restart, see `CLAUDE.md`'s `AUTO_SEED_ON_BOOT` note).
+Base URL: local dev is `http://127.0.0.1:8000`. **Deployed: `https://silicaguard-backend.onrender.com`** (Render free tier — sleeps after inactivity, warm it with `/api/health` a few minutes before any demo). **As of 14 August, still SQLite-backed, so the DB still reseeds on every restart** (`AUTO_SEED_ON_BOOT`, see `CLAUDE.md`) — a Postgres/Supabase migration is in progress this sprint (master doc v6.0 Section 16.2); once it lands, storage becomes persistent and `AUTO_SEED_ON_BOOT` should flip to `false` in production so state survives across rehearsals. Check `CLAUDE.md`'s "Current sprint status" for whether that's landed yet.
 
 Interactive docs: **`GET /docs`** (Swagger UI) is enabled by default — nothing in `main.py` disables it. Use it to explore and try requests against a running local server without needing to ask the backend owner anything.
 
@@ -46,7 +46,7 @@ No auth required to call this.
 
 **Errors**: `401` invalid credentials.
 
-Currently issues one of two demo roles: `hospital`, `cimas`, backed by env-var credentials (no `users` table yet). **Target v4.0 roles are `practitioner`, `clinical`.** This is a planned, not-yet-scheduled change — flag before building UI that assumes the target role names.
+Currently issues one of two demo roles: `hospital`, `cimas`, backed by env-var credentials (no `users` table yet). A `practitioner`/`clinical` role rename was floated in an earlier version but explicitly declined as not needed post-pivot (see `CLAUDE.md`) — don't build UI assuming those role names will arrive. The master doc's "four role views" dashboard concept (Section 16.3: MoHCC, NSSA, Cimas, Hospital) is a dashboard-side filtering question, not necessarily a backend role-rename — undecided, raise with the team before building against it.
 
 ### `GET /api/auth/me` — LIVE (dev helper, not part of the target contract)
 
@@ -306,6 +306,39 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 ```
 
 **Errors**: `401` missing/invalid token; `404` unknown referral; `422` invalid status value.
+
+### `GET /api/referrals/lookup/{code}` — TARGET (not yet built)
+
+Master doc v6.0 Section 1.1/16.6 (14 August 2026) — the referral-code pivot. No auth: hospital staff have no login, same deliberate precedent as `POST /api/screen` and `GET /api/workers/{phone}`. `{code}` is the short human-readable code generated at referral creation (`SG-4K7Q` style), sent to the miner by SMS and included in the facility pre-alert.
+
+**Response 200 (shape, subject to change until built)**
+```json
+{
+  "referral_code": "SG-4K7Q",
+  "tier": "RED",
+  "status": "pre_alerted",
+  "deadline": "2026-08-17 09:15:00",
+  "miner_name": "Tendai Moyo",
+  "mine_site": "Sherwood Mine",
+  "facility_name": "Kwekwe District Hospital",
+  "advice_line": "...",
+  "contributing_factors": ["..."],
+  "attended_at": null
+}
+```
+**Errors**: `404` unknown code.
+
+Takudzwa builds the hospital-facing entry page in `dashboard/` against this contract — confirm the shape here before he starts.
+
+### `POST /api/referrals/lookup/{code}/confirm-attendance` — TARGET (not yet built)
+
+Companion to the route above. No auth, same reasoning. Sets `status='attended'`, `attended_at=now`. This is what makes referral completion rate (the project's headline KPI, master doc Section 7.5) measurable end to end instead of self-reported.
+
+**Response 200 (shape, subject to change until built)**
+```json
+{ "referral_code": "SG-4K7Q", "status": "attended", "attended_at": "2026-08-16 11:02:00" }
+```
+**Errors**: `404` unknown code; `409` already attended/closed.
 
 ---
 
