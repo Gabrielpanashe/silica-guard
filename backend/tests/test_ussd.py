@@ -134,3 +134,38 @@ def test_session_state_cleared_after_completion(client):
         client, "s7", "+263770000007", ["1", "4", "1", "1", "1", "1", "1", "1", "1", "1"]
     )
     assert "s7" not in ussd_handler._sessions
+
+
+# --- USSD web simulator page (14 August 2026, master doc v6.0 Section 16.1) ---
+
+
+def test_ussd_simulator_page_served(client):
+    resp = client.get("/ussd-simulator")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    body = resp.text
+    # The page must talk to the real /api/ussd endpoint with the real field
+    # names — a stale/mocked copy here would defeat the entire point (see
+    # master doc v6.0 Section 16.1: "our backend cannot tell the difference,
+    # because there is none").
+    assert "/api/ussd" in body
+    assert "sessionId" in body and "phoneNumber" in body and "serviceCode" in body
+
+
+def test_ussd_simulator_page_drives_a_real_session(client):
+    """Confirms the exact request shape the page's JS sends (form-encoded
+    sessionId/phoneNumber/serviceCode/text) produces a real, working USSD
+    session against the live endpoint — the same protocol
+    scripts/ussd_simulator.py's CLI version and a real Africa's Talking
+    gateway both use."""
+    session_id = "web-sim-test"
+    phone = "+263770000099"
+    reply = _post(client, session_id, phone, "")  # dialing with no input yet
+    assert reply.startswith("CON ")
+
+    choices = ["1", "4", "1", "1", "1", "1", "1", "1", "1", "1"]
+    accumulated = []
+    for choice in choices:
+        accumulated.append(choice)
+        reply = _post(client, session_id, phone, "*".join(accumulated))
+    assert reply.startswith("END ")

@@ -32,7 +32,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-To try the USSD web simulator without a phone or an Africa's Talking sandbox number, once it's built this sprint (master doc v6.0 Section 16.1 — not yet live as of 14 August): open `http://127.0.0.1:8000/ussd-simulator` in a browser while the server is running. It's a keypad + green-screen page that sends the exact form fields (`sessionId`, `phoneNumber`, `serviceCode`, `text`) a real Africa's Talking webhook would, against the real `/api/ussd` endpoint — same code path as `ussd_simulator.py` below, just in a browser instead of a terminal.
+To try the USSD web simulator without a phone or an Africa's Talking sandbox number (master doc v6.0 Section 16.1, live as of 15 August): open `http://127.0.0.1:8000/ussd-simulator` in a browser while the server is running. It's a keypad + green-screen page that sends the exact form fields (`sessionId`, `phoneNumber`, `serviceCode`, `text`) a real Africa's Talking webhook would, against the real `/api/ussd` endpoint — same code path as `ussd_simulator.py` below, just in a browser instead of a terminal.
 
 ### Mobile (React Native / Expo)
 
