@@ -86,6 +86,28 @@ def get_db():
         db.close()
 
 
+def format_datetime(value) -> str | None:
+    """Every ORM-converted router that puts a timestamp into an API
+    response must go through this, not str(value) or .isoformat().
+
+    SQLite's raw sqlite3 driver (what every not-yet-converted router still
+    uses via get_connection()) returns DATETIME columns as plain strings in
+    "YYYY-MM-DD HH:MM:SS" form — no "T" separator, no microseconds. The
+    SQLAlchemy ORM instead deserializes them into real `datetime.datetime`
+    objects, and Python's default `str()`/`.isoformat()` on one of those
+    produces a *different* string ("...T..."` with microseconds) — a
+    silent, unannounced API response-shape change that would land on every
+    mobile/dashboard consumer parsing these fields, exactly what CLAUDE.md's
+    "announce before merging" rule exists to prevent. This keeps the wire
+    format byte-for-byte identical during the migration; whether to move to
+    real ISO 8601 (CLAUDE.md's stated convention, which this pre-migration
+    format never actually matched either) is a separate, explicitly
+    announced decision for later, not something to bundle silently into a
+    storage-layer swap.
+    """
+    return value.strftime("%Y-%m-%d %H:%M:%S") if value is not None else None
+
+
 def get_connection() -> sqlite3.Connection:
     """MIGRATION-BRIDGE SHIM — do not use in new code.
 
