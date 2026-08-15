@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -58,8 +60,43 @@ def _mock_notifications(monkeypatch):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """Points database.py at a throwaway SQLite file per test, so we never
-    touch backend/data/silicaguard.db (real dev/demo data) while testing."""
-    monkeypatch.setattr(database, "DATABASE_URL", str(tmp_path / "test.db"))
-    with TestClient(main.app) as test_client:
-        yield test_client
+    """Points every test at a throwaway SQLite file, so we never touch
+    backend/data/silicaguard.db (real dev/demo data) while testing.
+
+    Two mechanisms cover the codebase during the ongoing SQLAlchemy ORM
+    migration (see CLAUDE.md's "Current sprint status", 14 August 2026):
+    modules already converted to `Depends(database.get_db)` get a real
+    dependency override bound to a fresh per-test engine; modules not yet
+    converted (still calling `database.get_connection()`) get the same
+    result via a `DATABASE_URL` monkeypatch, since that legacy shim reads
+    `DATABASE_URL` fresh on every call. Both point at the same file, so
+    data is consistent no matter which style a given test's route uses.
+    `database.engine` is also monkeypatched, so `init_db()` — called by
+    main.py's lifespan on TestClient startup — creates tables on the test
+    engine, not the real module-level one built at import time.
+
+    Once every router/service is converted (tracked in the sprint status),
+    delete the DATABASE_URL/engine monkeypatching and get_connection()
+    itself, keeping only the dependency-override half of this fixture.
+    """
+    test_db_url = f"sqlite:///{tmp_path / 'test.db'}"
+    test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+    database.enable_sqlite_foreign_keys(test_engine)
+    TestSessionLocal = sessionmaker(bind=test_engine, autoflush=False, autocommit=False)
+
+    monkeypatch.setattr(database, "DATABASE_URL", test_db_url)
+    monkeypatch.setattr(database, "engine", test_engine)
+
+    def _override_get_db():
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    main.app.dependency_overrides[database.get_db] = _override_get_db
+    try:
+        with TestClient(main.app) as test_client:
+            yield test_client
+    finally:
+        main.app.dependency_overrides.pop(database.get_db, None)

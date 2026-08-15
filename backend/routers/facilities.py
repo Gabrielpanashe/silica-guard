@@ -1,5 +1,9 @@
-from database import get_connection
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database import get_db
+from db_models import Facility
 from models import FacilityOut
 
 router = APIRouter(prefix="/api", tags=["facilities"])
@@ -12,10 +16,6 @@ router = APIRouter(prefix="/api", tags=["facilities"])
 
 
 @router.get("/facilities", response_model=list[FacilityOut])
-def list_facilities():
-    conn = get_connection()
-    try:
-        rows = conn.execute("SELECT * FROM facilities ORDER BY level, name").fetchall()
-        return [FacilityOut(**dict(row)) for row in rows]
-    finally:
-        conn.close()
+def list_facilities(db: Session = Depends(get_db)):
+    facilities = db.scalars(select(Facility).order_by(Facility.level, Facility.name)).all()
+    return [FacilityOut.model_validate(f, from_attributes=True) for f in facilities]

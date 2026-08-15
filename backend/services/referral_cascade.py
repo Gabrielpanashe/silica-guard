@@ -22,7 +22,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from database import get_connection
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database import get_fresh_session
+from db_models import Miner, Referral, Screening
 from services import notifications
 from services.referrals import _URGENCY_WINDOW
 
@@ -31,8 +35,6 @@ logger = logging.getLogger("silicaguard.referral_cascade")
 _ACTIONABLE_STATUSES = ("open", "pre_alerted", "reminded")
 _RED_REMINDER_OFFSET = timedelta(hours=24)
 _ORANGE_REMINDER_OFFSETS = (timedelta(days=3), timedelta(days=7))
-
-_CREATED_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _utcnow() -> datetime:
@@ -69,60 +71,62 @@ def next_cascade_action(
     return None
 
 
-def process_due_referrals(conn, now: Optional[datetime] = None) -> None:
+def process_due_referrals(db: Session, now: Optional[datetime] = None) -> None:
     """Checks every referral still in an actionable status and applies
     whatever cascade action is due. Each row is wrapped in its own
     try/except so one bad row can't abort the batch — mirrors
-    notifications.py's own "failures are logged, not raised" convention."""
+    notifications.py's own "failures are logged, not raised" convention.
+
+    Fetches IDs first, in a query that only touches the `status` column,
+    then loads each full row (which does deserialize `created_at` into a
+    real datetime, and can raise on a corrupted value) INSIDE the
+    try/except — deliberately, so a single row with unparsable data still
+    can't abort the batch. A single `select(Referral)` for everything up
+    front would hydrate every row's `created_at` during that one call,
+    outside any per-row try/except, and one bad value would fail the
+    entire fetch before the loop even started."""
     now = now if now is not None else _utcnow()
 
-    rows = conn.execute(
-        """SELECT r.id, r.status, r.reminder_stage, r.created_at,
-                  s.tier, m.id AS worker_id, m.name AS miner_name, m.phone
-           FROM referrals r
-           JOIN screenings s ON s.id = r.screening_id
-           JOIN miners m ON m.id = r.miner_id
-           WHERE r.status IN ('open', 'pre_alerted', 'reminded')"""
-    ).fetchall()
+    referral_ids = db.scalars(
+        select(Referral.id).where(Referral.status.in_(_ACTIONABLE_STATUSES))
+    ).all()
 
-    for row in rows:
+    for referral_id in referral_ids:
         try:
-            created_at = datetime.strptime(row["created_at"], _CREATED_AT_FORMAT)
+            referral = db.get(Referral, referral_id)
+            screening = referral.screening
+            miner = referral.miner
             action = next_cascade_action(
-                row["tier"], row["status"], row["reminder_stage"], created_at, now
+                screening.tier, referral.status, referral.reminder_stage, referral.created_at, now
             )
             if action is None:
                 continue
 
             if action["action"] == "remind":
                 notifications.send_referral_reminder(
-                    row["worker_id"], row["phone"], row["tier"], action["new_stage"]
+                    miner.id, miner.phone, screening.tier, action["new_stage"]
                 )
-                conn.execute(
-                    "UPDATE referrals SET status = 'reminded', reminder_stage = ? WHERE id = ?",
-                    (action["new_stage"], row["id"]),
-                )
+                referral.status = "reminded"
+                referral.reminder_stage = action["new_stage"]
             elif action["action"] == "escalate":
                 notifications.send_referral_escalation(
-                    row["worker_id"], row["miner_name"], row["phone"], row["tier"]
+                    miner.id, miner.name, miner.phone, screening.tier
                 )
-                conn.execute(
-                    "UPDATE referrals SET status = 'escalated' WHERE id = ?",
-                    (row["id"],),
-                )
-            conn.commit()
+                referral.status = "escalated"
+            db.commit()
         except Exception:
-            logger.exception("Failed to process referral cascade for referral id=%s", row["id"])
+            db.rollback()
+            logger.exception("Failed to process referral cascade for referral id=%s", referral_id)
 
 
 def run_scheduled_cascade() -> None:
     """The APScheduler job target (main.py) — opens and closes its own
-    connection, never raises (a scheduler job that raises can kill the
+    session, never raises (a scheduler job that raises can kill the
     scheduler thread depending on misfire config, so this is defensive)."""
-    conn = get_connection()
+    db = get_fresh_session()
     try:
-        process_due_referrals(conn)
+        process_due_referrals(db)
     except Exception:
         logger.exception("Referral cascade run failed")
     finally:
-        conn.close()
+        db.close()
