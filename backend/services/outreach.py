@@ -9,7 +9,7 @@ Same shape as services/referral_cascade.py throughout: a pure decision
 function with an injected `now` (next_outreach_action), a DB-driving
 function that applies it (process_due_outreach_visits), and a thin
 APScheduler-facing wrapper (run_scheduled_outreach) that owns its own
-connection and never raises.
+session and never raises.
 
 `report_generated` is approximated as "the visit's scheduled_date has
 passed" — there is no genuine mobile-app-finished-syncing signal anywhere
@@ -20,7 +20,11 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Sequence
 
-from database import get_connection
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from database import SessionLocal, format_datetime
+from db_models import Miner, OutreachVisit, Referral, Screening
 from models import OutreachVisitOut, ReferralListItem
 from services import notifications
 
@@ -28,7 +32,6 @@ logger = logging.getLogger("silicaguard.outreach")
 
 _SMS_1DAY_WINDOW = timedelta(days=1)
 _SMS_3DAY_WINDOW = timedelta(days=3)
-_SCHEDULED_DATE_FORMAT = "%Y-%m-%d"
 _TIERS = ("GREEN", "YELLOW", "ORANGE", "RED")
 
 
@@ -68,7 +71,13 @@ def match_active_visit(mine_site: Optional[str], screened_at: datetime, visits: 
     """Pure, no DB access. Case-insensitive exact site match, within the
     visit day through visit day + 1 (tolerates offline sync lag — a
     screening captured on the visit day but synced the next morning should
-    still count). Lowest-id tiebreak on multiple matches."""
+    still count). Lowest-id tiebreak on multiple matches.
+
+    `visits` elements are accessed by ["site"]/["scheduled_date"]/["id"]
+    subscript — deliberately left dict/Row-subscriptable rather than typed
+    to the OutreachVisit ORM model, since the one caller (routers/screening.py)
+    hasn't been converted to the ORM yet and still passes sqlite3.Row
+    objects here. Convert this signature when that caller is converted."""
     if not mine_site:
         return None
 
@@ -78,9 +87,15 @@ def match_active_visit(mine_site: Optional[str], screened_at: datetime, visits: 
     for visit in visits:
         if (visit["site"] or "").strip().lower() != site_key:
             continue
-        try:
-            visit_date = datetime.strptime(visit["scheduled_date"], _SCHEDULED_DATE_FORMAT).date()
-        except (TypeError, ValueError):
+        scheduled = visit["scheduled_date"]
+        if isinstance(scheduled, str):
+            try:
+                visit_date = datetime.strptime(scheduled, "%Y-%m-%d").date()
+            except (TypeError, ValueError):
+                continue
+        elif isinstance(scheduled, date):
+            visit_date = scheduled
+        else:
             continue
         if visit_date <= screened_date <= visit_date + timedelta(days=1):
             candidates.append(visit)
@@ -90,27 +105,28 @@ def match_active_visit(mine_site: Optional[str], screened_at: datetime, visits: 
     return sorted(candidates, key=lambda v: v["id"])[0]
 
 
-def process_due_outreach_visits(conn, now: Optional[datetime] = None) -> None:
+def process_due_outreach_visits(db: Session, now: Optional[datetime] = None) -> None:
     """Checks every visit that still has something pending (an announcement
     not yet sent, or the report not yet marked ready) and applies whatever
     is due. Each row wrapped in its own try/except, same isolation as
     process_due_referrals — one bad row can't abort the batch."""
     now = now if now is not None else _utcnow()
 
-    rows = conn.execute(
-        """SELECT id, site, scheduled_date, sms_3day_sent, sms_1day_sent, report_generated
-           FROM outreach_visits
-           WHERE report_generated = 0 OR sms_3day_sent = 0 OR sms_1day_sent = 0"""
-    ).fetchall()
+    visits = db.scalars(
+        select(OutreachVisit).where(
+            (OutreachVisit.report_generated == 0)
+            | (OutreachVisit.sms_3day_sent == 0)
+            | (OutreachVisit.sms_1day_sent == 0)
+        )
+    ).all()
 
-    for row in rows:
+    for visit in visits:
         try:
-            scheduled = datetime.strptime(row["scheduled_date"], _SCHEDULED_DATE_FORMAT).date()
             action = next_outreach_action(
-                scheduled,
-                bool(row["sms_3day_sent"]),
-                bool(row["sms_1day_sent"]),
-                bool(row["report_generated"]),
+                visit.scheduled_date,
+                bool(visit.sms_3day_sent),
+                bool(visit.sms_1day_sent),
+                bool(visit.report_generated),
                 now,
             )
             if action is None:
@@ -118,90 +134,84 @@ def process_due_outreach_visits(conn, now: Optional[datetime] = None) -> None:
 
             if action["action"] in ("sms_3day", "sms_1day"):
                 stage = "3day" if action["action"] == "sms_3day" else "1day"
-                column = "sms_3day_sent" if stage == "3day" else "sms_1day_sent"
-                workers = conn.execute(
-                    "SELECT id, phone FROM miners WHERE LOWER(mine_site) = LOWER(?)",
-                    (row["site"],),
-                ).fetchall()
+                workers = db.scalars(
+                    select(Miner).where(func.lower(Miner.mine_site) == func.lower(visit.site))
+                ).all()
                 for worker in workers:
                     notifications.send_outreach_announcement(
-                        worker["id"], worker["phone"], row["site"], row["scheduled_date"], stage
+                        worker.id, worker.phone, visit.site, visit.scheduled_date.isoformat(), stage
                     )
-                conn.execute(
-                    f"UPDATE outreach_visits SET {column} = 1 WHERE id = ?", (row["id"],)
-                )
+                if stage == "3day":
+                    visit.sms_3day_sent = 1
+                else:
+                    visit.sms_1day_sent = 1
             elif action["action"] == "mark_report_ready":
-                conn.execute(
-                    "UPDATE outreach_visits SET report_generated = 1 WHERE id = ?", (row["id"],)
-                )
-            conn.commit()
+                visit.report_generated = 1
+            db.commit()
         except Exception:
-            logger.exception("Failed to process outreach visit id=%s", row["id"])
+            db.rollback()
+            logger.exception("Failed to process outreach visit id=%s", visit.id)
 
 
 def run_scheduled_outreach() -> None:
     """The APScheduler job target (main.py) — same defensive shape as
-    run_scheduled_cascade: owns its own connection, never raises."""
-    conn = get_connection()
+    run_scheduled_cascade: owns its own session, never raises."""
+    db = SessionLocal()
     try:
-        process_due_outreach_visits(conn)
+        process_due_outreach_visits(db)
     except Exception:
         logger.exception("Outreach visit processing run failed")
     finally:
-        conn.close()
+        db.close()
 
 
-def build_visit_report(conn, visit_row) -> tuple[Optional[dict], Optional[list]]:
+def build_visit_report(db: Session, visit: OutreachVisit) -> tuple[Optional[dict], Optional[list]]:
     """Used by GET /api/outreach. Returns (tier_distribution, referral_list),
     both None if the visit's report isn't ready yet — computed live from
     screenings/referrals joined on outreach_visit_id, not stored as a
     static blob, so it can't go stale if a referral's status changes after
     the visit date passes."""
-    if not visit_row["report_generated"]:
+    if not visit.report_generated:
         return None, None
 
-    tier_counts = {
-        row["tier"]: row["count"]
-        for row in conn.execute(
-            """SELECT tier, COUNT(*) AS count FROM screenings
-               WHERE outreach_visit_id = ? AND tier IS NOT NULL
-               GROUP BY tier""",
-            (visit_row["id"],),
+    screenings = db.scalars(
+        select(Screening).where(
+            Screening.outreach_visit_id == visit.id, Screening.tier.is_not(None)
         )
-    }
+    ).all()
+    tier_counts: dict[str, int] = {}
+    for s in screenings:
+        tier_counts[s.tier] = tier_counts.get(s.tier, 0) + 1
     tier_distribution = {tier: tier_counts.get(tier, 0) for tier in _TIERS}
 
-    referral_rows = conn.execute(
-        """SELECT m.name AS miner_name, s.tier, r.status
-           FROM screenings s
-           JOIN miners m ON m.id = s.miner_id
-           JOIN referrals r ON r.screening_id = s.id
-           WHERE s.outreach_visit_id = ?""",
-        (visit_row["id"],),
-    ).fetchall()
+    referral_rows = db.execute(
+        select(Miner.name, Screening.tier, Referral.status)
+        .select_from(Screening)
+        .join(Miner, Miner.id == Screening.miner_id)
+        .join(Referral, Referral.screening_id == Screening.id)
+        .where(Screening.outreach_visit_id == visit.id)
+    ).all()
     referral_list = [
-        {"miner_name": row["miner_name"], "tier": row["tier"], "status": row["status"]}
-        for row in referral_rows
+        {"miner_name": row[0], "tier": row[1], "status": row[2]} for row in referral_rows
     ]
 
     return tier_distribution, referral_list
 
 
-def visit_to_out(conn, row) -> OutreachVisitOut:
-    """One shared mapping from an outreach_visits row to the API shape,
-    used by both GET/POST /api/outreach (routers/outreach.py) and
-    GET /api/dashboard/today (routers/dashboard.py, 10 August) — previously
-    duplicated as a private _visit_row_to_out only in routers/outreach.py;
-    factored out here so the VHW's unauthenticated Outreach Stats view and
-    the coordinator's authenticated /api/outreach view can never drift."""
-    tier_distribution, referral_list = build_visit_report(conn, row)
+def visit_to_out(db: Session, visit: OutreachVisit) -> OutreachVisitOut:
+    """One shared mapping from an OutreachVisit to the API shape, used by
+    both GET/POST /api/outreach (routers/outreach.py) and
+    GET /api/dashboard/today (routers/dashboard.py) — factored out so the
+    VHW's unauthenticated Outreach Stats view and the coordinator's
+    authenticated /api/outreach view can never drift."""
+    tier_distribution, referral_list = build_visit_report(db, visit)
     return OutreachVisitOut(
-        id=row["id"],
-        site=row["site"],
-        scheduled_date=row["scheduled_date"],
-        expected_headcount=row["expected_headcount"],
-        screened_count=row["screened_count"],
-        report_generated=bool(row["report_generated"]),
+        id=visit.id,
+        site=visit.site,
+        scheduled_date=visit.scheduled_date.isoformat() if visit.scheduled_date else None,
+        expected_headcount=visit.expected_headcount,
+        screened_count=visit.screened_count,
+        report_generated=bool(visit.report_generated),
         tier_distribution=tier_distribution,
         referral_list=[ReferralListItem(**item) for item in referral_list] if referral_list is not None else None,
     )

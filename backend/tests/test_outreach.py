@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 import database
+from db_models import Miner, OutreachVisit
 from services.outreach import match_active_visit, next_outreach_action, process_due_outreach_visits
 
 NOW = datetime(2026, 8, 10, 12, 0, 0)
@@ -107,81 +108,95 @@ def test_multiple_matches_lowest_id_wins():
     assert match["id"] == 1
 
 
-# --- process_due_outreach_visits: integration against a raw connection ---
+# --- process_due_outreach_visits: integration against a real ORM session ---
 
 
 @pytest.fixture
-def conn(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DATABASE_URL", str(tmp_path / "outreach_test.db"))
-    database.init_db()
-    connection = database.get_connection()
-    yield connection
-    connection.close()
+def db(tmp_path):
+    # Builds its own throwaway engine explicitly, rather than monkeypatching
+    # database.DATABASE_URL and calling database.SessionLocal() — that
+    # module-level SessionLocal is bound to the real default engine built
+    # at import time and is NOT affected by monkeypatching the DATABASE_URL
+    # string, so a session made that way would silently read/write the real
+    # dev database. (Confirmed the hard way: an earlier version of this
+    # fixture leaked test rows into backend/data/silicaguard.db.)
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
-
-def _seed_visit(conn, site, scheduled_date, sms_3day_sent=0, sms_1day_sent=0, report_generated=0):
-    cur = conn.execute(
-        """INSERT INTO outreach_visits
-           (site, scheduled_date, expected_headcount, screened_count, health_workers,
-            report_generated, sms_3day_sent, sms_1day_sent)
-           VALUES (?, ?, 10, 0, '[]', ?, ?, ?)""",
-        (site, scheduled_date, report_generated, sms_3day_sent, sms_1day_sent),
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'outreach_test.db'}", connect_args={"check_same_thread": False}
     )
-    conn.commit()
-    return cur.lastrowid
+    database.enable_sqlite_foreign_keys(engine)
+    database.init_db(target_engine=engine)
+    session = sessionmaker(bind=engine)()
+    yield session
+    session.close()
 
 
-def _seed_worker(conn, name, phone, site):
-    conn.execute(
-        "INSERT INTO miners (name, phone, mine_site) VALUES (?, ?, ?)", (name, phone, site)
+def _seed_visit(db, site, scheduled_date, sms_3day_sent=0, sms_1day_sent=0, report_generated=0):
+    visit = OutreachVisit(
+        site=site,
+        scheduled_date=date.fromisoformat(scheduled_date),
+        expected_headcount=10,
+        screened_count=0,
+        health_workers="[]",
+        report_generated=report_generated,
+        sms_3day_sent=sms_3day_sent,
+        sms_1day_sent=sms_1day_sent,
     )
-    conn.commit()
+    db.add(visit)
+    db.commit()
+    db.refresh(visit)
+    return visit.id
 
 
-def test_process_due_visits_sends_3day_announcement_to_all_site_workers(conn):
+def _seed_worker(db, name, phone, site):
+    db.add(Miner(name=name, phone=phone, mine_site=site))
+    db.commit()
+
+
+def test_process_due_visits_sends_3day_announcement_to_all_site_workers(db):
     scheduled = (TODAY + timedelta(days=3)).strftime("%Y-%m-%d")
-    visit_id = _seed_visit(conn, "Sherwood Mine", scheduled)
-    _seed_worker(conn, "Worker One", "+263700333001", "Sherwood Mine")
-    _seed_worker(conn, "Worker Two", "+263700333002", "Sherwood Mine")
-    _seed_worker(conn, "Other Site Worker", "+263700333003", "Globe & Phoenix Mine")
+    visit_id = _seed_visit(db, "Sherwood Mine", scheduled)
+    _seed_worker(db, "Worker One", "+263700333001", "Sherwood Mine")
+    _seed_worker(db, "Worker Two", "+263700333002", "Sherwood Mine")
+    _seed_worker(db, "Other Site Worker", "+263700333003", "Globe & Phoenix Mine")
 
     with patch("services.notifications.send_outreach_announcement") as mock_send:
-        process_due_outreach_visits(conn, now=NOW)
+        process_due_outreach_visits(db, now=NOW)
 
     assert mock_send.call_count == 2
     sent_phones = {call.args[1] for call in mock_send.call_args_list}
     assert sent_phones == {"+263700333001", "+263700333002"}
-    row = conn.execute("SELECT sms_3day_sent FROM outreach_visits WHERE id = ?", (visit_id,)).fetchone()
-    assert row["sms_3day_sent"] == 1
+    assert db.get(OutreachVisit, visit_id).sms_3day_sent == 1
 
 
-def test_process_due_visits_does_not_resend_same_stage(conn):
+def test_process_due_visits_does_not_resend_same_stage(db):
     scheduled = (TODAY + timedelta(days=3)).strftime("%Y-%m-%d")
-    _seed_visit(conn, "Sherwood Mine", scheduled, sms_3day_sent=1)
-    _seed_worker(conn, "Worker One", "+263700333004", "Sherwood Mine")
+    _seed_visit(db, "Sherwood Mine", scheduled, sms_3day_sent=1)
+    _seed_worker(db, "Worker One", "+263700333004", "Sherwood Mine")
 
     with patch("services.notifications.send_outreach_announcement") as mock_send:
-        process_due_outreach_visits(conn, now=NOW)
+        process_due_outreach_visits(db, now=NOW)
 
     mock_send.assert_not_called()
 
 
-def test_process_due_visits_marks_report_ready_after_visit_date(conn):
+def test_process_due_visits_marks_report_ready_after_visit_date(db):
     scheduled = (TODAY - timedelta(days=1)).strftime("%Y-%m-%d")
-    visit_id = _seed_visit(conn, "Sherwood Mine", scheduled, sms_3day_sent=1, sms_1day_sent=1)
+    visit_id = _seed_visit(db, "Sherwood Mine", scheduled, sms_3day_sent=1, sms_1day_sent=1)
 
-    process_due_outreach_visits(conn, now=NOW)
+    process_due_outreach_visits(db, now=NOW)
 
-    row = conn.execute("SELECT report_generated FROM outreach_visits WHERE id = ?", (visit_id,)).fetchone()
-    assert row["report_generated"] == 1
+    assert db.get(OutreachVisit, visit_id).report_generated == 1
 
 
-def test_process_due_visits_ignores_fully_settled_visits(conn):
+def test_process_due_visits_ignores_fully_settled_visits(db):
     scheduled = (TODAY - timedelta(days=10)).strftime("%Y-%m-%d")
-    _seed_visit(conn, "Sherwood Mine", scheduled, sms_3day_sent=1, sms_1day_sent=1, report_generated=1)
+    _seed_visit(db, "Sherwood Mine", scheduled, sms_3day_sent=1, sms_1day_sent=1, report_generated=1)
 
     # Should not even be selected by the WHERE clause — no error, no-op.
-    process_due_outreach_visits(conn, now=NOW)  # must not raise
+    process_due_outreach_visits(db, now=NOW)  # must not raise
 
 
 # --- Routes ---

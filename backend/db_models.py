@@ -164,6 +164,7 @@ class Referral(Base):
 
     miner = relationship("Miner", back_populates="referrals")
     screening = relationship("Screening", back_populates="referrals")
+    facility = relationship("Facility")
 
 
 class OutreachVisit(Base):
