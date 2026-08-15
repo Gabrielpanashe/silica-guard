@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SilicaGuard — Intelligence Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ═══════════ LOGIN SCREEN ═══════════ -->
+  <div id="login-screen" class="login-wrap">
+    <div class="login-card">
+      <div class="brand">
+        <span class="brand-word">SILICA</span><span class="brand-accent">Guard<span class="brand-dot">●</span></span>
+      </div>
+      <p class="login-sub">Population &amp; Referral Intelligence Dashboard</p>
+      <p class="login-hint">For district health, NSSA, MoHCC and CIMAS review — one live view of every screening, referral and outreach visit in the system.</p>
+
+      <form id="login-form">
+        <label class="field-label">Email</label>
+        <input id="login-email" type="email" value="hospital@silicaguard.health" autocomplete="username" />
+        <label class="field-label">Password</label>
+        <input id="login-password" type="password" value="hospital123" autocomplete="current-password" />
+        <button type="submit" id="login-btn">Sign in</button>
+        <p id="login-error" class="error-text" hidden></p>
+      </form>
+      <p class="login-footnote">Demo credentials pre-filled. First sign-in of the day can take up to a minute — the free-tier backend has to wake up.</p>
+      <p class="login-footnote mono" id="base-url-display"></p>
+    </div>
+  </div>
+
+  <!-- ═══════════ DASHBOARD ═══════════ -->
+  <div id="dashboard" hidden>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-word">SILICA</span><span class="brand-accent">Guard<span class="brand-dot">●</span></span>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-status">
+          <span id="role-badge" class="role-badge"></span>
+          <span id="last-updated" class="muted small"></span>
+        </div>
+        <div class="topbar-buttons">
+          <button id="refresh-btn" class="btn-ghost">↻ Refresh</button>
+          <button id="logout-btn" class="btn-ghost btn-signout">Sign out</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="sectionnav">
+      <a href="#section-overview">Overview</a>
+      <a href="#section-miners">Miners</a>
+      <a href="#section-screenings">Activity</a>
+      <a href="#section-referrals">Referrals</a>
+      <a href="#section-watch">Watch</a>
+      <a href="#section-outreach">Outreach</a>
+    </nav>
+
+    <div id="wake-banner" class="wake-banner" hidden>
+      ⏳ Waking up the backend (free-tier server sleeps after inactivity) — this can take 30–50 seconds on a cold start…
+    </div>
+    <div id="error-banner" class="error-banner" hidden></div>
+
+    <main class="content">
+
+      <div id="section-overview">
+        <!-- Stat row -->
+        <section class="statrow">
+          <div class="stat">
+            <div class="stat-value" id="stat-screened">—</div>
+            <div class="stat-label">Total Screened</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-today">—</div>
+            <div class="stat-label">Screened Today</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-highrisk">—</div>
+            <div class="stat-label">High Risk (Orange+Red)</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-completion">—</div>
+            <div class="stat-label">Referral Completion</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-openreferrals">—</div>
+            <div class="stat-label">Open Referrals</div>
+          </div>
+        </section>
+
+        <div class="grid-2">
+          <!-- Tier distribution -->
+          <section class="card">
+            <h2 class="card-h">Tier Distribution</h2>
+            <p class="card-sub">Every screening on record, by risk tier</p>
+            <div id="tier-chart" class="tier-chart"></div>
+          </section>
+
+          <!-- Site breakdown -->
+          <section class="card">
+            <h2 class="card-h">Screenings by Site</h2>
+            <p class="card-sub">Where the risk is concentrated</p>
+            <div id="site-breakdown" class="site-breakdown"></div>
+          </section>
+        </div>
+
+        <!-- AI Narrative -->
+        <section class="card narrative-card">
+          <div class="narrative-head">
+            <h2 class="card-h">Population Health Intelligence</h2>
+            <span class="ai-pill">AI-generated · Gemini 2.5 Flash</span>
+          </div>
+          <p class="card-sub">Plain-language weekly narrative — the only free-form AI text in this system, generated fresh from the live numbers above, never shown to a patient</p>
+          <p id="narrative-text" class="narrative-text">—</p>
+        </section>
+      </div>
+
+      <!-- Miners directory -->
+      <section class="card" id="section-miners">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Miners</h2>
+            <p class="card-sub">Every registered miner — tap a row for their full screening history</p>
+          </div>
+        </div>
+        <div class="filter-row">
+          <input id="miner-search" class="search-input" type="search" placeholder="Search by name, phone or site…" />
+          <select id="miner-tier-filter" class="filter-select">
+            <option value="">All tiers</option>
+            <option value="GREEN">GREEN</option>
+            <option value="YELLOW">YELLOW</option>
+            <option value="ORANGE">ORANGE</option>
+            <option value="RED">RED</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="miners-table" class="data-table">
+            <thead>
+              <tr>
+                <th></th><th>Name</th><th>Phone</th><th>Site</th><th>Latest Tier</th><th>Screenings</th><th>Last Screened</th>
+              </tr>
+            </thead>
+            <tbody id="miners-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- All Screenings activity log -->
+      <section class="card" id="section-screenings">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Activity Log</h2>
+            <p class="card-sub">Every screening, across every miner and channel — most recent first</p>
+          </div>
+          <span class="live-pill">● live</span>
+        </div>
+        <div id="screenings-log" class="activity-log"></div>
+      </section>
+
+      <!-- Referral queue -->
+      <section class="card" id="section-referrals">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Live Referral Queue</h2>
+            <p class="card-sub">Smart Referral Router output — routed, pre-alerted, tracked to a confirmed outcome</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="referral-table" class="data-table">
+            <thead>
+              <tr>
+                <th>Miner</th><th>Site</th><th>Tier</th><th>Status</th><th>Deadline</th><th>Pre-alert</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="referral-tbody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Watch list -->
+      <section class="card" id="section-watch">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Watch List</h2>
+            <p class="card-sub">YELLOW tier — moderate risk, no referral yet, worth monitoring on the next visit</p>
+          </div>
+        </div>
+        <div id="watch-list" class="activity-log"></div>
+      </section>
+
+      <!-- Outreach Planner -->
+      <section class="card" id="section-outreach">
+        <h2 class="card-h">Outreach Planner</h2>
+        <p class="card-sub">Schedule a site visit — bulk SMS reminders go out 3 days and 1 day before, screened count tracks live on visit day, a post-visit report generates automatically</p>
+
+        <form id="outreach-form" class="outreach-form">
+          <div class="outreach-form-row">
+            <div class="outreach-form-field">
+              <label class="field-label" for="outreach-site-input">Site</label>
+              <input id="outreach-site-input" class="search-input" type="text" list="mines-datalist" placeholder="Select or type a mine…" required autocomplete="off" />
+              <datalist id="mines-datalist"></datalist>
+            </div>
+            <div class="outreach-form-field outreach-form-field-narrow">
+              <label class="field-label" for="outreach-date-input">Visit date</label>
+              <input id="outreach-date-input" class="search-input" type="date" required />
+            </div>
+            <div class="outreach-form-field outreach-form-field-narrow">
+              <label class="field-label" for="outreach-headcount-input">Expected miners</label>
+              <input id="outreach-headcount-input" class="search-input" type="number" min="1" placeholder="e.g. 40" required />
+            </div>
+            <button type="submit" id="outreach-submit-btn" class="btn-ghost btn-schedule">+ Schedule visit</button>
+          </div>
+          <p id="outreach-form-error" class="error-text" hidden></p>
+          <p id="outreach-form-success" class="outreach-form-success" hidden></p>
+        </form>
+
+        <div id="outreach-list" class="outreach-list"></div>
+      </section>
+
+    </main>
+
+    <footer class="page-footer">
+      SilicaGuard · Occupational Lung Health Platform · demonstration view over live production data
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

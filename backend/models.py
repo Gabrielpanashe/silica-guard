@@ -75,6 +75,10 @@ class ReferralOut(BaseModel):
     pre_alert_sent: bool
     facility_id: Optional[int] = None
     facility_name: Optional[str] = None
+    # New 14 August 2026, master doc v6.0 Section 1.1 — surfaced here too
+    # (not just the SMS/lookup-page path) so the dashboard's coordinator
+    # view can see/copy the same code a hospital would look up.
+    referral_code: Optional[str] = None
     reminder_stage: int = 0
     attended_at: Optional[str] = None
     closed_at: Optional[str] = None
@@ -83,6 +87,43 @@ class ReferralOut(BaseModel):
 
 class ReferralStatusUpdate(BaseModel):
     status: str
+
+
+class ReferralNotifyRequest(BaseModel):
+    """POST /api/referrals/notify-email (12 August) — fired when the VHW
+    taps 'Generate Referral Card' on the mobile app, so the email pre-alert
+    has a visible, on-demand trigger tied to that exact moment in the demo,
+    not just a silent send that already happened at screening time."""
+    phone: str
+
+
+class ReferralNotifyOut(BaseModel):
+    sent: bool
+    tier: str
+    facility_name: Optional[str] = None
+
+
+class ReferralLookupOut(BaseModel):
+    """GET /api/referrals/lookup/{code} (14 August 2026, master doc v6.0
+    Section 1.1) — the referral-code pivot. Unauthenticated: hospital staff
+    have no login, same precedent as POST /api/screen and
+    GET /api/workers/{phone}."""
+    referral_code: str
+    tier: str
+    status: str
+    deadline: Optional[str] = None
+    miner_name: str
+    mine_site: Optional[str] = None
+    facility_name: Optional[str] = None
+    advice_line: Optional[str] = None
+    contributing_factors: List[str] = []
+    attended_at: Optional[str] = None
+
+
+class ReferralConfirmAttendanceOut(BaseModel):
+    referral_code: str
+    status: str
+    attended_at: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -130,6 +171,20 @@ class MineOut(BaseModel):
     name: str
     district: Optional[str] = None
     province: str
+
+
+class FacilityOut(BaseModel):
+    """GET /api/facilities (12 August) — powers the mobile Outreach
+    Planner's "nearest hospital" preview when scheduling a visit. Same
+    rows services/facility_matching.py already uses internally for
+    referral routing, just exposed read-only now."""
+    id: int
+    name: str
+    level: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class TodaysLogItem(BaseModel):

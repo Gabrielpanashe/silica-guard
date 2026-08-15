@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routers import auth, dashboard, mines, outreach, screening, ussd, workers
+from routers import auth, dashboard, facilities, mines, outreach, referral_lookup, screening, ussd, workers
 from services.outreach import run_scheduled_outreach
 from services.referral_cascade import run_scheduled_cascade
 
@@ -83,6 +83,8 @@ app.include_router(ussd.router)
 app.include_router(workers.router)
 app.include_router(outreach.router)
 app.include_router(mines.router)
+app.include_router(facilities.router)
+app.include_router(referral_lookup.router)
 
 
 @app.get("/api/health")

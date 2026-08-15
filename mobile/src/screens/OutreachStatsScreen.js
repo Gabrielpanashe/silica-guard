@@ -1,7 +1,8 @@
 import {
   StyleSheet, Text, View, TouchableOpacity,
-  SafeAreaView, ScrollView,
+  ScrollView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';

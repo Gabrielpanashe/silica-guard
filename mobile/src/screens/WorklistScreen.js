@@ -1,7 +1,8 @@
 import {
   StyleSheet, Text, View, TouchableOpacity,
-  SafeAreaView, ScrollView, Linking,
+  ScrollView, Linking,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius, riskConfig } from '../theme';
 
@@ -98,7 +99,7 @@ export default function WorklistScreen({ navigation, route }) {
               </View>
 
               {kind === 'watch' && (
-                <Text style={s.watchCaption}>No referral needed yet — informal monitoring only</Text>
+                <Text style={s.watchCaption}>Referral open (routine, 14-day window) — full queue on the Dashboard</Text>
               )}
 
               {kind === 'refer_now' && item.deadline && (

@@ -254,3 +254,64 @@ export const createMine = async ({ name, district, province = 'Midlands' }) => {
   });
   return handleResponse(res);
 };
+
+// ── FACILITIES ───────────────────────────────────────────────
+/**
+ * List every referral facility (hospitals, clinics) on record.
+ * GET /api/facilities — unauthenticated (12 August).
+ *
+ * Response: [{ id, name, level, address, phone, latitude, longitude }]
+ * Powers the Outreach Planner's "nearest hospital" preview — same rows
+ * services/facility_matching.py uses internally for referral routing.
+ */
+export const getFacilities = async () => {
+  const res = await fetch(`${BASE_URL}/api/facilities`);
+  return handleResponse(res);
+};
+
+// ── OUTREACH PLANNER (write) ────────────────────────────────
+/**
+ * Schedule a new outreach visit.
+ * POST /api/outreach — unauthenticated as of 12 August (was dashboard-only;
+ * opened up so the VHW mobile app can schedule directly in the field —
+ * see routers/outreach.py for the tradeoff this made deliberately).
+ *
+ * @param {object} visit
+ *   site                string  — mine name
+ *   scheduled_date      string  — "YYYY-MM-DD"
+ *   expected_headcount  number
+ *   health_workers      string[] (optional)
+ *
+ * Response: full OutreachVisitOut, same shape GET /api/dashboard/today's
+ * outreach_visits and GET /api/outreach both already return.
+ */
+export const createOutreachVisit = async ({ site, scheduled_date, expected_headcount, health_workers = [] }) => {
+  const res = await fetch(`${BASE_URL}/api/outreach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ site, scheduled_date, expected_headcount, health_workers }),
+  });
+  return handleResponse(res);
+};
+
+// ── REFERRALS (mobile-facing) ───────────────────────────────
+/**
+ * Fires the hospital referral alert email for a miner's most recent
+ * referral — called by ReferralScreen when the card is generated (12
+ * August), so the demo has a live, on-demand email trigger tied to that
+ * exact moment. The same email also fires automatically server-side at
+ * screening time regardless of this call.
+ * POST /api/referrals/notify-email — unauthenticated.
+ *
+ * @param {string} phone
+ * Response: { sent: boolean, tier: string, facility_name: string|null }
+ * Error 404: worker not found, or worker has no referral on record.
+ */
+export const notifyReferralEmail = async (phone) => {
+  const res = await fetch(`${BASE_URL}/api/referrals/notify-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone }),
+  });
+  return handleResponse(res);
+};

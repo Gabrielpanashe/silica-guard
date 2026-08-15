@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import database
+from services import email_notifications
 from services.population_intelligence import _fallback_narrative
 
 
@@ -77,8 +78,50 @@ def test_dashboard_today_counts_screening_and_refer_now(client):
     assert body["refer_now"]["items"][0]["phone"] == "+263791000001"
 
 
-def test_dashboard_today_watch_reflects_yellow_tier(client):
+def test_dashboard_today_watch_reflects_orange_tier(client):
+    """12 August: Watch = ORANGE (was YELLOW), Refer Now = RED only (was
+    any open referral, i.e. ORANGE or RED) — Home's worklist tier split
+    narrowed on purpose. An ORANGE screening still creates a real referral
+    (see test below) — it just doesn't surface on this specific list
+    anymore."""
     miner_id = _register(client, "+263791000002")
+    _screen(
+        client,
+        miner_id,
+        {"tier": "ORANGE", "confidence": 0.8, "contributing_factors": ["x"], "explanation_english": "x"},
+    )
+
+    body = client.get("/api/dashboard/today").json()
+    assert body["watch"]["count"] == 1
+    assert body["watch"]["items"][0]["tier"] == "ORANGE"
+    assert body["refer_now"]["count"] == 0  # ORANGE no longer appears on Refer Now
+
+
+def test_dashboard_today_orange_referral_still_created_but_not_on_refer_now(client):
+    """The referral itself is unaffected by the Home worklist split above —
+    still created, still trackable — it just lives on the dashboard's full
+    queue (GET /api/referrals) rather than the mobile Refer Now list."""
+    miner_id = _register(client, "+263791000012")
+    _screen(
+        client,
+        miner_id,
+        {"tier": "ORANGE", "confidence": 0.8, "contributing_factors": ["x"], "explanation_english": "x"},
+    )
+
+    assert client.get("/api/dashboard/today").json()["refer_now"]["count"] == 0
+
+    token = _login(client)
+    referrals = client.get("/api/referrals", headers={"Authorization": f"Bearer {token}"}).json()
+    assert len(referrals) == 1
+    assert referrals[0]["tier"] == "ORANGE"
+
+
+def test_dashboard_today_yellow_appears_in_neither_list(client):
+    """12 August: YELLOW no longer populates Watch (that's ORANGE's slot
+    now) and never populated Refer Now (no referral is ever created for
+    YELLOW) — so a YELLOW screening is invisible to both of Home's
+    worklists by design."""
+    miner_id = _register(client, "+263791000013")
     _screen(
         client,
         miner_id,
@@ -86,9 +129,8 @@ def test_dashboard_today_watch_reflects_yellow_tier(client):
     )
 
     body = client.get("/api/dashboard/today").json()
-    assert body["watch"]["count"] == 1
-    assert body["watch"]["items"][0]["tier"] == "YELLOW"
-    assert body["refer_now"]["count"] == 0  # YELLOW never creates a referral
+    assert body["watch"]["count"] == 0
+    assert body["refer_now"]["count"] == 0
 
 
 def test_dashboard_today_referral_drops_off_after_attended(client):
@@ -110,6 +152,45 @@ def test_dashboard_today_referral_drops_off_after_attended(client):
 
     body = client.get("/api/dashboard/today").json()
     assert body["refer_now"]["count"] == 0  # taken action -> off the worklist
+
+
+def test_notify_referral_email_unknown_phone_404(client):
+    resp = client.post("/api/referrals/notify-email", json={"phone": "+263700000000"})
+    assert resp.status_code == 404
+
+
+def test_notify_referral_email_no_referral_404(client):
+    _register(client, "+263791000007")  # registered, never screened
+    resp = client.post("/api/referrals/notify-email", json={"phone": "+263791000007"})
+    assert resp.status_code == 404
+
+
+def test_notify_referral_email_sends_for_existing_referral(client):
+    """Fired when the VHW taps 'Generate Referral Card' on the app — a
+    deliberate, visible re-send of the same email
+    create_referral_and_notify already sent automatically at referral
+    creation time. Patches the module attribute directly (bypassing
+    conftest's autouse mock, which would otherwise hide the call args) to
+    assert the endpoint passes through the right miner/tier/facility."""
+    miner_id = _register(client, "+263791000008", site="Sherwood Mine")
+    _screen(
+        client,
+        miner_id,
+        {"tier": "RED", "confidence": 0.9, "contributing_factors": ["chest pain"], "explanation_english": "x"},
+    )
+
+    with patch.object(email_notifications, "send_referral_alert_email", return_value=True) as mock_send:
+        resp = client.post("/api/referrals/notify-email", json={"phone": "+263791000008"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sent"] is True
+    assert body["tier"] == "RED"
+    mock_send.assert_called_once()
+    args = mock_send.call_args[0]
+    assert args[0] == miner_id
+    assert args[3] == "Sherwood Mine"
+    assert args[4] == "RED"
 
 
 def test_dashboard_today_site_filter(client):

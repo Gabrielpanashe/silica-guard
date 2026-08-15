@@ -7,7 +7,7 @@ Every route is marked:
 - **LIVE (shape will change)** — implemented today, but in an older pre-v4.0 shape; the target v4.0 shape is also shown.
 - **TARGET (not yet built)** — specified by the v4.0 reference document, not implemented yet. Shape shown is the plan, not a guarantee — it may shift slightly during implementation. Check back or ask before building a hard dependency on field names here.
 
-Base URL: local dev is `http://127.0.0.1:8000`. **Deployed: `https://silicaguard-backend.onrender.com`** (Render free tier — sleeps after inactivity, warm it with `/api/health` a few minutes before any demo; also note the DB reseeds on every restart, see `CLAUDE.md`'s `AUTO_SEED_ON_BOOT` note).
+Base URL: local dev is `http://127.0.0.1:8000`. **Deployed: `https://silicaguard-backend.onrender.com`** (Render free tier — sleeps after inactivity, warm it with `/api/health` a few minutes before any demo). **As of 14 August, still SQLite-backed, so the DB still reseeds on every restart** (`AUTO_SEED_ON_BOOT`, see `CLAUDE.md`) — a Postgres/Supabase migration is in progress this sprint (master doc v6.0 Section 16.2); once it lands, storage becomes persistent and `AUTO_SEED_ON_BOOT` should flip to `false` in production so state survives across rehearsals. Check `CLAUDE.md`'s "Current sprint status" for whether that's landed yet.
 
 Interactive docs: **`GET /docs`** (Swagger UI) is enabled by default — nothing in `main.py` disables it. Use it to explore and try requests against a running local server without needing to ask the backend owner anything.
 
@@ -46,7 +46,7 @@ No auth required to call this.
 
 **Errors**: `401` invalid credentials.
 
-Currently issues one of two demo roles: `hospital`, `cimas`, backed by env-var credentials (no `users` table yet). **Target v4.0 roles are `practitioner`, `clinical`.** This is a planned, not-yet-scheduled change — flag before building UI that assumes the target role names.
+Currently issues one of two demo roles: `hospital`, `cimas`, backed by env-var credentials (no `users` table yet). A `practitioner`/`clinical` role rename was floated in an earlier version but explicitly declined as not needed post-pivot (see `CLAUDE.md`) — don't build UI assuming those role names will arrive. The master doc's "four role views" dashboard concept (Section 16.3: MoHCC, NSSA, Cimas, Hospital) is a dashboard-side filtering question, not necessarily a backend role-rename — undecided, raise with the team before building against it.
 
 ### `GET /api/auth/me` — LIVE (dev helper, not part of the target contract)
 
@@ -134,6 +134,23 @@ For the case where a VHW's site genuinely isn't in the list yet. Unauthenticated
 **Response 201**: same shape as a `GET /api/mines` item.
 
 **Errors**: `409` if `name` is already registered.
+
+---
+
+## Facilities
+
+### `GET /api/facilities` — LIVE (12 August 2026)
+
+Powers the mobile Outreach Planner's "nearest hospital" preview when scheduling a visit. **Unauthenticated**, same precedent as `GET /api/mines`. Read-only view of the same rows `backend/services/facility_matching.py` already uses internally for referral routing.
+
+**Response 200**
+```json
+[
+  { "id": 1, "name": "Kwekwe District Hospital", "level": "district_hospital", "address": "Corner Robert Mugabe / Sixth Ave, Kwekwe", "phone": "055-24000", "latitude": -18.9281, "longitude": 29.8149 },
+  { "id": 2, "name": "Sherwood Clinic", "level": "clinic", "address": "Sherwood Mine, Kwekwe", "phone": "055-24101", "latitude": null, "longitude": null }
+]
+```
+Ordered by `level`, then `name`.
 
 ---
 
@@ -257,6 +274,7 @@ Requires `Authorization: Bearer <token>`.
     "pre_alert_sent": true,
     "facility_id": 1,
     "facility_name": "Kwekwe District Hospital",
+    "referral_code": "SG-4K7Q",
     "reminder_stage": 0,
     "attended_at": null,
     "closed_at": null,
@@ -285,10 +303,44 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 **Response 200**
 ```json
-{ "id": 7, "miner_name": "Tendai Moyo", "mine_site": "Sherwood Mine", "tier": "RED", "status": "closed", "deadline": "2026-08-04 09:15:00", "pre_alert_sent": true, "facility_id": 1, "facility_name": "Kwekwe District Hospital", "reminder_stage": 0, "attended_at": null, "closed_at": "2026-08-02 10:00:00", "created_at": "2026-08-02 09:15:00" }
+{ "id": 7, "miner_name": "Tendai Moyo", "mine_site": "Sherwood Mine", "tier": "RED", "status": "closed", "deadline": "2026-08-04 09:15:00", "pre_alert_sent": true, "facility_id": 1, "facility_name": "Kwekwe District Hospital", "referral_code": "SG-4K7Q", "reminder_stage": 0, "attended_at": null, "closed_at": "2026-08-02 10:00:00", "created_at": "2026-08-02 09:15:00" }
 ```
+`referral_code` (new 15 August 2026, see below) appears here too, and on `GET /api/referrals`, not just the lookup routes and SMS text.
 
 **Errors**: `401` missing/invalid token; `404` unknown referral; `422` invalid status value.
+
+### `GET /api/referrals/lookup/{code}` — LIVE
+
+Master doc v6.0 Section 1.1/16.6 (14 August 2026, built 15 August). No auth: hospital staff have no login, same deliberate precedent as `POST /api/screen` and `GET /api/workers/{phone}`. `{code}` is the short human-readable code generated at referral creation (`SG-4K7Q` style — `SG-` + 4 chars from an alphabet excluding `0/O/1/I`), sent to the miner by SMS (`services.notifications.send_miner_result`) and included in the facility pre-alert (`send_hospital_prealert`).
+
+**Response 200**
+```json
+{
+  "referral_code": "SG-4K7Q",
+  "tier": "RED",
+  "status": "pre_alerted",
+  "deadline": "2026-08-17 09:15:00",
+  "miner_name": "Tendai Moyo",
+  "mine_site": "Sherwood Mine",
+  "facility_name": "Kwekwe District Hospital",
+  "advice_line": "...",
+  "contributing_factors": ["..."],
+  "attended_at": null
+}
+```
+**Errors**: `404` unknown code.
+
+Takudzwa builds the hospital-facing entry page in `dashboard/` against this contract.
+
+### `POST /api/referrals/lookup/{code}/confirm-attendance` — LIVE
+
+Companion to the route above. No auth, same reasoning. Sets `status='attended'`, `attended_at=now`. This is what makes referral completion rate (the project's headline KPI, master doc Section 7.5) measurable end to end instead of self-reported. Rejects a referral already `attended` or `closed` rather than silently re-stamping `attended_at`.
+
+**Response 200**
+```json
+{ "referral_code": "SG-4K7Q", "status": "attended", "attended_at": "2026-08-16 11:02:00" }
+```
+**Errors**: `404` unknown code; `409` already attended/closed.
 
 ---
 
@@ -296,7 +348,7 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 ### `POST /api/outreach` — LIVE
 
-Requires `Authorization: Bearer <token>` — a coordinator/dashboard action, not a field action (deliberately not the unauthenticated shape this section originally drafted). Schedules a visit; the 3-day/1-day-before bulk SMS announcement to every worker registered at that site is triggered later by the same in-process scheduler as the referral cascade (`backend/services/outreach.py`, `run_scheduled_outreach`), not synchronously on this call.
+**Unauthenticated as of 12 August 2026** — was `Authorization: Bearer <token>`-gated (a coordinator/dashboard action, not a field action) until the mobile Outreach Planner needed to schedule a visit directly from a VHW's phone, which has no login. Explicit scope decision to demonstrate the functionality now rather than build mobile auth first — flagged in `CLAUDE.md`'s sprint status, not a silent change. `GET /api/outreach` below is unaffected and still requires auth (the dashboard's coordinator view). Schedules a visit; the 3-day/1-day-before bulk SMS announcement to every worker registered at that site is triggered later by the same in-process scheduler as the referral cascade (`backend/services/outreach.py`, `run_scheduled_outreach`), not synchronously on this call.
 
 **Request**
 ```json
@@ -435,6 +487,8 @@ Requires `Authorization: Bearer <token>`.
 | `/api/ussd` | POST | LIVE (four-tier) |
 | `/api/referrals` | GET | LIVE (facility matching + reminder/escalation cascade) |
 | `/api/referrals/{id}` | PATCH | LIVE (new status lifecycle) |
+| `/api/referrals/lookup/{code}` | GET | LIVE (unauthenticated, referral-code pivot) |
+| `/api/referrals/lookup/{code}/confirm-attendance` | POST | LIVE (unauthenticated) |
 | `/api/outreach` | POST, GET | LIVE |
 | `/api/dashboard/today` | GET | LIVE (unauthenticated, VHW Home-screen numbers) |
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |

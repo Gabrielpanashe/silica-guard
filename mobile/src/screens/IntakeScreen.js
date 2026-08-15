@@ -1,17 +1,27 @@
 import {
   StyleSheet, Text, View, TextInput,
-  TouchableOpacity, SafeAreaView, ScrollView,
+  TouchableOpacity, ScrollView,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { colours, typography, spacing, radius } from '../theme';
 import MineSitePicker from '../components/MineSitePicker';
+import { useOutreachSite } from '../context/OutreachSiteContext';
 
 export default function IntakeScreen({ navigation }) {
+  // Defaults to whichever mine is selected on Home (10 August) — was
+  // hardcoded to 'Globe & Phoenix Mine' regardless of Home's own state,
+  // which is exactly what let a screening get registered under a site
+  // Home's live numbers weren't filtering by, so it silently never showed
+  // up in Screened Today / Today's Log / Refer Now / Watch. Still a real,
+  // independent MineSitePicker below — a VHW covering more than one site
+  // in a day can still override per-miner.
+  const { site: defaultSite } = useOutreachSite();
   const [name, setName]         = useState('');
   const [phone, setPhone]       = useState('');
-  const [mineSite, setMineSite] = useState('Globe & Phoenix Mine');
+  const [mineSite, setMineSite] = useState(defaultSite);
   const [errors, setErrors]     = useState({});
 
   const validate = () => {

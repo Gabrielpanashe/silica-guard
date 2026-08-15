@@ -24,8 +24,13 @@ services:
         value: sandbox
       - key: HOSPITAL_NURSE_PHONE
         sync: false
+      # A full SQLAlchemy URL, not a bare file path (format changed 14 Aug
+      # 2026 with the ORM migration). Still SQLite here until the Supabase
+      # Postgres cutover (Step B) lands — see CLAUDE.md's sprint status.
+      # Once it does, set this to the Supabase connection string in the
+      # Render dashboard (sync: false — never commit a real one here).
       - key: DATABASE_URL
-        value: ./data/silicaguard.db
+        value: sqlite:///./data/silicaguard.db
       - key: SECRET_KEY
         generateValue: true
       - key: ENVIRONMENT

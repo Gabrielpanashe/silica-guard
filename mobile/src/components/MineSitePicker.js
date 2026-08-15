@@ -20,12 +20,22 @@ import { getMines } from '../services/api';
  * shouldn't become one now.
  *
  * Props:
- *   value      string   — current site name (free text — mines.id is a
- *                          suggestion list, not a foreign key; see
- *                          backend/routers/mines.py)
- *   onChange   function(string)
+ *   value        string   — current site name (free text — mines.id is a
+ *                            suggestion list, not a foreign key; see
+ *                            backend/routers/mines.py)
+ *   onChange     function(string)
+ *   onSelectMine function(mine|null)  — optional. Fires alongside onChange
+ *                with the full { id, name, district, province } record when
+ *                a seeded mine was picked, or null for a free-typed custom
+ *                site — lets a caller (HomeScreen's banner) show district/
+ *                province without a second GET /api/mines fetch.
+ *   renderTrigger function(open, value) — optional. Supply a custom-styled
+ *                trigger element instead of the default pill/chevron box —
+ *                lets HomeScreen make its whole outreach banner the tap
+ *                target while reusing 100% of this component's list/modal/
+ *                offline-fallback logic.
  */
-export default function MineSitePicker({ value, onChange }) {
+export default function MineSitePicker({ value, onChange, onSelectMine, renderTrigger }) {
   const [mines, setMines]     = useState([]);
   const [loadFailed, setLoadFailed] = useState(false);
   const [modalOpen, setModalOpen]   = useState(false);
@@ -39,14 +49,18 @@ export default function MineSitePicker({ value, onChange }) {
     return () => { cancelled = true; };
   }, []);
 
-  const select = (name) => {
-    onChange(name);
+  const select = (mine) => {
+    onChange(mine.name);
+    onSelectMine?.(mine);
     setModalOpen(false);
   };
 
   const submitCustom = () => {
     const trimmed = customText.trim();
-    if (trimmed) onChange(trimmed);
+    if (trimmed) {
+      onChange(trimmed);
+      onSelectMine?.(null);
+    }
     setModalOpen(false);
   };
 
@@ -65,12 +79,18 @@ export default function MineSitePicker({ value, onChange }) {
     );
   }
 
+  const trigger = renderTrigger ? (
+    renderTrigger(() => setModalOpen(true), value)
+  ) : (
+    <TouchableOpacity style={s.trigger} onPress={() => setModalOpen(true)} activeOpacity={0.75}>
+      <Text style={s.triggerText}>{value || 'Select a mine site'}</Text>
+      <Text style={s.chevron}>▾</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <View>
-      <TouchableOpacity style={s.trigger} onPress={() => setModalOpen(true)} activeOpacity={0.75}>
-        <Text style={s.triggerText}>{value || 'Select a mine site'}</Text>
-        <Text style={s.chevron}>▾</Text>
-      </TouchableOpacity>
+      {trigger}
 
       <Modal visible={modalOpen} animationType="slide" transparent onRequestClose={() => setModalOpen(false)}>
         <View style={s.overlay}>
@@ -87,7 +107,7 @@ export default function MineSitePicker({ value, onChange }) {
                 <TouchableOpacity
                   key={mine.id}
                   style={s.option}
-                  onPress={() => select(mine.name)}
+                  onPress={() => select(mine)}
                   activeOpacity={0.7}
                 >
                   <View>
