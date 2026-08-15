@@ -50,6 +50,7 @@ from db_models import Facility, Miner, Mine, OutreachVisit, Referral, Screening,
 from models import ScreeningAnswerIn  # noqa: E402
 from questions import SCREENING_QUESTIONS  # noqa: E402
 from services.advice_engine import personalised_advice_line  # noqa: E402
+from services.referrals import _generate_referral_code  # noqa: E402
 
 # Option index (0-based) per question, in SCREENING_QUESTIONS order, per tier profile.
 GREEN_PROFILE = [0, 3, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -181,6 +182,12 @@ def _insert_referral(
             miner_id=miner_id,
             hospital=facility_name,
             facility_id=facility_id,
+            # Seeded referrals get a real code too (14 August, master doc
+            # v6.0 Section 1.1), same generator create_referral_and_notify
+            # uses for a live referral — so the dashboard's referral list
+            # and the lookup page have something real to demo without
+            # needing a live screening first.
+            referral_code=_generate_referral_code(db),
             deadline=deadline,
             pre_alert_sent=1 if pre_alert_sent else 0,
             status=status,

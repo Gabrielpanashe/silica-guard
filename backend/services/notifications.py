@@ -99,11 +99,20 @@ def _log_notification(
         db.close()
 
 
-def send_miner_result(worker_id: int, phone_number: str, tier: str, shona_message: str) -> bool:
+def send_miner_result(
+    worker_id: int, phone_number: str, tier: str, shona_message: str, referral_code: str | None = None
+) -> bool:
     """Doctor-approved Shona explanation (shona_message) + English facility info
-    + a line telling the miner what to do with this message at the hospital."""
+    + a line telling the miner what to do with this message at the hospital.
+
+    `referral_code` (14 August 2026, master doc v6.0 Section 1.1) is the
+    short human-readable code — "show this message" is now literally
+    actionable: the nurse reads the code off the phone and looks the miner
+    up by it, rather than just recognising the SMS as legitimate."""
+    code_line = f"\n\nYour referral code: {referral_code}" if referral_code else ""
     body = (
-        f"{shona_message}\n\n"
+        f"{shona_message}"
+        f"{code_line}\n\n"
         f"{HOSPITAL_INFO_EN}\n"
         "Show this message to the nurse when you arrive."
     )
@@ -134,11 +143,17 @@ def send_hospital_prealert(
     mine_site: str | None,
     tier: str,
     contributing_factors_summary: str,
+    referral_code: str | None = None,
 ) -> bool:
     """Returns True only if the SMS API call succeeded, so the caller can set
-    referrals.pre_alert_sent accurately instead of assuming success."""
+    referrals.pre_alert_sent accurately instead of assuming success.
+
+    `referral_code` (14 August 2026, master doc v6.0 Section 1.1) lets
+    whoever reads this at the hospital jump straight to the lookup page
+    instead of hunting for the miner by name/phone."""
+    code_part = f" Code: {referral_code}." if referral_code else ""
     body = (
-        f"New {tier} referral from SilicaGuard screening. "
+        f"New {tier} referral from SilicaGuard screening.{code_part} "
         f"Miner: {miner_name}, Phone: {phone_number}, "
         f"Site: {mine_site or 'unknown'}. Factors: {contributing_factors_summary}"
     )
