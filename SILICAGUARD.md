@@ -37,7 +37,7 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 | Outreach Planner with auto-generated reports | Peer champion programme | Described in the pilot plan, not built as software |
 | Clinical web dashboard | Enterprise/employer module (bulk workforce upload, campaigns, employer dashboard) | Descoped 5 August 2026 per Dr Bopoto's feedback — formal mining companies already have robust pneumoconiosis programmes; see Section 13 |
 | Referral code (`SG-4K7Q` style, SMS + hospital lookup page) | QR referral card | Reframed 14 August, master doc v6.0 Section 1.1 — a QR needs hospital-side scanning we don't control, no printer at a mine site, and is useless to a USSD self-screener. A human-typeable code works everywhere a QR wouldn't; a QR can auto-fill it later as a convenience layer, not a replacement. |
-| PostgreSQL via Supabase, SQLAlchemy + Alembic | — | Migration in progress this sprint, master doc v6.0 Section 16.2; see Section 7 |
+| PostgreSQL via Supabase, SQLAlchemy + Alembic | — | Live as of 16 August 2026 (master doc v6.0 Section 16.2); see Section 7 and `CLAUDE.md`'s sprint status |
 | — | Teach Mode (six illustrated education cards) | Not built. Health education for the demo is delivered verbally by the VHW during the group session, not through the app. |
 
 **Note, added 10 August**: the Clinical web dashboard exists as of today (`dashboard/`, deployed to `https://silicaguard-dashboard.onrender.com`, reachable from a button in the mobile app) — built the night before the demo. It's one static HTML/CSS/JS page (no build step, no React/Vite/Recharts/Leaflet, see Section 5's note), not four role-scoped logins — one unified view of population and referral intelligence. Teach Mode remains genuinely not built.
@@ -47,7 +47,7 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 | Layer | Technology | Notes |
 |---|---|---|
 | Backend | Python FastAPI | All API routes, business logic, AI orchestration |
-| Database | SQLite → **migrating to PostgreSQL via Supabase this sprint** (target: full SQLAlchemy models + Alembic migrations, master doc v6.0 Section 16.2) | Until the migration lands, still raw `sqlite3`, no ORM — see `CLAUDE.md`'s Architecture section for the current-truth state |
+| Database | **PostgreSQL via Supabase in production**, full SQLAlchemy ORM + Alembic migrations (master doc v6.0 Section 16.2, Step B landed 16 August 2026) | Local dev and the full pytest suite still run against SQLite by design (per-test throwaway engines, isolated from whatever `DATABASE_URL` names) — see `CLAUDE.md`'s Architecture section |
 | Mobile | React Native (Expo) | Offline-first, `expo-sqlite` local storage. **No Flutter.** |
 | Referral code | Plain human-readable code (`SG-4K7Q`), generated backend-side | **Superseded the QR plan 14 August** (master doc v6.0 Section 1.1) — no `react-native-qrcode-svg`, no QR generation planned. Sent by SMS; a hospital staff member types it into a simple web page to open the record and confirm attendance. |
 | Dashboard | React + Vite + Recharts + Leaflet (target) | **As actually shipped 10 August: plain static HTML/CSS/JS, no build step**, deployed to `https://silicaguard-dashboard.onrender.com` — see the Section 4 note above. React/Vite/Recharts/Leaflet remains the intended stack for a properly resourced rebuild; this is documented technical debt, not a stack change. |
@@ -60,12 +60,14 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 
 ## 6. Project Structure
 
-**This tree is illustrative, not exhaustive** — `routers/`, `services/`, and `tests/` have grown well beyond the files listed below since this section was last fully rewritten; treat it as "the pattern," and check the directories directly for the current full list. Two things landed since 14 August (master doc v6.0 — see `CLAUDE.md`'s "Current sprint status"): `backend/db_models.py` + a rewritten `database.py` (the SQLAlchemy ORM, replacing the raw-SQL shape described below — live as of 15 August) and `backend/static/ussd_simulator.html` (the USSD web simulator, also live).
+**This tree is illustrative, not exhaustive** — `routers/`, `services/`, and `tests/` have grown well beyond the files listed below since this section was last fully rewritten; treat it as "the pattern," and check the directories directly for the current full list. Several things landed since 14 August (master doc v6.0 — see `CLAUDE.md`'s "Current sprint status"): `backend/db_models.py` + a rewritten `database.py` (the SQLAlchemy ORM, replacing the raw-SQL shape this tree used to describe — live 15 August), `backend/alembic/` (Alembic migrations, targeting Postgres via Supabase in production — Step B, live 16 August), `backend/services/db_keepalive.py` (Supabase free-tier keep-alive job), and `backend/static/ussd_simulator.html` (the USSD web simulator, also live).
 
 ```
 backend/
 ├── main.py                      # FastAPI app, router registration
-├── database.py                  # Raw SQL schema + sqlite3 connection helper (pre-ORM-migration)
+├── database.py                  # SQLAlchemy engine/Session setup (SQLite locally/tests, Postgres via Supabase in production)
+├── db_models.py                 # SQLAlchemy declarative models — one class per table
+├── alembic/                     # Schema migrations, applied against whatever DATABASE_URL names
 ├── models.py                    # Pydantic request/response schemas
 ├── questions.py                 # The screening question bank (shared codes with mobile)
 ├── prompts/
@@ -97,7 +99,7 @@ docs/
 
 ## 7. Database Schema
 
-Raw SQL lives in `backend/database.py` (pre-ORM-migration — see Section 5). **The tables below are the target shape** — check `CLAUDE.md`'s "Current sprint status" and `docs/API_CONTRACT.md` for what's actually live today versus still pending migration.
+Declared as SQLAlchemy models in `backend/db_models.py`, applied via Alembic migrations in `backend/alembic/` against Postgres via Supabase in production (SQLite locally/in tests) — see Section 5. **The tables below are the live shape**, schema-preserving across the raw-SQL → ORM migration (same table/column names throughout) — check `docs/API_CONTRACT.md` for the current request/response shapes built on top of it.
 
 | Table | Key fields | Purpose |
 |---|---|---|

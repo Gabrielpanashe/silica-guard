@@ -44,6 +44,18 @@ def _make_engine(url: str):
         # never shared across threads concurrently. Postgres via psycopg
         # needs no such flag.
         connect_args={"check_same_thread": False} if is_sqlite else {},
+        # pool_pre_ping: real bug hit live during the Step B Supabase
+        # cutover (15 August 2026) — a connection that had sat idle in the
+        # pool got silently dropped by Supabase's Session Pooler, and the
+        # next request to draw it failed with a raw psycopg
+        # OperationalError ("server closed the connection unexpectedly")
+        # instead of a clean response. pre_ping issues a cheap "SELECT 1"
+        # before handing out a pooled connection and transparently
+        # reconnects if it's dead — SQLAlchemy's documented fix for
+        # exactly this class of proxy/pooler idle-timeout. Harmless no-op
+        # for SQLite's single-file connections too, so applied
+        # unconditionally rather than only for Postgres.
+        pool_pre_ping=True,
     )
     if is_sqlite:
         enable_sqlite_foreign_keys(new_engine)

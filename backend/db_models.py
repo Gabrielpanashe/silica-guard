@@ -208,3 +208,16 @@ class Notification(Base):
             name="ck_notifications_delivery_status",
         ),
     )
+
+
+class KeepAlivePing(Base):
+    """One fixed row (id=1), touched on the same APScheduler cadence as the
+    referral cascade — see `services/db_keepalive.py`. Exists solely so a
+    free Supabase project (Step B, master doc v6.0 Section 16.2) sees
+    regular database activity and never hits its 7-day auto-pause window
+    between now and the 28 August showcase."""
+
+    __tablename__ = "keepalive_pings"
+
+    id = Column(Integer, primary_key=True)
+    pinged_at = Column(DateTime, default=_utcnow, server_default=_NOW)
