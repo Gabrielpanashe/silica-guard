@@ -1,3 +1,5 @@
+import secrets
+import string
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -18,6 +20,28 @@ _URGENCY_WINDOW = {
 }
 
 _DEFAULT_HOSPITAL_NAME = "Kwekwe District Hospital"
+
+# Referral code (14 August 2026, master doc v6.0 Section 1.1) — the QR
+# referral card reframed as a short human-readable code, e.g. "SG-4K7Q":
+# sent to the miner by SMS, included in the facility pre-alert, and typed
+# by hospital staff into a lookup page (routers/referral_lookup.py) to
+# confirm attendance. Charset excludes 0/O and 1/I — a code read off a
+# phone screen or handwritten at a nurse's desk shouldn't hinge on telling
+# those apart.
+_CODE_ALPHABET = "".join(c for c in string.ascii_uppercase + string.digits if c not in "0O1I")
+_CODE_LENGTH = 4
+_CODE_MAX_ATTEMPTS = 20
+
+
+def _generate_referral_code(db: Session) -> str:
+    for _ in range(_CODE_MAX_ATTEMPTS):
+        candidate = "SG-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(_CODE_LENGTH))
+        if db.scalar(select(Referral).where(Referral.referral_code == candidate)) is None:
+            return candidate
+    # With a ~32^4 (~1M) code space this is not realistically reachable at
+    # pilot scale — raising rather than silently returning a colliding code
+    # is the safer failure mode for something a hospital will look up by.
+    raise RuntimeError("Could not generate a unique referral code after {} attempts".format(_CODE_MAX_ATTEMPTS))
 
 
 def create_referral_and_notify(
@@ -56,6 +80,7 @@ def create_referral_and_notify(
         miner_id=miner_id,
         hospital=facility_name,
         facility_id=facility_id,
+        referral_code=_generate_referral_code(db),
         deadline=deadline,
         pre_alert_sent=0,
         status="open",
@@ -64,7 +89,9 @@ def create_referral_and_notify(
     db.commit()
     db.refresh(referral)
 
-    notifications.send_miner_result(miner_id, phone_number, tier, shona_message)
+    notifications.send_miner_result(
+        miner_id, phone_number, tier, shona_message, referral_code=referral.referral_code
+    )
     prealert_sent = notifications.send_hospital_prealert(
         miner_id,
         miner_name,
@@ -72,6 +99,7 @@ def create_referral_and_notify(
         mine_site,
         tier,
         ", ".join(contributing_factors) if contributing_factors else "N/A",
+        referral_code=referral.referral_code,
     )
 
     if prealert_sent:

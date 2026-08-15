@@ -52,6 +52,7 @@ def _referral_to_out(referral: Referral) -> ReferralOut:
         pre_alert_sent=bool(referral.pre_alert_sent),
         facility_id=referral.facility_id,
         facility_name=referral.facility.name if referral.facility else None,
+        referral_code=referral.referral_code,
         reminder_stage=referral.reminder_stage,
         attended_at=format_datetime(referral.attended_at),
         closed_at=format_datetime(referral.closed_at),
