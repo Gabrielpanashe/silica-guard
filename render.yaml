@@ -16,6 +16,15 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # Pinned 16 August 2026 after a Render build silently landed on Python
+      # 3.14.3 (a release barely out) with no version specified anywhere in
+      # this file — real risk that a C-extension package (psycopg, coming
+      # with the Postgres/Supabase cutover) has no prebuilt wheel yet for
+      # that new a version, turning a transient build hiccup into a
+      # recurring one this close to feature freeze. Matches local dev's
+      # venv (3.12.3) for reproducibility.
+      - key: PYTHON_VERSION
+        value: 3.12.3
       - key: GEMINI_API_KEY
         sync: false
       - key: AT_API_KEY
