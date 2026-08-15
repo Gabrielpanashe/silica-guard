@@ -1,157 +1,141 @@
 import os
 import sqlite3
 
-DATABASE_URL = os.getenv("DATABASE_URL", "./data/silicaguard.db")
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.orm import sessionmaker
 
-# v4.0 four-tier schema (see CLAUDE.md, SILICAGUARD.md Section 7). There is no
-# migration framework yet — CREATE TABLE IF NOT EXISTS will not alter a table
-# that already exists under the old 3-tier shape. Delete the local .db file
-# and re-run init_db()/seed_demo_data.py to pick up this schema, per the
-# "How to add or change a database field" procedure in SKILL.md.
+from db_models import Base
 
-# The Enterprise Occupational Health pillar (employer accounts, scheduled
-# campaigns) was descoped 5 August 2026 per mentor feedback — SilicaGuard is
-# artisanal-miner-only now (see SILICAGUARD.md Section 13). Explicitly drop
-# these tables rather than leaving them as dead schema, the way xray_results/
-# whatsapp_messages were left behind in an earlier removal. `campaigns` has
-# an FK to `employers`, so it must drop first.
-CLEANUP = """
-DROP TABLE IF EXISTS campaigns;
-DROP TABLE IF EXISTS employers;
-"""
+# SQLAlchemy ORM migration (14 August 2026, master doc v6.0 Section 16.2).
+# Replaces the previous raw-sqlite3 database.py — see git history for that
+# version if you need it. Same tables, same column names (db_models.py is a
+# schema-preserving rewrite), new access layer: every router/service is
+# being converted, one module at a time, to take a `Session` via
+# `Depends(get_db)` instead of calling `get_connection()` and writing raw
+# SQL strings — see CLAUDE.md's "Current sprint status" for what's left.
+#
+# DATABASE_URL's MEANING CHANGED with this migration — it used to be a bare
+# filesystem path ("./data/silicaguard.db"); it is now (preferably) a full
+# SQLAlchemy engine URL, e.g. "sqlite:///./data/silicaguard.db" or, in
+# production, a Supabase Postgres URL once Step B lands. A bare path with
+# no "://" is still accepted and treated as SQLite (see
+# `_normalize_database_url` below) purely for backward compatibility with
+# a few test fixtures predating this migration — new code should always
+# use the full URL form.
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/silicaguard.db")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS miners (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    phone TEXT UNIQUE NOT NULL,
-    mine_site TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
 
-CREATE TABLE IF NOT EXISTS screenings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    miner_id INTEGER REFERENCES miners(id),
-    previous_screening_id INTEGER REFERENCES screenings(id),
-    screened_by TEXT,
-    channel TEXT,
-    tier TEXT CHECK (tier IN ('GREEN', 'YELLOW', 'ORANGE', 'RED')),
-    risk_confidence REAL,
-    advice_line TEXT,
-    ai_explanation_shona TEXT,
-    ai_explanation_english TEXT,
-    ai_contributing_factors TEXT,
-    provisional INTEGER DEFAULT 0,
-    fallback_used INTEGER DEFAULT 0,
-    synced INTEGER DEFAULT 1,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+def _normalize_database_url(value: str) -> str:
+    return value if "://" in value else f"sqlite:///{value}"
 
-CREATE TABLE IF NOT EXISTS screening_answers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    screening_id INTEGER REFERENCES screenings(id),
-    question_code TEXT,
-    question_text TEXT,
-    answer_value TEXT,
-    answer_score INTEGER
-);
 
-CREATE TABLE IF NOT EXISTS facilities (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    level TEXT,
-    address TEXT,
-    phone TEXT,
-    latitude REAL,
-    longitude REAL
-);
+def _make_engine(url: str):
+    normalized = _normalize_database_url(url)
+    is_sqlite = normalized.startswith("sqlite")
+    if is_sqlite:
+        path = normalized.removeprefix("sqlite:///")
+        if path and path != ":memory:":
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    new_engine = create_engine(
+        normalized,
+        # check_same_thread=False: FastAPI can service one Session's
+        # requests from a different thread than created it; safe here
+        # because each request gets its own Session (see get_db) that's
+        # never shared across threads concurrently. Postgres via psycopg
+        # needs no such flag.
+        connect_args={"check_same_thread": False} if is_sqlite else {},
+    )
+    if is_sqlite:
+        enable_sqlite_foreign_keys(new_engine)
+    return new_engine
 
-CREATE TABLE IF NOT EXISTS referrals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    screening_id INTEGER REFERENCES screenings(id),
-    miner_id INTEGER REFERENCES miners(id),
-    hospital TEXT DEFAULT 'Kwekwe District Hospital',
-    facility_id INTEGER REFERENCES facilities(id),
-    deadline DATETIME,
-    pre_alert_sent INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'open'
-        CHECK (status IN ('open', 'pre_alerted', 'reminded', 'attended', 'closed', 'escalated')),
-    reminder_stage INTEGER DEFAULT 0,
-    attended_at DATETIME,
-    closed_at DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
 
-CREATE TABLE IF NOT EXISTS outreach_visits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    site TEXT NOT NULL,
-    scheduled_date DATE,
-    expected_headcount INTEGER,
-    screened_count INTEGER DEFAULT 0,
-    health_workers TEXT,
-    report_generated INTEGER DEFAULT 0
-);
+def enable_sqlite_foreign_keys(target_engine) -> None:
+    """SQLite has foreign keys off by default per-connection; every sqlite3
+    connection an engine opens needs this, same as the old
+    `conn.execute("PRAGMA foreign_keys = ON")` did per-connection."""
 
-CREATE TABLE IF NOT EXISTS mines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    district TEXT,
-    province TEXT DEFAULT 'Midlands',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+    @event.listens_for(target_engine, "connect")
+    def _pragma(dbapi_connection, _):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.close()
 
-CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    worker_id INTEGER NOT NULL REFERENCES miners(id),
-    channel TEXT NOT NULL DEFAULT 'sms',
-    template TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    delivery_status TEXT NOT NULL CHECK (delivery_status IN ('sent', 'failed', 'skipped'))
-);
-"""
+
+engine = _make_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+# Tables that existed under the pre-5-August-2026 enterprise-scope schema
+# and are no longer part of db_models.py at all (see SILICAGUARD.md Section
+# 13). Base.metadata.create_all() only ever creates missing tables, never
+# drops ones absent from the models — so an old local .db file predating
+# that pivot would otherwise keep carrying these forever. Explicit cleanup,
+# same as the previous CLEANUP script, run every init_db() call.
+_CLEANUP_STATEMENTS = (
+    "DROP TABLE IF EXISTS campaigns",
+    "DROP TABLE IF EXISTS employers",
+)
+
+
+def get_db():
+    """FastAPI dependency — yields one Session per request, always closed."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def get_connection() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DATABASE_URL) or ".", exist_ok=True)
-    conn = sqlite3.connect(DATABASE_URL)
+    """MIGRATION-BRIDGE SHIM — do not use in new code.
+
+    Every router/service is being converted from this raw-sqlite3 style to
+    `Depends(get_db)` + the ORM, one module at a time (see CLAUDE.md's
+    "Current sprint status", 14 August 2026 entry, for what's left). This
+    function exists only so not-yet-converted callers keep working during
+    that staged rollout — it's intentionally SQLite-only and reads
+    `DATABASE_URL` fresh on every call (unlike `engine` above, which is
+    built once at import time), which is also why tests can still isolate
+    per-test state by monkeypatching `database.DATABASE_URL` for whichever
+    callers haven't moved to the `get_db` dependency-override pattern yet.
+
+    Delete this function, `_normalize_database_url`'s bare-path allowance,
+    and the DATABASE_URL-monkeypatch fixtures in tests/, once every caller
+    is converted — grep the codebase for `get_connection` to check. It
+    raises loudly if pointed at Postgres rather than silently misbehaving,
+    since it was never meant to survive the Step B cutover.
+    """
+    normalized = _normalize_database_url(DATABASE_URL)
+    if not normalized.startswith("sqlite"):
+        raise RuntimeError(
+            "get_connection() is a SQLite-only migration-bridge shim. "
+            "Convert this caller to Depends(get_db) before pointing "
+            "DATABASE_URL at Postgres."
+        )
+    path = normalized.removeprefix("sqlite:///") or ":memory:"
+    if path != ":memory:":
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
-# Additive columns landing on an existing `referrals` table (5 August 2026,
-# Smart Referral Router — facility matching + reminder/escalation cascade).
-# CREATE TABLE IF NOT EXISTS won't add these to a table that already exists
-# under the old shape, so unlike most schema changes in this project (which
-# just ask you to delete backend/data/silicaguard.db), these two are applied
-# via ALTER TABLE so an existing local/deployed DB doesn't need deleting.
-_REFERRAL_ALTERS = (
-    "ALTER TABLE referrals ADD COLUMN facility_id INTEGER REFERENCES facilities(id)",
-    "ALTER TABLE referrals ADD COLUMN reminder_stage INTEGER DEFAULT 0",
-)
-
-# Same pattern, for the Outreach Planner (5 August 2026): screenings need a
-# link back to the visit they came from (for live screened_count tracking
-# and the post-visit report), and outreach_visits needs flags tracking the
-# 3-day/1-day announcement cadence.
-_OUTREACH_ALTERS = (
-    "ALTER TABLE screenings ADD COLUMN outreach_visit_id INTEGER REFERENCES outreach_visits(id)",
-    "ALTER TABLE outreach_visits ADD COLUMN sms_3day_sent INTEGER DEFAULT 0",
-    "ALTER TABLE outreach_visits ADD COLUMN sms_1day_sent INTEGER DEFAULT 0",
-)
-
-
-def init_db() -> None:
-    conn = get_connection()
-    try:
-        conn.executescript(CLEANUP)
-        conn.executescript(SCHEMA)
-        for statement in _REFERRAL_ALTERS + _OUTREACH_ALTERS:
-            try:
-                conn.execute(statement)
-            except sqlite3.OperationalError:
-                pass  # column already exists
-        conn.commit()
-    finally:
-        conn.close()
+def init_db(target_engine=None) -> None:
+    """Defaults to the module-level `engine` — but if `DATABASE_URL` has
+    been changed since that engine was built (e.g. a test monkeypatching
+    it directly and then calling `init_db()` with no arguments, a pattern
+    several test fixtures use), builds a fresh engine matching the
+    *current* value instead of silently touching the original one. Mirrors
+    `get_connection()`'s "read DATABASE_URL fresh every call" model, so
+    both mechanisms agree during the migration. Pass `target_engine`
+    explicitly to skip that lookup entirely (e.g. Step B's Alembic setup)."""
+    if target_engine is None:
+        if str(engine.url) == _normalize_database_url(DATABASE_URL):
+            target_engine = engine
+        else:
+            target_engine = _make_engine(DATABASE_URL)
+    with target_engine.begin() as conn:
+        for statement in _CLEANUP_STATEMENTS:
+            conn.execute(text(statement))
+    Base.metadata.create_all(target_engine)
