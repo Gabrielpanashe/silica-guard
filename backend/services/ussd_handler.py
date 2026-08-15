@@ -1,6 +1,10 @@
 from typing import Dict, List, Tuple
 
-from database import get_connection
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database import get_fresh_session
+from db_models import Miner, Screening, ScreeningAnswer
 from questions import SCREENING_QUESTIONS
 from services import notifications
 from services.referrals import create_referral_and_notify
@@ -70,18 +74,14 @@ def _classify(answers: List[dict]) -> Tuple[str, str, str]:
     return tier, shona, english
 
 
-def _find_or_create_miner(conn, phone_number: str) -> int:
-    row = conn.execute(
-        "SELECT id FROM miners WHERE phone = ?", (phone_number,)
-    ).fetchone()
-    if row is not None:
-        return row["id"]
-    cur = conn.execute(
-        "INSERT INTO miners (name, phone, mine_site) VALUES (?, ?, ?)",
-        ("USSD Self-Screen", phone_number, None),
-    )
-    conn.commit()
-    return cur.lastrowid
+def _find_or_create_miner(db: Session, phone_number: str) -> int:
+    miner = db.scalar(select(Miner).where(Miner.phone == phone_number))
+    if miner is not None:
+        return miner.id
+    miner = Miner(name="USSD Self-Screen", phone=phone_number, mine_site=None)
+    db.add(miner)
+    db.commit()
+    return miner.id
 
 
 def _save_screening(
@@ -91,43 +91,47 @@ def _save_screening(
     shona: str,
     english: str,
 ) -> None:
-    conn = get_connection()
+    # Own session, not threaded in from a caller — handle_ussd() below has
+    # no request-scoped Session (it's driven by the Africa's Talking webhook
+    # router, not a FastAPI Depends chain), same reasoning as
+    # services/notifications._log_notification.
+    db = get_fresh_session()
     try:
-        miner_id = _find_or_create_miner(conn, phone_number)
-        cur = conn.execute(
-            """INSERT INTO screenings
-               (miner_id, screened_by, channel, tier, risk_confidence,
-                ai_explanation_shona, ai_explanation_english, fallback_used)
-               VALUES (?, 'USSD_SELF', 'USSD', ?, 0.75, ?, ?, 1)""",
-            (miner_id, tier, shona, english),
+        miner_id = _find_or_create_miner(db, phone_number)
+        screening = Screening(
+            miner_id=miner_id,
+            screened_by="USSD_SELF",
+            channel="USSD",
+            tier=tier,
+            risk_confidence=0.75,
+            ai_explanation_shona=shona,
+            ai_explanation_english=english,
+            fallback_used=1,
         )
-        screening_id = cur.lastrowid
+        db.add(screening)
+        db.flush()  # need screening.id for the answers below, before commit
+
         for answer in answers:
-            conn.execute(
-                """INSERT INTO screening_answers
-                   (screening_id, question_code, question_text, answer_value, answer_score)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    screening_id,
-                    answer["question_code"],
-                    answer["question_text"],
-                    answer["answer_value"],
-                    answer["answer_score"],
-                ),
+            db.add(
+                ScreeningAnswer(
+                    screening_id=screening.id,
+                    question_code=answer["question_code"],
+                    question_text=answer["question_text"],
+                    answer_value=answer["answer_value"],
+                    answer_score=answer["answer_score"],
+                )
             )
-        conn.commit()
+        db.commit()
 
         if tier in ("ORANGE", "RED"):
-            miner = conn.execute(
-                "SELECT name, mine_site FROM miners WHERE id = ?", (miner_id,)
-            ).fetchone()
+            miner = db.get(Miner, miner_id)
             create_referral_and_notify(
-                conn,
-                screening_id=screening_id,
+                db,
+                screening_id=screening.id,
                 miner_id=miner_id,
-                miner_name=miner["name"],
+                miner_name=miner.name,
                 phone_number=phone_number,
-                mine_site=miner["mine_site"],
+                mine_site=miner.mine_site,
                 tier=tier,
                 shona_message=shona,
             )
@@ -138,7 +142,7 @@ def _save_screening(
             # CLAUDE.md: "Everyone receives their result... by SMS").
             notifications.send_screening_result_sms(miner_id, phone_number, tier, shona)
     finally:
-        conn.close()
+        db.close()
 
 
 def handle_ussd(session_id: str, phone_number: str, text: str) -> str:

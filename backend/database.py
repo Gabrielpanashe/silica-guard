@@ -86,6 +86,39 @@ def get_db():
         db.close()
 
 
+_fresh_session_engines: dict[str, "sessionmaker"] = {}
+
+
+def get_fresh_session():
+    """For code that needs its own independent session OUTSIDE a FastAPI
+    request — a background job (services/referral_cascade.run_scheduled_cascade,
+    services/outreach.run_scheduled_outreach) or an audit write that must
+    survive the caller's own transaction later failing
+    (services/notifications._log_notification). Caller closes it.
+
+    Deliberately does NOT just call the module-level `SessionLocal()`: that
+    factory is bound to whatever `engine` object existed the one time
+    `sessionmaker(bind=engine, ...)` ran at import time, and reassigning
+    `database.engine` afterward (as tests/conftest.py's `client` fixture
+    does) does NOT retroactively change what an already-built `SessionLocal`
+    is bound to — confirmed the hard way, this returned a session pointed
+    at the real default engine even when `str(engine.url) ==
+    _normalize_database_url(DATABASE_URL)` was true, because that check
+    compared URLs while `SessionLocal` itself was still stale. Reading the
+    module-global `engine` fresh on every call (below) instead of touching
+    `SessionLocal` at all sidesteps that entirely — in production
+    `DATABASE_URL`/`engine` never change after import, so this is just
+    `sessionmaker(bind=engine)()` with one cheap string comparison; in
+    tests, where either can be monkeypatched independently, this builds
+    (and caches, keyed by URL) a matching engine instead."""
+    normalized = _normalize_database_url(DATABASE_URL)
+    if normalized == str(engine.url):
+        return sessionmaker(bind=engine)()
+    if normalized not in _fresh_session_engines:
+        _fresh_session_engines[normalized] = sessionmaker(bind=_make_engine(DATABASE_URL))
+    return _fresh_session_engines[normalized]()
+
+
 def format_datetime(value) -> str | None:
     """Every ORM-converted router that puts a timestamp into an API
     response must go through this, not str(value) or .isoformat().

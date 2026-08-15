@@ -1,10 +1,12 @@
 import json
-
-from fastapi import APIRouter, HTTPException
-
 from datetime import datetime, timezone
 
-from database import get_connection
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from database import get_db
+from db_models import Miner, OutreachVisit, Screening, ScreeningAnswer
 from models import DeteriorationResult, ScreeningCreate, ScreeningResult
 from services import notifications
 from services.advice_engine import personalised_advice_line
@@ -24,175 +26,142 @@ router = APIRouter(prefix="/api", tags=["screening"])
 
 
 @router.post("/screen", response_model=ScreeningResult)
-def screen_miner(payload: ScreeningCreate):
-    conn = get_connection()
+def screen_miner(payload: ScreeningCreate, db: Session = Depends(get_db)):
+    miner = db.get(Miner, payload.miner_id)
+    if miner is None:
+        raise HTTPException(status_code=404, detail="Miner not found")
+
+    # Outreach Planner (5 August 2026): link this screening to a visit for
+    # live screened_count tracking + the post-visit report. Explicit id is
+    # trusted if it exists (never fail the screening over a bad reference —
+    # same philosophy as "a failed AI call doesn't corrupt the screening
+    # record"); otherwise infer it for APP-channel screenings via
+    # services/outreach.py's match_active_visit. USSD self-screens never
+    # auto-link — not a coordinated site visit.
+    outreach_visit_id = None
+    if payload.outreach_visit_id is not None:
+        visit = db.get(OutreachVisit, payload.outreach_visit_id)
+        outreach_visit_id = visit.id if visit else None
+    elif payload.channel == "APP" and miner.mine_site:
+        candidate_visits = db.scalars(
+            select(OutreachVisit).where(func.lower(OutreachVisit.site) == miner.mine_site.lower())
+        ).all()
+        # match_active_visit() is pure dict-subscript logic (services/outreach.py)
+        # — pass plain dicts rather than changing that module to expect ORM
+        # attribute access, same reasoning as facility_matching's dict interface.
+        candidate_dicts = [
+            {"id": v.id, "site": v.site, "scheduled_date": v.scheduled_date} for v in candidate_visits
+        ]
+        matched_visit = match_active_visit(
+            miner.mine_site, datetime.now(timezone.utc), candidate_dicts
+        )
+        outreach_visit_id = matched_visit["id"] if matched_visit else None
+
+    # Most recent prior screening for this worker, if any.
+    previous_screening = db.scalar(
+        select(Screening)
+        .where(Screening.miner_id == payload.miner_id)
+        .order_by(Screening.created_at.desc(), Screening.id.desc())
+        .limit(1)
+    )
+    previous_screening_id = previous_screening.id if previous_screening else None
+    provisional = 1 if payload.offline_fallback_used else 0
+
+    # Answers from that previous screening, for Longitudinal Deterioration
+    # Detection. Empty list (not an error) if this is the worker's first.
+    previous_answer_dicts = (
+        [
+            {"question_code": a.question_code, "answer_score": a.answer_score}
+            for a in db.scalars(
+                select(ScreeningAnswer).where(ScreeningAnswer.screening_id == previous_screening_id)
+            ).all()
+        ]
+        if previous_screening_id
+        else []
+    )
+
+    screening = Screening(
+        miner_id=payload.miner_id,
+        previous_screening_id=previous_screening_id,
+        screened_by=payload.screened_by,
+        channel=payload.channel,
+        fallback_used=1 if payload.offline_fallback_used else 0,
+        provisional=provisional,
+        outreach_visit_id=outreach_visit_id,
+    )
+    db.add(screening)
+    db.flush()  # need screening.id for the answers below, before commit
+
+    if outreach_visit_id is not None:
+        visit = db.get(OutreachVisit, outreach_visit_id)
+        visit.screened_count = (visit.screened_count or 0) + 1
+
+    for answer in payload.answers:
+        db.add(
+            ScreeningAnswer(
+                screening_id=screening.id,
+                question_code=answer.question_code,
+                question_text=answer.question_text,
+                answer_value=answer.answer_value,
+                answer_score=answer.answer_score,
+            )
+        )
+    db.commit()
+
     try:
-        miner_row = conn.execute(
-            "SELECT id, mine_site FROM miners WHERE id = ?", (payload.miner_id,)
-        ).fetchone()
-        if miner_row is None:
-            raise HTTPException(status_code=404, detail="Miner not found")
+        result = assess_risk(payload.answers)
+    except Exception:
+        # screening_id + answers are already saved for audit purposes;
+        # risk fields stay NULL until a retry succeeds.
+        raise HTTPException(status_code=502, detail="AI risk engine unavailable, please retry")
 
-        # Outreach Planner (5 August 2026): link this screening to a visit
-        # for live screened_count tracking + the post-visit report. Explicit
-        # id is trusted if it exists (never fail the screening over a bad
-        # reference — same philosophy as "a failed AI call doesn't corrupt
-        # the screening record"); otherwise infer it for APP-channel
-        # screenings via services/outreach.py's match_active_visit. USSD
-        # self-screens never auto-link — not a coordinated site visit.
-        outreach_visit_id = None
-        if payload.outreach_visit_id is not None:
-            visit_row = conn.execute(
-                "SELECT id FROM outreach_visits WHERE id = ?", (payload.outreach_visit_id,)
-            ).fetchone()
-            outreach_visit_id = visit_row["id"] if visit_row else None
-        elif payload.channel == "APP" and miner_row["mine_site"]:
-            candidate_visits = conn.execute(
-                "SELECT * FROM outreach_visits WHERE LOWER(site) = LOWER(?)",
-                (miner_row["mine_site"],),
-            ).fetchall()
-            matched_visit = match_active_visit(
-                miner_row["mine_site"], datetime.now(timezone.utc), candidate_visits
-            )
-            outreach_visit_id = matched_visit["id"] if matched_visit else None
+    # Longitudinal Deterioration Detection: escalate one tier on any
+    # adverse trajectory, before the hard safety override gets the final
+    # word — see services/deterioration.py and services/safety_overrides.py.
+    deterioration = compare_to_previous(payload.answers, previous_screening_id, previous_answer_dicts)
+    result["tier"] = escalate_tier_if_worsened(result["tier"], deterioration["changed"])
+    result = apply_safety_overrides(payload.answers, result)
 
-        # Most recent prior screening for this worker, if any — just the link;
-        # actual trajectory comparison (Longitudinal Deterioration Detection)
-        # is not built yet.
-        previous_row = conn.execute(
-            """SELECT id FROM screenings WHERE miner_id = ?
-               ORDER BY created_at DESC, id DESC LIMIT 1""",
-            (payload.miner_id,),
-        ).fetchone()
-        previous_screening_id = previous_row["id"] if previous_row else None
-        provisional = 1 if payload.offline_fallback_used else 0
+    advice_line = personalised_advice_line(payload.answers)
+    explanation_shona = personalised_explanation_shona(payload.answers)
 
-        # Answers from that previous screening, for Longitudinal Deterioration
-        # Detection. Empty list (not an error) if this is the worker's first.
-        previous_answer_rows = (
-            conn.execute(
-                "SELECT question_code, answer_score FROM screening_answers WHERE screening_id = ?",
-                (previous_screening_id,),
-            ).fetchall()
-            if previous_screening_id
-            else []
-        )
+    screening.tier = result["tier"]
+    screening.risk_confidence = result["confidence"]
+    screening.ai_explanation_english = result["explanation_english"]
+    screening.ai_explanation_shona = explanation_shona
+    screening.ai_contributing_factors = json.dumps(result["contributing_factors"])
+    screening.advice_line = advice_line
+    db.commit()
 
-        cur = conn.execute(
-            """INSERT INTO screenings
-                 (miner_id, previous_screening_id, screened_by, channel, fallback_used, provisional, outreach_visit_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                payload.miner_id,
-                previous_screening_id,
-                payload.screened_by,
-                payload.channel,
-                1 if payload.offline_fallback_used else 0,
-                provisional,
-                outreach_visit_id,
-            ),
-        )
-        screening_id = cur.lastrowid
-
-        if outreach_visit_id is not None:
-            conn.execute(
-                "UPDATE outreach_visits SET screened_count = screened_count + 1 WHERE id = ?",
-                (outreach_visit_id,),
-            )
-
-        for answer in payload.answers:
-            conn.execute(
-                """INSERT INTO screening_answers
-                   (screening_id, question_code, question_text, answer_value, answer_score)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    screening_id,
-                    answer.question_code,
-                    answer.question_text,
-                    answer.answer_value,
-                    answer.answer_score,
-                ),
-            )
-        conn.commit()
-
-        try:
-            result = assess_risk(payload.answers)
-        except Exception:
-            # screening_id + answers are already saved for audit purposes;
-            # risk fields stay NULL until a retry succeeds.
-            raise HTTPException(
-                status_code=502, detail="AI risk engine unavailable, please retry"
-            )
-
-        # Longitudinal Deterioration Detection: escalate one tier on any
-        # adverse trajectory, before the hard safety override gets the final
-        # word — see services/deterioration.py and services/safety_overrides.py.
-        deterioration = compare_to_previous(
-            payload.answers, previous_screening_id, previous_answer_rows
-        )
-        result["tier"] = escalate_tier_if_worsened(result["tier"], deterioration["changed"])
-        result = apply_safety_overrides(payload.answers, result)
-
-        advice_line = personalised_advice_line(payload.answers)
-        explanation_shona = personalised_explanation_shona(payload.answers)
-
-        conn.execute(
-            """UPDATE screenings SET
-                 tier = ?, risk_confidence = ?,
-                 ai_explanation_english = ?, ai_explanation_shona = ?, ai_contributing_factors = ?,
-                 advice_line = ?
-               WHERE id = ?""",
-            (
-                result["tier"],
-                result["confidence"],
-                result["explanation_english"],
-                explanation_shona,
-                json.dumps(result["contributing_factors"]),
-                advice_line,
-                screening_id,
-            ),
-        )
-        conn.commit()
-
-        # Result notification, per tier (CLAUDE.md: "Everyone receives their
-        # result... by SMS"). ORANGE/RED go through create_referral_and_notify
-        # (referral + facility match + hospital pre-alert + miner SMS);
-        # GREEN/YELLOW never get a referral but still get a result-only SMS —
-        # see services/notifications.send_screening_result_sms.
-        shona_message = TIER_MESSAGES[result["tier"]][0]
-        miner = conn.execute(
-            "SELECT name, phone, mine_site FROM miners WHERE id = ?",
-            (payload.miner_id,),
-        ).fetchone()
-        if result["tier"] in ("ORANGE", "RED"):
-            create_referral_and_notify(
-                conn,
-                screening_id=screening_id,
-                miner_id=payload.miner_id,
-                miner_name=miner["name"],
-                phone_number=miner["phone"],
-                mine_site=miner["mine_site"],
-                tier=result["tier"],
-                shona_message=shona_message,
-                contributing_factors=result["contributing_factors"],
-            )
-        else:
-            notifications.send_screening_result_sms(
-                payload.miner_id, miner["phone"], result["tier"], shona_message
-            )
-
-        return ScreeningResult(
+    # Result notification, per tier (CLAUDE.md: "Everyone receives their
+    # result... by SMS"). ORANGE/RED go through create_referral_and_notify
+    # (referral + facility match + hospital pre-alert + miner SMS);
+    # GREEN/YELLOW never get a referral but still get a result-only SMS —
+    # see services/notifications.send_screening_result_sms.
+    shona_message = TIER_MESSAGES[result["tier"]][0]
+    if result["tier"] in ("ORANGE", "RED"):
+        create_referral_and_notify(
+            db,
+            screening_id=screening.id,
+            miner_id=payload.miner_id,
+            miner_name=miner.name,
+            phone_number=miner.phone,
+            mine_site=miner.mine_site,
             tier=result["tier"],
-            confidence=result["confidence"],
-            explanation_english=result["explanation_english"],
-            explanation_shona=explanation_shona,
+            shona_message=shona_message,
             contributing_factors=result["contributing_factors"],
-            advice_line=advice_line,
-            previous_screening_id=previous_screening_id,
-            provisional=bool(provisional),
-            deterioration=DeteriorationResult(**deterioration),
         )
-    finally:
-        conn.close()
+    else:
+        notifications.send_screening_result_sms(payload.miner_id, miner.phone, result["tier"], shona_message)
 
-
+    return ScreeningResult(
+        tier=result["tier"],
+        confidence=result["confidence"],
+        explanation_english=result["explanation_english"],
+        explanation_shona=explanation_shona,
+        contributing_factors=result["contributing_factors"],
+        advice_line=advice_line,
+        previous_screening_id=previous_screening_id,
+        provisional=bool(provisional),
+        deterioration=DeteriorationResult(**deterioration),
+    )

@@ -23,7 +23,7 @@ from typing import Optional, Sequence
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from database import SessionLocal, format_datetime
+from database import get_fresh_session
 from db_models import Miner, OutreachVisit, Referral, Screening
 from models import OutreachVisitOut, ReferralListItem
 from services import notifications
@@ -156,7 +156,7 @@ def process_due_outreach_visits(db: Session, now: Optional[datetime] = None) -> 
 def run_scheduled_outreach() -> None:
     """The APScheduler job target (main.py) — same defensive shape as
     run_scheduled_cascade: owns its own session, never raises."""
-    db = SessionLocal()
+    db = get_fresh_session()
     try:
         process_due_outreach_visits(db)
     except Exception:

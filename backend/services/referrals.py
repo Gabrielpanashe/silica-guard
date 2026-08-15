@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from db_models import Facility, Referral
 from services import email_notifications, notifications
 from services.facility_matching import select_facility
 
@@ -17,7 +21,7 @@ _DEFAULT_HOSPITAL_NAME = "Kwekwe District Hospital"
 
 
 def create_referral_and_notify(
-    conn,
+    db: Session,
     screening_id: int,
     miner_id: int,
     miner_name: str,
@@ -34,20 +38,31 @@ def create_referral_and_notify(
     if tier not in _URGENCY_WINDOW:
         return
 
-    deadline = datetime.now(timezone.utc) + _URGENCY_WINDOW[tier]
+    deadline = datetime.now(timezone.utc).replace(tzinfo=None) + _URGENCY_WINDOW[tier]
 
-    facilities = conn.execute("SELECT * FROM facilities").fetchall()
-    facility = select_facility(tier, mine_site, facilities)
+    # select_facility() is pure, dict-in/dict-out logic (deliberately DB-
+    # agnostic, see services/facility_matching.py and its own unit tests) —
+    # ORM rows are converted to plain dicts here rather than changing that
+    # module to expect attribute access.
+    facility_rows = [
+        {"id": f.id, "name": f.name, "level": f.level} for f in db.scalars(select(Facility)).all()
+    ]
+    facility = select_facility(tier, mine_site, facility_rows)
     facility_id = facility["id"] if facility else None
     facility_name = facility["name"] if facility else _DEFAULT_HOSPITAL_NAME
 
-    cur = conn.execute(
-        """INSERT INTO referrals (screening_id, miner_id, hospital, facility_id, deadline, pre_alert_sent, status)
-           VALUES (?, ?, ?, ?, ?, 0, 'open')""",
-        (screening_id, miner_id, facility_name, facility_id, deadline.strftime("%Y-%m-%d %H:%M:%S")),
+    referral = Referral(
+        screening_id=screening_id,
+        miner_id=miner_id,
+        hospital=facility_name,
+        facility_id=facility_id,
+        deadline=deadline,
+        pre_alert_sent=0,
+        status="open",
     )
-    referral_id = cur.lastrowid
-    conn.commit()
+    db.add(referral)
+    db.commit()
+    db.refresh(referral)
 
     notifications.send_miner_result(miner_id, phone_number, tier, shona_message)
     prealert_sent = notifications.send_hospital_prealert(
@@ -60,11 +75,9 @@ def create_referral_and_notify(
     )
 
     if prealert_sent:
-        conn.execute(
-            "UPDATE referrals SET pre_alert_sent = 1, status = 'pre_alerted' WHERE id = ?",
-            (referral_id,),
-        )
-        conn.commit()
+        referral.pre_alert_sent = 1
+        referral.status = "pre_alerted"
+        db.commit()
 
     # Demo-only email pre-alert (10 August) — a second, independent channel
     # alongside the SMS pre-alert above. Deliberately doesn't affect

@@ -35,7 +35,8 @@ import os
 
 import httpx
 
-from database import get_connection
+from database import get_fresh_session
+from db_models import Notification
 
 logger = logging.getLogger("silicaguard.notifications")
 
@@ -77,20 +78,25 @@ def _log_notification(
     added 'email' for services/email_notifications.py's referral alert —
     same notifications table, so both channels show up in one audit trail
     rather than two."""
-    conn = get_connection()
+    db = get_fresh_session()
     try:
-        conn.execute(
-            """INSERT INTO notifications (worker_id, channel, template, payload, delivery_status)
-               VALUES (?, ?, ?, ?, ?)""",
-            (worker_id, channel, template, payload, delivery_status),
+        db.add(
+            Notification(
+                worker_id=worker_id,
+                channel=channel,
+                template=template,
+                payload=payload,
+                delivery_status=delivery_status,
+            )
         )
-        conn.commit()
+        db.commit()
     except Exception:
+        db.rollback()
         logger.exception(
             "Failed to log notification (template=%s, worker_id=%s)", template, worker_id
         )
     finally:
-        conn.close()
+        db.close()
 
 
 def send_miner_result(worker_id: int, phone_number: str, tier: str, shona_message: str) -> bool:
