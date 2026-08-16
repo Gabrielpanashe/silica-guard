@@ -43,10 +43,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from dotenv import load_dotenv  # noqa: E402
+
+# Real, live-caught bug (15 August 2026, Step B / Postgres cutover): this
+# script imports `database` directly, not `main` — and unlike main.py,
+# database.py never calls load_dotenv() itself (it just reads
+# os.getenv("DATABASE_URL", ...) at import time). Running this script
+# standalone therefore silently saw only the bare default
+# (sqlite:///./data/silicaguard.db) and never picked up backend/.env's
+# real DATABASE_URL at all — every "Seeded: N miners..." success message
+# was real, just against local SQLite regardless of what .env said.
+# Caught by tracing actual row counts on the target database mid-script,
+# not by inspection — the script's own success output gave no indication
+# anything was wrong.
+load_dotenv()
+
 from sqlalchemy import func, select  # noqa: E402
 
 from database import get_fresh_session, init_db  # noqa: E402
-from db_models import Facility, Miner, Mine, OutreachVisit, Referral, Screening, ScreeningAnswer  # noqa: E402
+from db_models import Facility, Miner, Mine, Notification, OutreachVisit, Referral, Screening, ScreeningAnswer  # noqa: E402
 from models import ScreeningAnswerIn  # noqa: E402
 from questions import SCREENING_QUESTIONS  # noqa: E402
 from services.advice_engine import personalised_advice_line  # noqa: E402
@@ -204,6 +219,16 @@ def seed() -> None:
     db = get_fresh_session()
     try:
         # Clear in FK-dependency order so this is safe to re-run from any state.
+        # Notification must go first — real bug caught live during the Step B
+        # Postgres cutover (15 August 2026): SQLite's leniency (or, more
+        # precisely, this cleanup only ever having run against an empty
+        # freshly-booted DB before any real screening/SMS activity had a
+        # chance to write a notifications row) masked this for the whole
+        # sprint. Postgres enforced the notifications.worker_id -> miners.id
+        # FK for real the first time this ran against a DB that already had
+        # live notification rows in it, and correctly refused to let
+        # `db.query(Miner).delete()` orphan them.
+        db.query(Notification).delete()
         db.query(Referral).delete()
         db.query(ScreeningAnswer).delete()
         db.query(Screening).delete()

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from database import init_db
 from routers import auth, dashboard, facilities, mines, outreach, referral_lookup, screening, ussd, workers
+from services.db_keepalive import run_scheduled_keepalive
 from services.outreach import run_scheduled_outreach
 from services.referral_cascade import run_scheduled_cascade
 
@@ -59,8 +60,13 @@ async def lifespan(app: FastAPI):
         # a second job on the SAME scheduler instance/interval, not a second
         # scheduler (see services/outreach.py).
         scheduler.add_job(run_scheduled_outreach, "interval", minutes=interval, id="outreach_announcements")
+        # Supabase keep-alive (Step B, 15 August 2026) — see
+        # services/db_keepalive.py. A third job on the same scheduler; only
+        # matters in production (a free Supabase project pauses after 7 days
+        # idle) but harmless to also run locally against SQLite.
+        scheduler.add_job(run_scheduled_keepalive, "interval", minutes=interval, id="db_keepalive")
         scheduler.start()
-        logger.info("Referral cascade + outreach schedulers started (every %s min)", interval)
+        logger.info("Referral cascade + outreach + keep-alive schedulers started (every %s min)", interval)
 
     yield
 

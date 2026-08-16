@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 data/*.db
+# scripts/throughput_model.py's chart output — regenerate on demand, not source.
+throughput_chart.png

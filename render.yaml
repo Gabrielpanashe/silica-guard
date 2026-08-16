@@ -1,12 +1,20 @@
 # Render Blueprint for the SilicaGuard backend. Connect this repo on
 # Render and it should offer to use this file automatically (New -> Blueprint).
 #
-# Storage: Render's free tier has no persistent disk, so the SQLite file
-# resets on every redeploy/sleep-wake cycle. AUTO_SEED_ON_BOOT=true below
-# re-runs backend/scripts/seed_demo_data.py on every boot so the deployed
-# instance always has known-good demo data rather than an empty DB —
-# accepted for the 11 August demo (see CLAUDE.md's sprint status for the
-# full reasoning). Do not point this at a deployment carrying real data.
+# Storage: Postgres via Supabase (Step B, 15-16 August 2026) is the database
+# of record now — persistent across redeploys/sleep-wakes, unlike the old
+# SQLite-on-ephemeral-disk setup this comment used to describe. Set
+# DATABASE_URL in the Render dashboard (sync: false below — never commit a
+# real connection string here) to the Supabase Session Pooler URL, with
+# "+psycopg" added to the scheme, e.g.
+# postgresql+psycopg://user:pass@aws-0-<region>.pooler.supabase.com:5432/postgres
+# — the Session Pooler specifically, not "Direct connection" (IPv6-only,
+# Render's free tier can't reliably reach it) or "Transaction pooler" (breaks
+# SQLAlchemy's use of session-level features). AUTO_SEED_ON_BOOT is false
+# below accordingly — data now survives restarts, so wiping it on every boot
+# would destroy real referral-code confirmations and screenings between
+# rehearsals. Re-seed manually (scripts/seed_demo_data.py) when you actually
+# want a known-good reset.
 services:
   - type: web
     name: silicaguard-backend
@@ -33,13 +41,13 @@ services:
         value: sandbox
       - key: HOSPITAL_NURSE_PHONE
         sync: false
-      # A full SQLAlchemy URL, not a bare file path (format changed 14 Aug
-      # 2026 with the ORM migration). Still SQLite here until the Supabase
-      # Postgres cutover (Step B) lands — see CLAUDE.md's sprint status.
-      # Once it does, set this to the Supabase connection string in the
-      # Render dashboard (sync: false — never commit a real one here).
+      # Supabase Postgres connection string — set manually in the Render
+      # dashboard (sync: false, see the file-header comment above for the
+      # exact format). Not given a `value:` here on purpose, unlike before
+      # Step B: a real DB URL with a password has no business in this
+      # committed file.
       - key: DATABASE_URL
-        value: sqlite:///./data/silicaguard.db
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: ENVIRONMENT
@@ -57,4 +65,4 @@ services:
       - key: SCHEDULER_INTERVAL_MINUTES
         value: "10"
       - key: AUTO_SEED_ON_BOOT
-        value: "true"
+        value: "false"
