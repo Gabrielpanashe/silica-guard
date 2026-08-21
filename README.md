@@ -26,7 +26,7 @@ Mobile (`mobile/`, React Native/Expo) and the dashboard (`dashboard/`, plain HTM
 
 ## Repo layout
 
-- `backend/` — FastAPI backend: API routes, AI risk engine, USSD/SMS integration, database (SQLite, migrating to PostgreSQL via Supabase this sprint — see `CLAUDE.md`).
+- `backend/` — FastAPI backend: API routes, AI risk engine, USSD/SMS integration, database (PostgreSQL via Supabase in production, SQLite for local dev/tests — see `CLAUDE.md`).
 - `docs/` — the API contract shared between backend and both frontends.
 - `mobile/` — React Native (Expo) practitioner app.
 - `dashboard/` — the web dashboard.

@@ -36,11 +36,17 @@ To try the USSD web simulator without a phone or an Africa's Talking sandbox num
 
 ### Mobile (React Native / Expo)
 
-Not yet scaffolded in this repo. Once the collaborator initialises it: `cd mobile && npm install && npx expo start`. Points at the backend's `DATABASE_URL`-independent API base URL — check `docs/API_CONTRACT.md` for the current base URL to use.
+```
+cd mobile
+npm install
+npx expo start
+```
 
-### Dashboard (React + Vite)
+Talks directly to the deployed backend (`https://silicaguard-backend.onrender.com`, hardcoded as `BASE_URL` in `mobile/src/services/api.js`) — no local backend needed to run the app, though you can point `BASE_URL` at `http://127.0.0.1:8000` for local backend testing. Check `docs/API_CONTRACT.md` for the current request/response shapes.
 
-Not yet scaffolded in this repo. Once the collaborator initialises it: `cd dashboard && npm install && npm run dev`.
+### Dashboard (plain HTML/CSS/JS, no build step)
+
+No install, no build — it's static files. Either open `dashboard/index.html` directly in a browser, or serve the folder locally (e.g. `npx serve dashboard`) if you need it under `http://` rather than `file://`. Same hardcoded `BASE_URL` pattern as mobile (`dashboard/app.js`), pointed at the deployed backend. `dashboard/lookup.html` is the hospital-facing referral-code entry page (master doc v6.0 Section 1.1/16.6) — open it directly, or via the "Referral Lookup ↗" link in the main dashboard's topbar. **Not yet on `main`** as of 21 August — currently on `feat/mobile-redesign-blue-theme`, check `CLAUDE.md`'s sprint status for whether it's merged yet.
 
 ## How to add a new API endpoint
 
@@ -55,15 +61,15 @@ Follow the existing pattern in `backend/routers/` and `backend/services/`:
 
 ## How to add or change a database field
 
-**This procedure describes the pre-migration state (as of 14 August 2026).** A SQLAlchemy ORM + Alembic migration is in progress this sprint (master doc v6.0 Section 16.2, tracked in `CLAUDE.md`'s "Current sprint status") — once it lands, this becomes: edit the field on the relevant model, `alembic revision --autogenerate -m "..."`, review the generated migration by hand, `alembic upgrade head`. Rewrite this section when that happens; until then, the procedure below is still accurate.
+The schema is declared as SQLAlchemy models in `backend/db_models.py`, applied via Alembic migrations in `backend/alembic/` (live since 15–16 August — see `CLAUDE.md`'s sprint status for the ORM/Postgres migration history).
 
-The schema lives as raw SQL in `backend/database.py` (`SCHEMA` string, `CREATE TABLE IF NOT EXISTS`). There is no ORM and no migration framework yet — SQLite is on the MVP tier.
-
-1. Edit the `SCHEMA` string in `backend/database.py`.
-2. Since `CREATE TABLE IF NOT EXISTS` won't alter an existing table, delete `backend/data/silicaguard.db` locally (or add an `ALTER TABLE` statement to `init_db()` for existing databases) and re-run to pick up the change.
-3. Update `backend/scripts/seed_demo_data.py` so seeded data matches the new shape.
-4. Update `docs/API_CONTRACT.md` if the field is exposed in any response.
-5. **Announce the change** — a schema or response-shape change breaks the mobile app's local `expo-sqlite` schema and the dashboard's assumptions. Post it in the shared log before merging, not after.
+1. Edit the field on the relevant model in `backend/db_models.py`.
+2. `cd backend && ./venv/Scripts/python.exe -m alembic revision --autogenerate -m "describe the change"` — generates a migration in `backend/alembic/versions/`.
+3. **Review the generated migration by hand before applying it** — autogenerate is good but not infallible (check column types, defaults, and that it isn't dropping something it shouldn't).
+4. `./venv/Scripts/python.exe -m alembic upgrade head` — applies it to whatever `DATABASE_URL` names (local SQLite by default; point at the real Supabase `DATABASE_URL` to apply it there too, which you'll usually want to do in the same sitting for a schema change).
+5. Update `backend/scripts/seed_demo_data.py` so seeded data matches the new shape.
+6. Update `docs/API_CONTRACT.md` if the field is exposed in any response.
+7. **Announce the change** — a schema or response-shape change can break the mobile app's assumptions and the dashboard's. Post it in the shared log before merging, not after.
 
 ## How to call the AI
 
@@ -77,12 +83,12 @@ Pattern used in `backend/services/ai_risk_engine.py` — follow it for any new G
 
 ## How to test the offline flow
 
-Not yet testable — `mobile/` doesn't exist in this repo yet. Once it does, no offline feature is "done" until this passes:
+`mobile/src/services/offlineQueue.js` (on `feat/mobile-redesign-blue-theme`, not yet on `main` as of 21 August) persists a failed screening to `AsyncStorage` and retries it every time `HomeScreen` regains focus — see `CLAUDE.md`'s sprint status for the full mechanism. Code-complete but **never actually verified with a real airplane-mode test** as of this writing — no offline feature is "done" until this passes:
 
 1. Put the device in airplane mode.
-2. Complete three screenings entirely offline.
-3. Reconnect to the network.
-4. Verify all three screenings appear on the backend (query `/api/workers/<phone>` or check the dashboard).
+2. Complete three screenings entirely offline — each should fall into `ResultScreen.js`'s offline path (`offlineScore()` shown immediately, `queueOfflineScreening()` persisting it) rather than erroring out.
+3. Reconnect to the network, then navigate back to Home — this is what triggers `attemptSync()`.
+4. Verify all three screenings appear on the backend for real (query `GET /api/workers/<phone>` or check the dashboard), not just that the app's UI says they synced.
 
 ## How to add a screening question
 
