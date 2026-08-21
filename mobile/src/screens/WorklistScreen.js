@@ -5,6 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { colours, light, typography, spacing, radius, riskConfig } from '../theme';
+import PhotoHeader from '../components/PhotoHeader';
 
 // Explicit colour-coded status, not just raw enum text — mint/checkmark for
 // resolved (attended/closed), amber for still pending, red for missed its
@@ -50,19 +51,18 @@ export default function WorklistScreen({ navigation, route }) {
     <SafeAreaView style={s.root}>
       <StatusBar style="dark" />
 
-      {/* ── HEADER ── */}
-      <View style={s.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-          <Text style={s.backArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={s.headerText}>
-          <Text style={s.headerTitle}>{title}</Text>
-          {!!shonaTitle && <Text style={s.headerShona}>{shonaTitle}</Text>}
-        </View>
-        <View style={s.countBadge}>
-          <Text style={s.countText}>{items.length}</Text>
-        </View>
-      </View>
+      {/* ── HEADER — reuses Landing's outreach photo (16 August), see
+          components/PhotoHeader.js ── */}
+      <PhotoHeader
+        title={title}
+        shonaTitle={shonaTitle}
+        onBack={() => navigation.goBack()}
+        right={(
+          <View style={s.countBadge}>
+            <Text style={s.countText}>{items.length}</Text>
+          </View>
+        )}
+      />
 
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
         {items.length === 0 && (
@@ -124,26 +124,18 @@ export default function WorklistScreen({ navigation, route }) {
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: light.bg },
-  header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
-    borderBottomWidth: 0.5, borderBottomColor: light.border, gap: spacing.md,
-  },
-  backBtn: {
-    width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: light.surface, alignItems: 'center',
-    justifyContent: 'center', borderWidth: 1, borderColor: light.accentStart,
-  },
-  backArrow: { fontSize: 18, color: light.accentStart },
-  headerText: { flex: 1 },
-  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
-  headerShona: { fontSize: typography.micro, color: light.textMuted, fontStyle: 'italic', marginTop: 1 },
+  // Header row/back-button/title styles moved into components/PhotoHeader.js
+  // (16 August) — this screen's header is that component now. countBadge
+  // is still defined here (passed in as PhotoHeader's `right` prop) but
+  // restyled for sitting on the photo's dark scrim instead of light.bg —
+  // the old accentStart-on-light-blue-fade treatment would have had poor
+  // contrast there.
   countBadge: {
-    backgroundColor: 'rgba(47,127,239,0.12)', borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: radius.pill,
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    borderWidth: 1, borderColor: light.accentStart, minWidth: 32, alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)', minWidth: 32, alignItems: 'center',
   },
-  countText: { fontSize: typography.caption, color: light.accentStart, fontWeight: typography.black },
+  countText: { fontSize: typography.caption, color: colours.white, fontWeight: typography.black },
 
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
 

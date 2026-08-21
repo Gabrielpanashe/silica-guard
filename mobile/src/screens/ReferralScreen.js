@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { colours, light, typography, spacing, radius, riskConfig } from '../theme';
 import { notifyReferralEmail } from '../services/api';
+import PhotoHeader from '../components/PhotoHeader';
 
 // Generate a readable miner ID from phone + timestamp
 const generateReferralId = (phone) => {
@@ -53,16 +54,13 @@ export default function ReferralScreen({ navigation, route }) {
     <SafeAreaView style={s.root}>
       <StatusBar style="dark" />
 
-      {/* ── HEADER ── */}
-      <View style={s.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={s.backBtn}>
-          <Text style={s.backArrow}>←</Text>
-        </TouchableOpacity>
-        <View style={s.headerText}>
-          <Text style={s.headerTitle}>Referral Card</Text>
-          <Text style={s.headerShona}>Kadhi Rekutumwa Chipatara</Text>
-        </View>
-      </View>
+      {/* ── HEADER — reuses Landing's outreach photo (16 August), see
+          components/PhotoHeader.js ── */}
+      <PhotoHeader
+        title="Referral Card"
+        shonaTitle="Kadhi Rekutumwa Chipatara"
+        onBack={() => navigation.goBack()}
+      />
 
       <ScrollView
         contentContainerStyle={s.scroll}
@@ -222,21 +220,8 @@ export default function ReferralScreen({ navigation, route }) {
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: light.bg },
-
-  header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
-    borderBottomWidth: 0.5, borderBottomColor: light.border, gap: spacing.md,
-  },
-  backBtn: {
-    width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: light.surface, alignItems: 'center',
-    justifyContent: 'center', borderWidth: 1, borderColor: light.accentStart,
-  },
-  backArrow: { fontSize: 18, color: light.accentStart },
-  headerText: { flex: 1 },
-  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
-  headerShona: { fontSize: typography.micro, color: light.textMuted, fontStyle: 'italic', marginTop: 1 },
+  // Header row/back-button/title styles moved into components/PhotoHeader.js
+  // (16 August) — this screen's header is that component now.
 
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
 
