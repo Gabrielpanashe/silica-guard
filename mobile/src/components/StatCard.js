@@ -1,12 +1,15 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { colours, typography, spacing, radius } from '../theme';
+import { colours, light, typography, spacing, radius } from '../theme';
 
 /**
  * StatCard
  * Props:
  *   value      — number or string to display large
  *   label      — text below the number
- *   colour     — border + number colour (defaults to mint)
+ *   colour     — border + number colour (defaults to mint; callers still
+ *                pass risk-tier/semantic colours directly — those are
+ *                unchanged by the light-theme pass, only this card's own
+ *                surface/label chrome moved to `light` tokens)
  *   large      — bool, makes the number bigger (for "Screened Today")
  *   onPress    — optional. When provided, the card becomes tappable
  *                (used for Refer Now / Watch drill-down lists) — omit
@@ -31,7 +34,7 @@ export default function StatCard({ value = 0, label = '', colour = colours.mint,
 const s = StyleSheet.create({
   card: {
     flex: 1,
-    backgroundColor: colours.card,
+    backgroundColor: light.surface,
     borderRadius: radius.md,
     borderWidth: 1.5,
     padding: spacing.md,
@@ -54,7 +57,7 @@ const s = StyleSheet.create({
   },
   label: {
     fontSize: typography.micro,
-    color: colours.muted,
+    color: light.textMuted,
     fontWeight: typography.semibold,
     textAlign: 'center',
     textTransform: 'uppercase',

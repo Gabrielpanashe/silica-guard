@@ -5,7 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { colours, typography, spacing, radius, riskConfig } from '../theme';
+import { colours, light, typography, spacing, radius, riskConfig } from '../theme';
 import { notifyReferralEmail } from '../services/api';
 
 // Generate a readable miner ID from phone + timestamp
@@ -51,7 +51,7 @@ export default function ReferralScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={s.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* ── HEADER ── */}
       <View style={s.header}>
@@ -221,26 +221,27 @@ export default function ReferralScreen({ navigation, route }) {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colours.navy },
+  root: { flex: 1, backgroundColor: light.bg },
 
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
-    borderBottomWidth: 0.5, borderBottomColor: colours.card, gap: spacing.md,
+    borderBottomWidth: 0.5, borderBottomColor: light.border, gap: spacing.md,
   },
   backBtn: {
     width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: colours.card, alignItems: 'center',
-    justifyContent: 'center', borderWidth: 1, borderColor: colours.teal,
+    backgroundColor: light.surface, alignItems: 'center',
+    justifyContent: 'center', borderWidth: 1, borderColor: light.accentStart,
   },
-  backArrow: { fontSize: 18, color: colours.teal },
+  backArrow: { fontSize: 18, color: light.accentStart },
   headerText: { flex: 1 },
-  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: colours.white },
-  headerShona: { fontSize: typography.micro, color: colours.muted, fontStyle: 'italic', marginTop: 1 },
+  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
+  headerShona: { fontSize: typography.micro, color: light.textMuted, fontStyle: 'italic', marginTop: 1 },
 
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
 
-  // Pre-alert banner
+  // Pre-alert banner — tier-tinted background/border, unchanged (still
+  // reads correctly on a light page background).
   alertBanner: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
     borderRadius: radius.md, borderWidth: 1.5,
@@ -249,11 +250,11 @@ const s = StyleSheet.create({
   alertIcon: { fontSize: 24 },
   alertText: { flex: 1 },
   alertTitle: { fontSize: typography.caption, fontWeight: typography.black },
-  alertSub: { fontSize: typography.tiny, color: colours.muted, marginTop: 2 },
+  alertSub: { fontSize: typography.tiny, color: light.textMuted, marginTop: 2 },
 
   // Referral card
   referralCard: {
-    backgroundColor: colours.card, borderRadius: radius.lg,
+    backgroundColor: light.surface, borderRadius: radius.lg,
     borderWidth: 2, overflow: 'hidden', marginBottom: spacing.lg,
   },
   cardHeader: {
@@ -261,6 +262,9 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
     padding: spacing.lg,
   },
+  // Header/risk-banner text sits on the tier's own saturated colour fill
+  // (config.colour/config.background), not the page surface — stays
+  // white-based regardless of theme, same as before.
   cardHeaderLeft: { flex: 1 },
   cardHeaderLabel: { fontSize: typography.micro, color: 'rgba(255,255,255,0.8)', fontWeight: typography.bold, letterSpacing: 1 },
   cardHeaderId: { fontSize: typography.subtitle, fontWeight: typography.black, color: colours.white, marginTop: 2 },
@@ -271,10 +275,10 @@ const s = StyleSheet.create({
   riskShona: { fontSize: typography.caption, fontStyle: 'italic', marginTop: 2 },
 
   cardSection: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  cardSectionLabel: { fontSize: typography.micro, color: colours.teal, fontWeight: typography.bold, letterSpacing: 2, marginBottom: spacing.xs },
-  cardValue: { fontSize: typography.subtitle, fontWeight: typography.bold, color: colours.white },
-  cardMeta: { fontSize: typography.caption, color: colours.muted, marginTop: 2 },
-  cardDivider: { height: 0.5, backgroundColor: colours.mid, marginHorizontal: spacing.lg },
+  cardSectionLabel: { fontSize: typography.micro, color: light.accentStart, fontWeight: typography.bold, letterSpacing: 2, marginBottom: spacing.xs },
+  cardValue: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
+  cardMeta: { fontSize: typography.caption, color: light.textMuted, marginTop: 2 },
+  cardDivider: { height: 0.5, backgroundColor: light.border, marginHorizontal: spacing.lg },
 
   deadlineRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
@@ -282,52 +286,52 @@ const s = StyleSheet.create({
   },
   deadlineIcon: { fontSize: 20 },
   deadlineLabel: { fontSize: typography.caption, fontWeight: typography.black, letterSpacing: 0.5 },
-  deadlineDate: { fontSize: typography.caption, color: colours.muted, marginTop: 2 },
+  deadlineDate: { fontSize: typography.caption, color: light.textMuted, marginTop: 2 },
 
-  cardNote: { fontSize: typography.caption, color: colours.muted, lineHeight: 18 },
+  cardNote: { fontSize: typography.caption, color: light.textBody, lineHeight: 18 },
 
   cardFooter: {
     flexDirection: 'row', justifyContent: 'space-between',
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: light.surfaceAlt,
   },
-  cardFooterText: { fontSize: typography.micro, color: colours.muted },
+  cardFooterText: { fontSize: typography.micro, color: light.textMuted },
 
   // Instructions
   instructionsCard: {
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.mid,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: light.border,
     padding: spacing.lg, marginBottom: spacing.lg,
   },
-  instructionsTitle: { fontSize: typography.caption, fontWeight: typography.bold, color: colours.white, marginBottom: spacing.lg },
+  instructionsTitle: { fontSize: typography.caption, fontWeight: typography.bold, color: light.textDark, marginBottom: spacing.lg },
   instructionsList: { gap: spacing.md },
   instructionRow: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
   instructionNum: {
     width: 22, height: 22, borderRadius: 11,
-    backgroundColor: colours.teal, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: light.accentStart, alignItems: 'center', justifyContent: 'center',
     marginTop: 1,
   },
   instructionNumText: { fontSize: typography.tiny, fontWeight: typography.black, color: colours.white },
-  instructionText: { flex: 1, fontSize: typography.caption, color: colours.muted, lineHeight: 18 },
+  instructionText: { flex: 1, fontSize: typography.caption, color: light.textBody, lineHeight: 18 },
 
   // Shona script
   shonaCard: {
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.teal, borderLeftWidth: 4,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: light.accentStart, borderLeftWidth: 4,
     padding: spacing.lg, marginBottom: spacing.lg,
   },
-  shonaTitle: { fontSize: typography.caption, fontWeight: typography.bold, color: colours.teal, marginBottom: spacing.md },
-  shonaScript: { fontSize: typography.caption, color: colours.offwhite, fontStyle: 'italic', lineHeight: 20 },
+  shonaTitle: { fontSize: typography.caption, fontWeight: typography.bold, color: light.accentStart, marginBottom: spacing.md },
+  shonaScript: { fontSize: typography.caption, color: light.textBody, fontStyle: 'italic', lineHeight: 20 },
 
   // Actions
   actionsRow: { flexDirection: 'row', gap: spacing.md },
   actionBtn: {
-    flex: 1, backgroundColor: colours.card,
+    flex: 1, backgroundColor: light.surface,
     borderRadius: radius.md, borderWidth: 1.5,
-    borderColor: colours.mid, padding: spacing.lg,
+    borderColor: light.border, padding: spacing.lg,
     alignItems: 'center',
   },
-  actionBtnPrimary: { backgroundColor: colours.teal, borderColor: colours.mint },
-  actionBtnText: { fontSize: typography.caption, fontWeight: typography.bold, color: colours.muted },
+  actionBtnPrimary: { backgroundColor: light.accentStart, borderColor: light.accentEnd },
+  actionBtnText: { fontSize: typography.caption, fontWeight: typography.bold, color: light.textBody },
   actionBtnTextPrimary: { color: colours.white },
 });

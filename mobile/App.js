@@ -2,6 +2,7 @@ import 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import LandingScreen from './src/screens/LandingScreen';
 import HomeScreen from './src/screens/HomeScreen';
 // Import other screens here as you build them:
 import IntakeScreen from './src/screens/IntakeScreen';
@@ -28,7 +29,8 @@ export default function App() {
     <SafeAreaProvider>
       <OutreachSiteProvider>
         <NavigationContainer>
-          <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Landing">
+            <Stack.Screen name="Landing"  component={LandingScreen} />
             <Stack.Screen name="Home"     component={HomeScreen} />
             <Stack.Screen name="Intake"   component={IntakeScreen} />
             <Stack.Screen name="Question" component={QuestionScreen} />

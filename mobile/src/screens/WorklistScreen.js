@@ -4,12 +4,14 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { colours, typography, spacing, radius, riskConfig } from '../theme';
+import { colours, light, typography, spacing, radius, riskConfig } from '../theme';
 
 // Explicit colour-coded status, not just raw enum text — mint/checkmark for
 // resolved (attended/closed), amber for still pending, red for missed its
 // deadline. Matches the same visual language as dashboard/style.css's
 // .status-pill on the web dashboard, so both frontends read the same way.
+// These are risk/status-semantic colours, untouched by the light-theme
+// pass (16 August) — only the surrounding surface/text chrome moved.
 const STATUS_CONFIG = {
   attended:    { colour: colours.low,   background: 'rgba(2,195,154,0.15)',  label: '✓ Attended' },
   closed:      { colour: colours.low,   background: 'rgba(2,195,154,0.15)',  label: '✓ Closed' },
@@ -46,7 +48,7 @@ export default function WorklistScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={s.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* ── HEADER ── */}
       <View style={s.header}>
@@ -88,10 +90,10 @@ export default function WorklistScreen({ navigation, route }) {
                   <View
                     style={[
                       s.statusPill,
-                      { backgroundColor: (STATUS_CONFIG[item.status] || {}).background || 'rgba(255,255,255,0.08)' },
+                      { backgroundColor: (STATUS_CONFIG[item.status] || {}).background || light.surfaceAlt },
                     ]}
                   >
-                    <Text style={[s.statusPillText, { color: (STATUS_CONFIG[item.status] || {}).colour || colours.muted }]}>
+                    <Text style={[s.statusPillText, { color: (STATUS_CONFIG[item.status] || {}).colour || light.textMuted }]}>
                       {(STATUS_CONFIG[item.status] || {}).label || item.status.replace('_', ' ')}
                     </Text>
                   </View>
@@ -121,55 +123,55 @@ export default function WorklistScreen({ navigation, route }) {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colours.navy },
+  root: { flex: 1, backgroundColor: light.bg },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
-    borderBottomWidth: 0.5, borderBottomColor: colours.card, gap: spacing.md,
+    borderBottomWidth: 0.5, borderBottomColor: light.border, gap: spacing.md,
   },
   backBtn: {
     width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: colours.card, alignItems: 'center',
-    justifyContent: 'center', borderWidth: 1, borderColor: colours.teal,
+    backgroundColor: light.surface, alignItems: 'center',
+    justifyContent: 'center', borderWidth: 1, borderColor: light.accentStart,
   },
-  backArrow: { fontSize: 18, color: colours.teal },
+  backArrow: { fontSize: 18, color: light.accentStart },
   headerText: { flex: 1 },
-  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: colours.white },
-  headerShona: { fontSize: typography.micro, color: colours.muted, fontStyle: 'italic', marginTop: 1 },
+  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
+  headerShona: { fontSize: typography.micro, color: light.textMuted, fontStyle: 'italic', marginTop: 1 },
   countBadge: {
-    backgroundColor: colours.tealFade, borderRadius: radius.pill,
+    backgroundColor: 'rgba(47,127,239,0.12)', borderRadius: radius.pill,
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    borderWidth: 1, borderColor: colours.teal, minWidth: 32, alignItems: 'center',
+    borderWidth: 1, borderColor: light.accentStart, minWidth: 32, alignItems: 'center',
   },
-  countText: { fontSize: typography.caption, color: colours.teal, fontWeight: typography.black },
+  countText: { fontSize: typography.caption, color: light.accentStart, fontWeight: typography.black },
 
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
 
   emptyState: { alignItems: 'center', paddingTop: spacing.xxl * 2, gap: spacing.md },
   emptyEmoji: { fontSize: 40 },
-  emptyText: { fontSize: typography.body, color: colours.muted },
+  emptyText: { fontSize: typography.body, color: light.textMuted },
 
   card: {
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.mid, borderLeftWidth: 4,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: light.border, borderLeftWidth: 4,
     padding: spacing.lg, marginBottom: spacing.md,
   },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  name: { fontSize: typography.body, fontWeight: typography.bold, color: colours.white, flex: 1 },
+  name: { fontSize: typography.body, fontWeight: typography.bold, color: light.textDark, flex: 1 },
   tierPill: { borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
   tierPillText: { fontSize: typography.micro, fontWeight: typography.black, letterSpacing: 0.5 },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs, flexWrap: 'wrap' },
-  meta: { fontSize: typography.caption, color: colours.muted },
+  meta: { fontSize: typography.caption, color: light.textMuted },
   statusPill: { borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2 },
   statusPillText: { fontSize: typography.micro, fontWeight: typography.bold, textTransform: 'capitalize' },
-  watchCaption: { fontSize: typography.tiny, color: colours.muted, fontStyle: 'italic', marginTop: spacing.xs },
-  deadline: { fontSize: typography.caption, color: colours.muted, marginTop: spacing.xs },
+  watchCaption: { fontSize: typography.tiny, color: light.textMuted, fontStyle: 'italic', marginTop: spacing.xs },
+  deadline: { fontSize: typography.caption, color: light.textMuted, marginTop: spacing.xs },
   callRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     marginTop: spacing.md, alignSelf: 'flex-start',
-    backgroundColor: colours.tealFade, borderRadius: radius.pill,
+    backgroundColor: 'rgba(47,127,239,0.10)', borderRadius: radius.pill,
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
   },
   callIcon: { fontSize: 14 },
-  callText: { fontSize: typography.caption, color: colours.teal, fontWeight: typography.semibold },
+  callText: { fontSize: typography.caption, color: light.accentStart, fontWeight: typography.semibold },
 });

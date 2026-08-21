@@ -6,13 +6,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
-import { colours, typography, spacing, radius } from '../theme';
+import { colours, light, typography, spacing, radius } from '../theme';
 import StatCard from '../components/StatCard';
 import SyncPill from '../components/SyncPill';
 import SecondaryButton from '../components/SecondaryButton';
 import MineSitePicker from '../components/MineSitePicker';
 import { useOutreachSite } from '../context/OutreachSiteContext';
 import { getDashboardToday, getFacilities, createOutreachVisit } from '../services/api';
+import { getPendingScreenings, syncPendingScreenings } from '../services/offlineQueue';
 
 // The Intelligence Dashboard (dashboard/, 9-10 August) — a separate static
 // web page, not part of this app, deployed to Render as a Static Site
@@ -63,6 +64,40 @@ export default function HomeScreen({ navigation }) {
       .then((data) => setStats(data))
       .catch(() => setStats(EMPTY_TODAY));
   }, [site]);
+
+  // Offline screening sync (16 August) — see services/offlineQueue.js.
+  // Home is the natural place to retry: it's the screen the VHW lands on
+  // between screenings and after walking back into signal range, and it
+  // already re-fetches on every focus. `syncing` gates the banner's retry
+  // button so a tap can't fire two attempts at once; a successful sync
+  // also refreshes today's stats, since a newly-synced screening should
+  // show up in Screened Today / Refer Now immediately, not after a manual
+  // pull-to-refresh.
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+
+  const attemptSync = useCallback(() => {
+    setSyncing(true);
+    return syncPendingScreenings()
+      .then(({ synced, remaining }) => {
+        setPendingCount(remaining);
+        if (synced > 0) refreshStats();
+      })
+      .catch(() => {})
+      .finally(() => setSyncing(false));
+  }, [refreshStats]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      // Show whatever's queued immediately (cheap local read), then try
+      // to actually sync it — so the banner never flashes "0 pending"
+      // before the real count loads on a slow/offline connection.
+      getPendingScreenings().then((q) => { if (!cancelled) setPendingCount(q.length); });
+      attemptSync();
+      return () => { cancelled = true; };
+    }, [attemptSync])
+  );
 
   // Outreach Planner — schedule a visit inline from Home (12 August).
   // POST /api/outreach is unauthenticated as of today specifically for
@@ -158,7 +193,7 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <SafeAreaView style={s.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* Decorative blobs */}
       <View style={s.blob1} />
@@ -183,6 +218,31 @@ export default function HomeScreen({ navigation }) {
           <Text style={s.dateText}>{today}</Text>
         </View>
       </View>
+
+      {/* ── PENDING SYNC BANNER (16 August) ── one or more screenings were
+          scored offline (backend/AI unreachable at the time) and are
+          waiting in services/offlineQueue.js to be resubmitted. Retries
+          automatically on every focus; the button here is just for a VHW
+          who wants to force it right after regaining signal rather than
+          waiting to navigate away and back. */}
+      {pendingCount > 0 && (
+        <View style={s.syncBanner}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.syncBannerTitle}>
+              ⏳ {pendingCount} screening{pendingCount === 1 ? '' : 's'} waiting to sync
+            </Text>
+            <Text style={s.syncBannerSub}>Scored offline — will submit automatically once connected.</Text>
+          </View>
+          <TouchableOpacity
+            style={[s.syncRetryBtn, syncing && { opacity: 0.5 }]}
+            onPress={attemptSync}
+            disabled={syncing}
+            activeOpacity={0.8}
+          >
+            <Text style={s.syncRetryText}>{syncing ? 'Syncing…' : 'Retry now'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* ── OUTREACH BANNER — now a real mine picker (10 August), was
           hardcoded "Globe & Phoenix Mine" text with nothing behind it.
@@ -214,7 +274,7 @@ export default function HomeScreen({ navigation }) {
         <StatCard
           value={stats.screened_today}
           label="Screened Today"
-          colour={colours.mint}
+          colour={light.accentEnd}
           large
           onPress={() => openWorklist('log')}
         />
@@ -263,7 +323,7 @@ export default function HomeScreen({ navigation }) {
       <View style={s.secondRow}>
         <SecondaryButton
           icon="📋" label={'Today\'s\nLog'}
-          colour={colours.teal}
+          colour={light.accentStart}
           onPress={() => openWorklist('log')}
         />
         <SecondaryButton
@@ -273,12 +333,12 @@ export default function HomeScreen({ navigation }) {
         />
         <SecondaryButton
           icon="🖥️" label="Dashboard"
-          colour={colours.mint}
+          colour={light.accentEnd}
           onPress={openDashboard}
         />
         <SecondaryButton
           icon="⚙️" label="Settings"
-          colour={colours.muted}
+          colour={light.textMuted}
           onPress={() => comingSoon('Settings')}
         />
       </View>
@@ -385,7 +445,7 @@ export default function HomeScreen({ navigation }) {
                 value={plannerDate}
                 onChangeText={setPlannerDate}
                 placeholder="YYYY-MM-DD"
-                placeholderTextColor={colours.muted}
+                placeholderTextColor={light.textMuted}
               />
 
               <Text style={s.modalFieldLabel}>Expected miners</Text>
@@ -394,7 +454,7 @@ export default function HomeScreen({ navigation }) {
                 value={plannerHeadcount}
                 onChangeText={setPlannerHeadcount}
                 placeholder="e.g. 40"
-                placeholderTextColor={colours.muted}
+                placeholderTextColor={light.textMuted}
                 keyboardType="number-pad"
               />
 
@@ -427,23 +487,23 @@ export default function HomeScreen({ navigation }) {
 const s = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colours.navy,
+    backgroundColor: light.bg,
     overflow: 'hidden',
   },
   blob1: {
     position: 'absolute', top: -80, right: -80,
     width: 220, height: 220, borderRadius: 110,
-    backgroundColor: colours.teal, opacity: 0.18,
+    backgroundColor: light.accentStart, opacity: 0.14,
   },
   blob2: {
     position: 'absolute', top: 160, left: -60,
     width: 160, height: 160, borderRadius: 80,
-    backgroundColor: colours.purple, opacity: 0.15,
+    backgroundColor: colours.purple, opacity: 0.12,
   },
   blob3: {
     position: 'absolute', bottom: 80, right: -40,
     width: 130, height: 130, borderRadius: 65,
-    backgroundColor: colours.mint, opacity: 0.12,
+    backgroundColor: light.accentEnd, opacity: 0.14,
   },
   header: {
     flexDirection: 'row',
@@ -456,28 +516,43 @@ const s = StyleSheet.create({
   brandWord: {
     fontSize: typography.tiny,
     fontWeight: typography.light,
-    color: colours.muted,
+    color: light.textMuted,
     letterSpacing: 4,
   },
   brandAccent: {
     fontSize: typography.hero,
     fontWeight: typography.black,
-    color: colours.white,
+    color: light.textDark,
     lineHeight: 36,
     letterSpacing: -1,
   },
-  brandDot: { color: colours.mint, fontSize: 28 },
+  brandDot: { color: light.accentEnd, fontSize: 28 },
   headerRight: { alignItems: 'flex-end', paddingTop: 4, gap: spacing.xs },
-  dateText: { fontSize: typography.tiny, color: colours.muted, textAlign: 'right' },
+  dateText: { fontSize: typography.tiny, color: light.textMuted, textAlign: 'right' },
+
+  syncBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    marginHorizontal: spacing.xl, marginTop: spacing.md,
+    backgroundColor: 'rgba(255,184,0,0.12)', borderRadius: radius.md,
+    borderWidth: 1, borderColor: colours.watch,
+    padding: spacing.md,
+  },
+  syncBannerTitle: { fontSize: typography.caption, fontWeight: typography.bold, color: light.textDark },
+  syncBannerSub: { fontSize: typography.tiny, color: light.textMuted, marginTop: 2 },
+  syncRetryBtn: {
+    backgroundColor: colours.watch, borderRadius: radius.pill,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
+  },
+  syncRetryText: { fontSize: typography.tiny, fontWeight: typography.black, color: light.textDark },
 
   outreachBanner: {
     marginHorizontal: spacing.xl,
     marginTop: spacing.md,
-    backgroundColor: colours.card,
+    backgroundColor: light.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     borderWidth: 1.5,
-    borderColor: colours.teal,
+    borderColor: light.accentStart,
     borderLeftWidth: 5,
   },
   outreachTop: {
@@ -489,32 +564,32 @@ const s = StyleSheet.create({
   eyebrow: {
     fontSize: typography.micro,
     fontWeight: typography.bold,
-    color: colours.teal,
+    color: light.accentStart,
     letterSpacing: 2,
   },
   changeHint: {
     fontSize: typography.tiny,
     fontWeight: typography.semibold,
-    color: colours.muted,
+    color: light.textMuted,
   },
   outreachName: {
     fontSize: 30,
     fontWeight: typography.black,
-    color: colours.white,
+    color: light.textDark,
     lineHeight: 32,
     letterSpacing: -0.5,
   },
   outreachTag: {
     marginTop: spacing.md,
     alignSelf: 'flex-start',
-    backgroundColor: colours.tealFade,
+    backgroundColor: 'rgba(11,61,145,0.10)',
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
   },
   outreachTagText: {
     fontSize: typography.caption,
-    color: colours.teal,
+    color: light.accentStart,
     fontWeight: typography.semibold,
   },
 
@@ -528,14 +603,14 @@ const s = StyleSheet.create({
 
   cta: { marginHorizontal: spacing.xl, marginTop: spacing.lg },
   ctaInner: {
-    backgroundColor: colours.teal,
+    backgroundColor: light.accentStart,
     borderRadius: radius.lg,
     padding: spacing.xl + 2,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.lg,
     borderWidth: 2,
-    borderColor: colours.mint,
+    borderColor: light.accentEnd,
     zIndex: 2,
   },
   ctaShadow: {
@@ -543,7 +618,7 @@ const s = StyleSheet.create({
     bottom: -5, right: -5, left: 5,
     height: '100%',
     borderRadius: radius.lg,
-    backgroundColor: colours.mint,
+    backgroundColor: light.accentEnd,
     zIndex: 1,
     opacity: 0.3,
   },
@@ -577,7 +652,7 @@ const s = StyleSheet.create({
   plannerCard: {
     marginHorizontal: spacing.xl,
     marginTop: spacing.lg,
-    backgroundColor: colours.card,
+    backgroundColor: light.surface,
     borderRadius: radius.lg,
     borderWidth: 1.5,
     borderColor: colours.purple,
@@ -596,7 +671,7 @@ const s = StyleSheet.create({
   },
   plannerEmpty: {
     fontSize: typography.caption,
-    color: colours.muted,
+    color: light.textMuted,
     paddingVertical: spacing.sm,
   },
   plannerRow: {
@@ -605,28 +680,28 @@ const s = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.sm,
     borderTopWidth: 0.5,
-    borderTopColor: colours.mid,
+    borderTopColor: light.border,
   },
   plannerDate: {
     fontSize: typography.caption,
     fontWeight: typography.bold,
-    color: colours.white,
+    color: light.textDark,
   },
   plannerProgressTrack: {
     height: 5,
-    backgroundColor: colours.mid,
+    backgroundColor: light.border,
     borderRadius: 999,
     overflow: 'hidden',
     marginTop: spacing.xs,
   },
   plannerProgressFill: {
     height: '100%',
-    backgroundColor: colours.mint,
+    backgroundColor: light.accentEnd,
     borderRadius: 999,
   },
   plannerMeta: {
     fontSize: typography.tiny,
-    color: colours.muted,
+    color: light.textMuted,
     marginTop: spacing.xs,
   },
   plannerBadge: {
@@ -643,7 +718,7 @@ const s = StyleSheet.create({
   },
   plannerManageText: {
     fontSize: typography.tiny,
-    color: colours.teal,
+    color: light.accentStart,
     fontWeight: typography.semibold,
     textAlign: 'center',
   },
@@ -651,7 +726,7 @@ const s = StyleSheet.create({
     marginTop: spacing.md,
     paddingTop: spacing.md,
     borderTopWidth: 0.5,
-    borderTopColor: colours.mid,
+    borderTopColor: light.border,
     alignItems: 'center',
   },
   plannerScheduleText: {
@@ -661,33 +736,35 @@ const s = StyleSheet.create({
   },
 
   // ── Schedule Visit modal ──
+  // Overlay scrim stays a dark dim regardless of page theme — standard
+  // practice for a bottom sheet.
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   modalSheet: {
-    backgroundColor: colours.navy, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
+    backgroundColor: light.bg, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
     maxHeight: '88%', paddingHorizontal: spacing.xl, paddingTop: spacing.lg,
-    borderWidth: 1, borderColor: colours.mid, borderBottomWidth: 0,
+    borderWidth: 1, borderColor: light.border, borderBottomWidth: 0,
   },
   modalHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginBottom: spacing.lg,
   },
-  modalTitle: { fontSize: typography.subtitle, fontWeight: typography.black, color: colours.white },
-  modalClose: { fontSize: typography.body, color: colours.teal, fontWeight: typography.semibold },
+  modalTitle: { fontSize: typography.subtitle, fontWeight: typography.black, color: light.textDark },
+  modalClose: { fontSize: typography.body, color: light.accentStart, fontWeight: typography.semibold },
   modalFieldLabel: {
-    fontSize: typography.caption, color: colours.muted, fontWeight: typography.semibold,
+    fontSize: typography.caption, color: light.textMuted, fontWeight: typography.semibold,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: spacing.xs, marginTop: spacing.md,
   },
   modalInput: {
-    backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1.5, borderColor: colours.mid,
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, fontSize: typography.body, color: colours.white,
+    backgroundColor: light.surface, borderRadius: radius.md, borderWidth: 1.5, borderColor: light.border,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, fontSize: typography.body, color: light.textDark,
   },
   locationCard: {
-    backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1, borderColor: colours.mid,
+    backgroundColor: light.surfaceAlt, borderRadius: radius.md, borderWidth: 1, borderColor: light.border,
     padding: spacing.md, marginTop: spacing.md, gap: spacing.xs,
   },
   locationRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  locationLabel: { fontSize: typography.tiny, color: colours.muted },
-  locationValue: { fontSize: typography.tiny, color: colours.white, fontWeight: typography.semibold, flexShrink: 1, textAlign: 'right' },
+  locationLabel: { fontSize: typography.tiny, color: light.textMuted },
+  locationValue: { fontSize: typography.tiny, color: light.textDark, fontWeight: typography.semibold, flexShrink: 1, textAlign: 'right' },
   plannerErrorText: {
     fontSize: typography.caption, color: colours.refer, marginTop: spacing.md, textAlign: 'center',
   },

@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, Modal, ScrollView,
   TextInput, StyleSheet,
 } from 'react-native';
-import { colours, typography, spacing, radius } from '../theme';
+import { colours, light, typography, spacing, radius } from '../theme';
 import { getMines } from '../services/api';
 
 /**
@@ -74,7 +74,7 @@ export default function MineSitePicker({ value, onChange, onSelectMine, renderTr
         onChangeText={onChange}
         autoCapitalize="words"
         placeholder="Type the mine site"
-        placeholderTextColor={colours.muted}
+        placeholderTextColor={light.textMuted}
       />
     );
   }
@@ -127,7 +127,7 @@ export default function MineSitePicker({ value, onChange, onSelectMine, renderTr
                   value={customText}
                   onChangeText={setCustomText}
                   placeholder="e.g. Mvuma Alluvial Site"
-                  placeholderTextColor={colours.muted}
+                  placeholderTextColor={light.textMuted}
                   autoCapitalize="words"
                 />
                 <TouchableOpacity style={s.customBtn} onPress={submitCustom} activeOpacity={0.8}>
@@ -144,56 +144,58 @@ export default function MineSitePicker({ value, onChange, onSelectMine, renderTr
 
 const s = StyleSheet.create({
   fallbackInput: {
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1.5, borderColor: colours.mid,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1.5, borderColor: light.border,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-    fontSize: typography.body, color: colours.white,
+    fontSize: typography.body, color: light.textDark,
   },
   trigger: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1.5, borderColor: colours.mid,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1.5, borderColor: light.border,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
   },
-  triggerText: { fontSize: typography.body, color: colours.white, flex: 1 },
-  chevron: { fontSize: typography.body, color: colours.muted, marginLeft: spacing.sm },
+  triggerText: { fontSize: typography.body, color: light.textDark, flex: 1 },
+  chevron: { fontSize: typography.body, color: light.textMuted, marginLeft: spacing.sm },
 
+  // Modal scrim stays a dark dim regardless of page theme — standard
+  // practice for a bottom sheet, independent of light/dark surface colour.
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: {
-    backgroundColor: colours.navy, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
-    maxHeight: '75%', paddingTop: spacing.lg, borderWidth: 1, borderColor: colours.mid, borderBottomWidth: 0,
+    backgroundColor: light.bg, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
+    maxHeight: '75%', paddingTop: spacing.lg, borderWidth: 1, borderColor: light.border, borderBottomWidth: 0,
   },
   sheetHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingBottom: spacing.md,
-    borderBottomWidth: 0.5, borderBottomColor: colours.card,
+    borderBottomWidth: 0.5, borderBottomColor: light.border,
   },
-  sheetTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: colours.white },
-  closeText: { fontSize: typography.body, color: colours.teal, fontWeight: typography.semibold },
+  sheetTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
+  closeText: { fontSize: typography.body, color: light.accentStart, fontWeight: typography.semibold },
 
   list: { paddingHorizontal: spacing.xl },
   option: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingVertical: spacing.md, borderBottomWidth: 0.5, borderBottomColor: colours.card,
+    paddingVertical: spacing.md, borderBottomWidth: 0.5, borderBottomColor: light.border,
   },
-  optionName: { fontSize: typography.body, color: colours.white, fontWeight: typography.medium },
-  optionDistrict: { fontSize: typography.tiny, color: colours.muted, marginTop: 2 },
-  checkmark: { fontSize: typography.body, color: colours.mint, fontWeight: typography.black },
+  optionName: { fontSize: typography.body, color: light.textDark, fontWeight: typography.medium },
+  optionDistrict: { fontSize: typography.tiny, color: light.textMuted, marginTop: 2 },
+  checkmark: { fontSize: typography.body, color: light.accentEnd, fontWeight: typography.black },
 
   customRow: {
     paddingHorizontal: spacing.xl, paddingVertical: spacing.lg,
-    borderTopWidth: 0.5, borderTopColor: colours.card,
+    borderTopWidth: 0.5, borderTopColor: light.border,
   },
-  customLabel: { fontSize: typography.tiny, color: colours.muted, marginBottom: spacing.sm },
+  customLabel: { fontSize: typography.tiny, color: light.textMuted, marginBottom: spacing.sm },
   customInputRow: { flexDirection: 'row', gap: spacing.sm },
   customInput: {
-    flex: 1, backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1.5, borderColor: colours.mid,
+    flex: 1, backgroundColor: light.surfaceAlt, borderRadius: radius.md,
+    borderWidth: 1.5, borderColor: light.border,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    fontSize: typography.caption, color: colours.white,
+    fontSize: typography.caption, color: light.textDark,
   },
   customBtn: {
-    backgroundColor: colours.teal, borderRadius: radius.md,
+    backgroundColor: light.accentStart, borderRadius: radius.md,
     paddingHorizontal: spacing.lg, justifyContent: 'center',
   },
   customBtnText: { fontSize: typography.caption, color: colours.white, fontWeight: typography.bold },

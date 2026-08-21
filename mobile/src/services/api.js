@@ -95,6 +95,35 @@ export const getWorkerByPhone = async (phone) => {
   return handleResponse(res);
 };
 
+/**
+ * Resolves a { name, phone, mine_site } to a backend miner_id, registering
+ * them if this is the first time or looking them up if they already exist
+ * (409). Pulled out of ResultScreen.js (16 August) so
+ * services/offlineQueue.js's retry path uses the exact same
+ * register-or-look-up logic instead of a second, driftable copy —
+ * `resolveMinerId(miner)` replaces ResultScreen's old inline try/catch.
+ *
+ * @param {object} miner — { name, phone, mine_site }
+ * @returns {Promise<number>} miner_id
+ */
+export const resolveMinerId = async (miner) => {
+  try {
+    const worker = await registerWorker({
+      name: miner.name,
+      phone: miner.phone,
+      mine_site: miner.mine_site,
+    });
+    return worker.id;
+  } catch (e) {
+    const msg = e.message?.toLowerCase() || '';
+    if (msg.includes('already registered') || msg.includes('409')) {
+      const existing = await getWorkerByPhone(miner.phone);
+      return existing.id;
+    }
+    throw e; // genuine failure — caller decides what to do
+  }
+};
+
 // ── SCREENING ─────────────────────────────────────────────────
 /**
  * Submit a completed screening.

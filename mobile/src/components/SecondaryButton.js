@@ -1,5 +1,5 @@
 import { TouchableOpacity, Text, StyleSheet } from 'react-native';
-import { colours, typography, spacing, radius } from '../theme';
+import { colours, light, typography, spacing, radius } from '../theme';
 
 /**
  * SecondaryButton
@@ -21,7 +21,7 @@ export default function SecondaryButton({ icon = '', label = '', onPress, colour
 const s = StyleSheet.create({
   btn: {
     flex: 1,
-    backgroundColor: colours.card,
+    backgroundColor: light.surface,
     borderRadius: radius.md,
     borderWidth: 1.5,
     padding: spacing.md,
@@ -31,7 +31,7 @@ const s = StyleSheet.create({
   icon: { fontSize: 20 },
   label: {
     fontSize: typography.micro,
-    color: colours.muted,
+    color: light.textMuted,
     fontWeight: typography.semibold,
     textAlign: 'center',
     textTransform: 'uppercase',

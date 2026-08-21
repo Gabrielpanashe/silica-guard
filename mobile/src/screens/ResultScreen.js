@@ -5,9 +5,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { colours, typography, spacing, radius, riskConfig } from '../theme';
+import { colours, light, typography, spacing, radius, riskConfig } from '../theme';
 import { offlineScore } from './QuestionScreen';
-import { registerWorker, getWorkerByPhone, submitScreening } from '../services/api';
+import { resolveMinerId, getWorkerByPhone, submitScreening } from '../services/api';
+import { queueOfflineScreening } from '../services/offlineQueue';
 
 // Backend timestamps are SQLite-style "YYYY-MM-DD HH:MM:SS" (space-
 // separated, no 'Z') — append it so Date() parses as UTC rather than
@@ -26,6 +27,11 @@ export default function ResultScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [result, setResult]   = useState(null);
   const [offline, setOffline] = useState(false);
+  // Set once the offline-scored screening has been written to the local
+  // pending-sync queue (16 August) — see services/offlineQueue.js. Purely
+  // informational (drives the banner copy below); the queue write itself
+  // never blocks showing the result.
+  const [queued, setQueued] = useState(false);
   // Full screening history for this miner (10 August) — every screening
   // this system has ever recorded for them is already kept (nothing is
   // ever overwritten), this just surfaces it. Best-effort: fetched after
@@ -39,24 +45,11 @@ export default function ResultScreen({ navigation, route }) {
   const runScreening = async () => {
     setLoading(true);
     try {
-      // Step 1: Register miner (409 = already exists — look them up instead)
-      let minerId;
-      try {
-        const worker = await registerWorker({
-          name: miner.name,
-          phone: miner.phone,
-          mine_site: miner.mine_site,
-        });
-        minerId = worker.id;
-      } catch (e) {
-        const msg = e.message?.toLowerCase() || "";
-        if (msg.includes("already registered") || msg.includes("409")) {
-          const existing = await getWorkerByPhone(miner.phone);
-          minerId = existing.id;
-        } else {
-          throw e; // genuine failure — fall through to offline, as today
-        }
-      }
+      // Step 1: Register miner (409 = already exists — look them up instead).
+      // Pulled into services/api.resolveMinerId (16 August) so this and
+      // offlineQueue.js's retry path share one register-or-look-up
+      // implementation instead of two copies that could drift.
+      const minerId = await resolveMinerId(miner);
 
       // Step 2: Submit screening to backend
       let screening;
@@ -136,6 +129,17 @@ export default function ResultScreen({ navigation, route }) {
         provisional: true,
       });
       setOffline(true);
+
+      // Queue for automatic sync — this is the actual fix for the gap
+      // where an offline screening used to just vanish once the VHW
+      // navigated away. Never lets a queueing failure (e.g. storage full)
+      // affect the result already on screen.
+      try {
+        await queueOfflineScreening({ miner, answers, screened_by: 'VHW' });
+        setQueued(true);
+      } catch (queueErr) {
+        console.warn('Could not queue offline screening for sync:', queueErr.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -144,9 +148,9 @@ export default function ResultScreen({ navigation, route }) {
   if (loading) {
     return (
       <SafeAreaView style={s.loadingRoot}>
-        <StatusBar style="light" />
+        <StatusBar style="dark" />
         <View style={s.loadingContent}>
-          <ActivityIndicator size="large" color={colours.teal} />
+          <ActivityIndicator size="large" color={light.accentStart} />
           <Text style={s.loadingTitle}>Analysing Screening</Text>
           <Text style={s.loadingShona}>Kuongorora Mhinduro...</Text>
           <Text style={s.loadingSub}>Processing {miner.name}'s answers</Text>
@@ -162,14 +166,19 @@ export default function ResultScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={s.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
-        {/* Offline banner */}
+        {/* Offline banner — copy updated (16 August) once this screening
+            actually gets queued and retried instead of just vanishing;
+            see services/offlineQueue.js. */}
         {offline && (
           <View style={s.offlineBanner}>
             <Text style={s.offlineText}>
               📵 Offline mode — backend unavailable. Scored algorithmically with safety overrides.
+              {queued
+                ? ' This screening is queued and will sync automatically once the connection is back.'
+                : ' Could not save it to the sync queue — screen this miner again once you have a connection.'}
             </Text>
           </View>
         )}
@@ -208,14 +217,14 @@ export default function ResultScreen({ navigation, route }) {
           <View
             style={[
               s.deteriorationCard,
-              { borderColor: result.deterioration.changed ? colours.watch : colours.mint },
+              { borderColor: result.deterioration.changed ? colours.watch : light.accentEnd },
             ]}
           >
             <Text style={s.cardEyebrow}>SINCE LAST SCREENING</Text>
             <Text
               style={[
                 s.deteriorationText,
-                { color: result.deterioration.changed ? colours.watch : colours.offwhite },
+                { color: result.deterioration.changed ? colours.watch : light.textBody },
               ]}
             >
               {result.deterioration.changed ? '⚠ ' : '✓ '}
@@ -318,19 +327,21 @@ export default function ResultScreen({ navigation, route }) {
 }
 
 const s = StyleSheet.create({
-  loadingRoot: { flex: 1, backgroundColor: colours.navy, justifyContent: 'center', alignItems: 'center' },
+  loadingRoot: { flex: 1, backgroundColor: light.bg, justifyContent: 'center', alignItems: 'center' },
   loadingContent: { alignItems: 'center', gap: spacing.lg },
-  loadingTitle: { fontSize: typography.title, fontWeight: typography.black, color: colours.white, marginTop: spacing.lg },
-  loadingShona: { fontSize: typography.body, color: colours.muted, fontStyle: 'italic' },
-  loadingSub: { fontSize: typography.caption, color: colours.muted, textAlign: 'center', maxWidth: 260 },
-  root: { flex: 1, backgroundColor: colours.navy },
+  loadingTitle: { fontSize: typography.title, fontWeight: typography.black, color: light.textDark, marginTop: spacing.lg },
+  loadingShona: { fontSize: typography.body, color: light.textMuted, fontStyle: 'italic' },
+  loadingSub: { fontSize: typography.caption, color: light.textMuted, textAlign: 'center', maxWidth: 260 },
+  root: { flex: 1, backgroundColor: light.bg },
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
   offlineBanner: {
     backgroundColor: 'rgba(255,184,0,0.15)', borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.yellow,
+    // Was `colours.yellow`, a key that doesn't exist in theme/index.js
+    // (only `colours.watch`) — fixed while converting this screen's colours.
+    borderWidth: 1, borderColor: colours.watch,
     padding: spacing.md, marginBottom: spacing.lg,
   },
-  offlineText: { fontSize: typography.caption, color: colours.yellow, textAlign: 'center' },
+  offlineText: { fontSize: typography.caption, color: '#B37D00', textAlign: 'center' },
   riskCard: {
     borderRadius: radius.xl, borderWidth: 2,
     padding: spacing.xxl, alignItems: 'center', marginBottom: spacing.lg,
@@ -340,37 +351,37 @@ const s = StyleSheet.create({
   riskShona: { fontSize: typography.body, fontWeight: typography.semibold, fontStyle: 'italic', marginTop: spacing.xs, textAlign: 'center' },
   urgencyPill: { marginTop: spacing.lg, borderRadius: radius.pill, borderWidth: 1.5, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   urgencyText: { fontSize: typography.caption, fontWeight: typography.bold },
-  confidence: { fontSize: typography.tiny, color: colours.muted, marginTop: spacing.md },
-  minerCard: { backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1, borderColor: colours.mid, padding: spacing.lg, marginBottom: spacing.lg },
-  cardEyebrow: { fontSize: typography.micro, color: colours.teal, fontWeight: typography.bold, letterSpacing: 2, marginBottom: spacing.xs },
-  minerName: { fontSize: typography.subtitle, fontWeight: typography.black, color: colours.white },
-  minerSub: { fontSize: typography.caption, color: colours.muted, marginTop: spacing.xs },
-  deteriorationCard: { backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1.5, borderLeftWidth: 4, padding: spacing.lg, marginBottom: spacing.lg },
+  confidence: { fontSize: typography.tiny, color: light.textMuted, marginTop: spacing.md },
+  minerCard: { backgroundColor: light.surface, borderRadius: radius.md, borderWidth: 1, borderColor: light.border, padding: spacing.lg, marginBottom: spacing.lg },
+  cardEyebrow: { fontSize: typography.micro, color: light.accentStart, fontWeight: typography.bold, letterSpacing: 2, marginBottom: spacing.xs },
+  minerName: { fontSize: typography.subtitle, fontWeight: typography.black, color: light.textDark },
+  minerSub: { fontSize: typography.caption, color: light.textMuted, marginTop: spacing.xs },
+  deteriorationCard: { backgroundColor: light.surface, borderRadius: radius.md, borderWidth: 1.5, borderLeftWidth: 4, padding: spacing.lg, marginBottom: spacing.lg },
   deteriorationText: { fontSize: typography.body, fontWeight: typography.semibold, lineHeight: 21, marginTop: spacing.xs },
-  historyCard: { backgroundColor: colours.card, borderRadius: radius.md, borderWidth: 1, borderColor: colours.mid, padding: spacing.lg, marginBottom: spacing.lg },
-  historyRow: { flexDirection: 'row', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 0.5, borderBottomColor: colours.mid },
+  historyCard: { backgroundColor: light.surface, borderRadius: radius.md, borderWidth: 1, borderColor: light.border, padding: spacing.lg, marginBottom: spacing.lg },
+  historyRow: { flexDirection: 'row', gap: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 0.5, borderBottomColor: light.border },
   historyRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
   historyTierDot: { width: 9, height: 9, borderRadius: 5, marginTop: 5 },
   historyMain: { flex: 1 },
   historyTopLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   historyTier: { fontSize: typography.caption, fontWeight: typography.black, letterSpacing: 0.5 },
-  historyDate: { fontSize: typography.tiny, color: colours.muted, fontWeight: typography.semibold, fontVariant: ['tabular-nums'] },
-  historyAdvice: { fontSize: typography.tiny, color: colours.muted, marginTop: 2, lineHeight: 15 },
+  historyDate: { fontSize: typography.tiny, color: light.textMuted, fontWeight: typography.semibold, fontVariant: ['tabular-nums'] },
+  historyAdvice: { fontSize: typography.tiny, color: light.textMuted, marginTop: 2, lineHeight: 15 },
   section: { marginBottom: spacing.lg },
-  sectionLabel: { fontSize: typography.micro, fontWeight: typography.bold, color: colours.teal, letterSpacing: 2, marginBottom: spacing.md },
-  explanationText: { fontSize: typography.body, color: colours.offwhite, lineHeight: 22 },
+  sectionLabel: { fontSize: typography.micro, fontWeight: typography.bold, color: light.accentStart, letterSpacing: 2, marginBottom: spacing.md },
+  explanationText: { fontSize: typography.body, color: light.textBody, lineHeight: 22 },
   factorRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md, marginBottom: spacing.sm },
   factorDot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
-  factorText: { flex: 1, fontSize: typography.body, color: colours.muted, lineHeight: 20 },
+  factorText: { flex: 1, fontSize: typography.body, color: light.textBody, lineHeight: 20 },
   adviceCard: { borderRadius: radius.md, borderWidth: 1.5, borderLeftWidth: 4, padding: spacing.lg, marginBottom: spacing.xl },
-  adviceEyebrow: { fontSize: typography.micro, fontWeight: typography.bold, color: colours.teal, letterSpacing: 2, marginBottom: spacing.sm },
-  adviceText: { fontSize: typography.body, color: colours.white, fontWeight: typography.semibold, lineHeight: 22 },
+  adviceEyebrow: { fontSize: typography.micro, fontWeight: typography.bold, color: light.accentStart, letterSpacing: 2, marginBottom: spacing.sm },
+  adviceText: { fontSize: typography.body, color: light.textDark, fontWeight: typography.semibold, lineHeight: 22 },
   referBtn: { marginBottom: spacing.lg, borderRadius: radius.lg },
   referInner: { borderRadius: radius.lg, padding: spacing.xl, alignItems: 'center', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)', zIndex: 2 },
   referShadow: { position: 'absolute', bottom: -5, right: -5, left: 5, height: '100%', borderRadius: radius.lg, zIndex: 1, opacity: 0.3 },
   referText: { fontSize: typography.body, fontWeight: typography.black, color: colours.white, letterSpacing: 0.5 },
   referShona: { fontSize: typography.caption, color: 'rgba(255,255,255,0.75)', marginTop: spacing.xs, fontStyle: 'italic' },
-  doneBtn: { backgroundColor: colours.card, borderRadius: radius.lg, padding: spacing.xl, alignItems: 'center', borderWidth: 1.5, borderColor: colours.mid, marginBottom: spacing.lg },
-  doneBtnText: { fontSize: typography.body, fontWeight: typography.bold, color: colours.muted },
-  doneBtnShona: { fontSize: typography.caption, color: colours.muted, fontStyle: 'italic', marginTop: spacing.xs },
+  doneBtn: { backgroundColor: light.surface, borderRadius: radius.lg, padding: spacing.xl, alignItems: 'center', borderWidth: 1.5, borderColor: light.border, marginBottom: spacing.lg },
+  doneBtnText: { fontSize: typography.body, fontWeight: typography.bold, color: light.textBody },
+  doneBtnShona: { fontSize: typography.caption, color: light.textMuted, fontStyle: 'italic', marginTop: spacing.xs },
 });
