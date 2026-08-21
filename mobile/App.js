@@ -1,7 +1,10 @@
 import 'react-native-gesture-handler';
+import { View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import LandingScreen from './src/screens/LandingScreen';
 import HomeScreen from './src/screens/HomeScreen';
 // Import other screens here as you build them:
@@ -12,8 +15,16 @@ import ReferralScreen from './src/screens/ReferralScreen';
 import WorklistScreen from './src/screens/WorklistScreen';
 import OutreachStatsScreen from './src/screens/OutreachStatsScreen';
 import { OutreachSiteProvider } from './src/context/OutreachSiteContext';
+import { light } from './src/theme';
 
 const Stack = createStackNavigator();
+
+// Set by LandingScreen.js once "Get Started" is tapped — read here so
+// Landing only ever shows on a device's genuine first run, not every app
+// open. A VHW opens this app many times a day in the field; a splash
+// screen every single time would get old fast. See LandingScreen.js for
+// where the flag actually gets written.
+const SEEN_LANDING_KEY = 'sg_has_seen_landing';
 
 // SafeAreaProvider (12 August) — was missing entirely. Every screen's
 // SafeAreaView now imports from react-native-safe-area-context instead of
@@ -25,11 +36,31 @@ const Stack = createStackNavigator();
 // provider is required for the context package's SafeAreaView/
 // useSafeAreaInsets to resolve real insets at all.
 export default function App() {
+  // null while the AsyncStorage read is in flight — NavigationContainer
+  // needs a resolved initialRouteName at mount (it can't be changed
+  // afterwards without an explicit reset), so the navigator itself isn't
+  // rendered until this settles. Defaults to "Landing" (i.e. show it) on
+  // any read failure — the safer default for a first-run gate is to show
+  // the screen, not silently skip it.
+  const [initialRoute, setInitialRoute] = useState(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem(SEEN_LANDING_KEY)
+      .then((seen) => setInitialRoute(seen === 'true' ? 'Home' : 'Landing'))
+      .catch(() => setInitialRoute('Landing'));
+  }, []);
+
+  if (!initialRoute) {
+    // Themed to match Landing's own background so there's no flash of an
+    // unstyled screen during the (typically near-instant) storage read.
+    return <View style={{ flex: 1, backgroundColor: light.bg }} />;
+  }
+
   return (
     <SafeAreaProvider>
       <OutreachSiteProvider>
         <NavigationContainer>
-          <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Landing">
+          <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRoute}>
             <Stack.Screen name="Landing"  component={LandingScreen} />
             <Stack.Screen name="Home"     component={HomeScreen} />
             <Stack.Screen name="Intake"   component={IntakeScreen} />

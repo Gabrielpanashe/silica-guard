@@ -3,7 +3,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { light, colours, typography, spacing, radius } from '../theme';
+
+// Same key App.js checks at boot to decide whether Landing is the initial
+// route at all — writing it here is what makes this a true first-run
+// screen instead of a splash on every open (16 August).
+const SEEN_LANDING_KEY = 'sg_has_seen_landing';
 
 // First screen for the redesign (16 August) — Cimas-blue accent (see
 // theme/index.js's `light.accentStart`/`accentEnd`), everything past
@@ -32,6 +38,14 @@ function FeatureIcon({ lib, icon, size, color }) {
 }
 
 export default function LandingScreen({ navigation }) {
+  // Never lets a storage failure block navigation — worst case this
+  // screen just shows again next launch, which is a mild annoyance, not
+  // a broken app.
+  const handleGetStarted = () => {
+    AsyncStorage.setItem(SEEN_LANDING_KEY, 'true').catch(() => {});
+    navigation.replace('Home');
+  };
+
   return (
     <ImageBackground source={BG_IMAGE} resizeMode="cover" style={s.root}>
       <StatusBar style="light" />
@@ -71,7 +85,7 @@ export default function LandingScreen({ navigation }) {
         <View style={s.footer}>
           <TouchableOpacity
             activeOpacity={0.88}
-            onPress={() => navigation.replace('Home')}
+            onPress={handleGetStarted}
             style={s.ctaShadow}
           >
             <LinearGradient
