@@ -76,6 +76,18 @@ def test_dashboard_today_counts_screening_and_refer_now(client):
     assert body["refer_now"]["count"] == 1
     assert body["refer_now"]["items"][0]["tier"] == "RED"
     assert body["refer_now"]["items"][0]["phone"] == "+263791000001"
+    # New 21 August 2026: same real referral_code as ScreeningResult, so the
+    # unauthenticated VHW mobile app (no login -> can't reach the auth-gated
+    # PATCH /api/referrals/{id}) can instead confirm attendance via the
+    # already-unauthenticated .../lookup/{code}/confirm-attendance route.
+    item = body["refer_now"]["items"][0]
+    assert item["referral_code"] is not None
+    assert item["referral_code"].startswith("SG-")
+    assert item["facility_name"]
+
+    lookup = client.get(f"/api/referrals/lookup/{item['referral_code']}")
+    assert lookup.status_code == 200
+    assert lookup.json()["referral_code"] == item["referral_code"]
 
 
 def test_dashboard_today_watch_reflects_orange_tier(client):

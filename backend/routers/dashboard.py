@@ -146,6 +146,8 @@ def dashboard_today(site: Optional[str] = None, db: Session = Depends(get_db)):
             tier=s.tier,
             status=r.status,
             deadline=format_datetime(r.deadline),
+            referral_code=r.referral_code,
+            facility_name=r.hospital,
         )
         for r, m, s in db.execute(refer_now_stmt).all()
     ]

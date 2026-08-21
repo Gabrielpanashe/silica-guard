@@ -214,6 +214,13 @@ class ReferNowItem(BaseModel):
     tier: str
     status: str
     deadline: Optional[str] = None
+    # New 21 August 2026 — same motivation as ScreeningResult's referral_code
+    # (see models.py above): the mobile app has no login, so PATCH
+    # /api/referrals/{id} (auth-gated) is unreachable from it. Surfacing the
+    # code here lets it instead confirm attendance via the already-
+    # unauthenticated POST /api/referrals/lookup/{code}/confirm-attendance.
+    referral_code: Optional[str] = None
+    facility_name: Optional[str] = None
 
 
 class WatchItem(BaseModel):

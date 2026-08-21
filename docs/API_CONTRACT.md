@@ -445,7 +445,7 @@ Optional query param `?site=<name>` (case-insensitive exact match against `miner
   "refer_now": {
     "count": 2,
     "items": [
-      { "referral_id": 7, "miner_name": "Tendai T", "phone": "+263776877873", "mine_site": "Globe & Phoenix Mine", "tier": "RED", "status": "pre_alerted", "deadline": "2026-08-09 10:33:56" }
+      { "referral_id": 7, "miner_name": "Tendai T", "phone": "+263776877873", "mine_site": "Globe & Phoenix Mine", "tier": "RED", "status": "pre_alerted", "deadline": "2026-08-09 10:33:56", "referral_code": "SG-4K7Q", "facility_name": "Kwekwe District Hospital" }
     ]
   },
   "watch": {
@@ -462,7 +462,7 @@ Optional query param `?site=<name>` (case-insensitive exact match against `miner
 
 `screened_today` / `todays_log` = screenings whose `created_at` falls on the server's current UTC calendar date — Zimbabwe is UTC+2 (CAT), so a screening in the ~2 hours before UTC midnight can land on the "wrong" day. A known simplification, same class as `outreach_visits.report_generated`.
 
-`refer_now` is a **live worklist, not scoped to today** — any referral with `status` in `open`/`pre_alerted`/`reminded`/`escalated`. It drops off once `PATCH /api/referrals/{id}` sets `status` to `attended` or `closed` — that's how "have they taken action" gets answered by re-polling this endpoint, using the contact details already in each item.
+`refer_now` is a **live worklist, not scoped to today** — any referral with `status` in `open`/`pre_alerted`/`reminded`/`escalated`. It drops off once `status` becomes `attended` or `closed` — that's how "have they taken action" gets answered by re-polling this endpoint, using the contact details already in each item. Two ways to make that happen: `PATCH /api/referrals/{id}` (JWT-gated — the dashboard's coordinator flow), or, **new 21 August 2026**, `referral_code`/`facility_name` on each item (same real code as `POST /api/screen`'s response, not a fabricated one) let an unauthenticated caller — the VHW mobile app, which never logs in by design — instead call `POST /api/referrals/lookup/{code}/confirm-attendance` directly. Both routes converge on the same `status`/`attended_at` fields, so either path is equally valid; this one just doesn't need a token.
 
 `watch` = miners whose **most recent** screening (not just any screening) is `YELLOW` — YELLOW never creates a referral, so this is sourced from `screenings`, not `referrals`. A miner whose YELLOW screening was later superseded by a re-screen of any tier drops off this list.
 
