@@ -142,11 +142,16 @@ class Referral(Base):
     facility_id = Column(Integer, ForeignKey("facilities.id"))
     # New 14 August 2026 (master doc v6.0 Section 1.1) — short human-readable
     # code (e.g. "SG-4K7Q"), sent by SMS and typed into a hospital web page
-    # to confirm attendance. Nullable/non-unique-enforced-at-DB-level is
-    # deliberately loose here (SQLite's ALTER-free create_all can't backfill
-    # uniqueness cleanly on a table with existing NULL rows); application
-    # code guarantees uniqueness at generation time — see services/referrals.py.
-    referral_code = Column(String, index=True)
+    # to confirm attendance. Nullable (GREEN/YELLOW screenings never get
+    # one) but unique where set — added 16 August 2026 once Alembic/Postgres
+    # (Step B) made a real migration possible; originally left DB-level-loose
+    # only because SQLite's ALTER-free create_all() couldn't backfill
+    # uniqueness cleanly on a table with existing NULL rows. Application
+    # code already guarantees uniqueness at generation time via a
+    # collision-check loop (services/referrals.py::_generate_referral_code)
+    # — this is defense-in-depth against that theoretical race, not the
+    # only thing preventing a collision.
+    referral_code = Column(String, unique=True, index=True)
     deadline = Column(DateTime)
     pre_alert_sent = Column(Integer, default=0, server_default=text("0"))
     status = Column(String, default="open", server_default=text("'open'"))

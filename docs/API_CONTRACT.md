@@ -189,9 +189,14 @@ Ordered by `level`, then `name`.
     "compared_to_screening_id": 88,
     "changed": true,
     "summary": "Deterioration since last screening: BREATHLESSNESS worsened compared to the previous screening."
-  }
+  },
+  "referral_code": null,
+  "facility_name": null,
+  "deadline": null
 }
 ```
+
+**`referral_code`/`facility_name`/`deadline` (new 16 August 2026, real bug fix)**: populated only when this screening's tier is `ORANGE`/`RED` (a referral was created), `null` otherwise. Previously **absent from this response entirely** despite the referral-code feature (master doc v6.0 Section 1.1) being live since 15 August — the only consumer with no auth token (the VHW mobile app) had no way to get the real code at screening time, and was rendering its own client-side-fabricated one instead, which could never actually be looked up at `GET /api/referrals/lookup/{code}`. `referral_code` here is guaranteed to be the same value that route returns for it — build any "show the referral card" UI against these three fields now, not a locally-generated ID. `deadline` uses the same string format as everywhere else in this doc (`"YYYY-MM-DD HH:MM:SS"`, via `database.format_datetime`).
 
 **Errors**: `404` unknown `miner_id`; `422` empty `answers`; `502` AI risk engine unavailable (screening + answers are still persisted for retry/audit — only the tier fields stay null).
 
@@ -341,6 +346,23 @@ Companion to the route above. No auth, same reasoning. Sets `status='attended'`,
 { "referral_code": "SG-4K7Q", "status": "attended", "attended_at": "2026-08-16 11:02:00" }
 ```
 **Errors**: `404` unknown code; `409` already attended/closed.
+
+### `POST /api/referrals/notify-email` — LIVE (12 August 2026, undocumented until 16 August)
+
+Fires the hospital referral-alert email (`services/email_notifications.py`, Resend) for a worker's most recent referral. Unauthenticated, mobile-facing — called by `ReferralScreen.js` when the VHW taps "Generate Referral Card," so the demo has a live, on-demand email trigger tied to that exact moment. **This is a deliberate re-send**, not the only time the email fires: the same email already fires automatically inside `POST /api/screen` at referral-creation time (`services/referrals.create_referral_and_notify`) — a hospital shouldn't wait on a miner tapping a button in the app to be pre-alerted.
+
+**Request**
+```json
+{ "phone": "+263771234567" }
+```
+
+**Response 200**
+```json
+{ "sent": true, "tier": "RED", "facility_name": "Kwekwe District Hospital" }
+```
+`sent` reflects the actual Resend API call result (`false` on failure, e.g. `RESEND_API_KEY` unset — never raises).
+
+**Errors**: `404` unknown phone, or the worker has no referral on record.
 
 ---
 

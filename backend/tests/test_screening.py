@@ -132,6 +132,53 @@ def test_screen_response_carries_explanation_shona(client):
     assert body["explanation_shona"]  # never absent, same guarantee as advice_line
 
 
+def test_screen_response_carries_real_referral_code_for_red_tier(client):
+    """Real bug, fixed 16 August 2026: POST /api/screen's response never
+    included the real referral_code create_referral_and_notify generates,
+    so the only unauthenticated caller with no login (the VHW mobile app)
+    had no way to get it and was fabricating its own client-side code
+    instead — one that could never actually be looked up at a hospital.
+    See models.py's ScreeningResult.referral_code docstring."""
+    miner_id = _register_miner(client, phone="+263700000021")
+    red_result = {**FAKE_RESULT, "tier": "RED"}
+
+    with patch("routers.screening.assess_risk", return_value=red_result):
+        resp = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "APP"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["referral_code"] is not None
+    assert body["referral_code"].startswith("SG-")
+    assert body["facility_name"]
+    assert body["deadline"] is not None
+
+    # And it must be the SAME code a hospital would actually look up —
+    # not just present, but correct.
+    lookup = client.get(f"/api/referrals/lookup/{body['referral_code']}")
+    assert lookup.status_code == 200
+    assert lookup.json()["referral_code"] == body["referral_code"]
+
+
+def test_screen_response_has_no_referral_code_for_non_referred_tiers(client):
+    """GREEN/YELLOW never create a referral — the new fields must stay
+    None, not an empty string or a stale value from another request."""
+    miner_id = _register_miner(client, phone="+263700000022")
+
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):  # YELLOW
+        resp = client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "answers": _ten_answers(), "channel": "APP"},
+        )
+
+    body = resp.json()
+    assert body["referral_code"] is None
+    assert body["facility_name"] is None
+    assert body["deadline"] is None
+
+
 def test_green_tier_sends_screening_result_sms_not_referral(client):
     miner_id = _register_miner(client, phone="+263700000019")
     green_result = {**FAKE_RESULT, "tier": "GREEN"}
