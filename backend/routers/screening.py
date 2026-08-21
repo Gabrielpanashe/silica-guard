@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import format_datetime, get_db
 from db_models import Miner, OutreachVisit, Screening, ScreeningAnswer
 from models import DeteriorationResult, ScreeningCreate, ScreeningResult
 from services import notifications
@@ -139,8 +139,9 @@ def screen_miner(payload: ScreeningCreate, db: Session = Depends(get_db)):
     # GREEN/YELLOW never get a referral but still get a result-only SMS —
     # see services/notifications.send_screening_result_sms.
     shona_message = TIER_MESSAGES[result["tier"]][0]
+    referral = None
     if result["tier"] in ("ORANGE", "RED"):
-        create_referral_and_notify(
+        referral = create_referral_and_notify(
             db,
             screening_id=screening.id,
             miner_id=payload.miner_id,
@@ -164,4 +165,9 @@ def screen_miner(payload: ScreeningCreate, db: Session = Depends(get_db)):
         previous_screening_id=previous_screening_id,
         provisional=bool(provisional),
         deterioration=DeteriorationResult(**deterioration),
+        # Real referral_code (not the mobile app's client-side-fabricated
+        # placeholder) — see ScreeningResult's field docstring in models.py.
+        referral_code=referral.referral_code if referral else None,
+        facility_name=referral.hospital if referral else None,
+        deadline=format_datetime(referral.deadline) if referral else None,
     )

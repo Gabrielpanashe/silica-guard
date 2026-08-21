@@ -63,6 +63,16 @@ class ScreeningResult(BaseModel):
     previous_screening_id: Optional[int] = None
     provisional: bool = False
     deterioration: Optional[DeteriorationResult] = None
+    # New 16 August 2026 — real, previously-missing bug: ORANGE/RED referrals
+    # have always generated a real referral_code (14 August, master doc
+    # v6.0 Section 1.1), but this response never carried it, so the only
+    # unauthenticated caller with no login (the VHW mobile app) had no way
+    # to get the real code at screening time and was fabricating its own
+    # client-side instead — a code that could never actually be looked up
+    # at a hospital. None for GREEN/YELLOW, where no referral is created.
+    referral_code: Optional[str] = None
+    facility_name: Optional[str] = None
+    deadline: Optional[str] = None
 
 
 class ReferralOut(BaseModel):

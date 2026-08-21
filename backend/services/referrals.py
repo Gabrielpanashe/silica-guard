@@ -54,13 +54,20 @@ def create_referral_and_notify(
     tier: str,
     shona_message: str,
     contributing_factors: Optional[List[str]] = None,
-) -> None:
-    """Only acts on ORANGE/RED. Creates the referrals row (facility-matched —
-    see services/facility_matching.py), then sends real SMS via Africa's
-    Talking. pre_alert_sent reflects the actual hospital SMS API call
-    result, not just an attempted/logged intent."""
+) -> Optional[Referral]:
+    """Only acts on ORANGE/RED (returns None otherwise). Creates the
+    referrals row (facility-matched — see services/facility_matching.py),
+    then sends real SMS via Africa's Talking. pre_alert_sent reflects the
+    actual hospital SMS API call result, not just an attempted/logged
+    intent.
+
+    Returns the created Referral (with .referral_code/.facility name/etc
+    already populated) so the caller — routers/screening.py — can surface
+    the real code in POST /api/screen's own response. Previously discarded
+    entirely; see ScreeningResult's referral_code field docstring for why
+    that was a real gap, not just an unused return value."""
     if tier not in _URGENCY_WINDOW:
-        return
+        return None
 
     deadline = datetime.now(timezone.utc).replace(tzinfo=None) + _URGENCY_WINDOW[tier]
 
@@ -123,3 +130,5 @@ def create_referral_and_notify(
         deadline.strftime("%Y-%m-%d %H:%M UTC"),
         contributing_factors,
     )
+
+    return referral
