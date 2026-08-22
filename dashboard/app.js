@@ -68,7 +68,7 @@ async function loadAll() {
   showWakeBanner(true);
   hideError();
   try {
-    const [week, referrals, outreach, miners, screenings, today, mines] = await Promise.all([
+    const [week, referrals, outreach, miners, screenings, today, mines, facilities] = await Promise.all([
       fetchJSON('/api/dashboard/week', { headers: authHeaders() }),
       fetchJSON('/api/referrals', { headers: authHeaders() }),
       fetchJSON('/api/outreach', { headers: authHeaders() }),
@@ -76,12 +76,14 @@ async function loadAll() {
       fetchJSON('/api/screenings?limit=100', { headers: authHeaders() }),
       fetchJSON('/api/dashboard/today', {}), // unauthenticated by design, no headers needed
       fetchJSON('/api/mines', {}), // unauthenticated by design, powers the outreach form's site datalist
+      fetchJSON('/api/facilities', {}), // unauthenticated by design, powers the Facilities Map
     ]);
     showWakeBanner(false);
     renderStats(week, referrals, today);
     renderTierChart(week.tier_distribution);
     renderNarrative(week.ai_narrative);
     renderSiteBreakdown(week.site_breakdown);
+    renderFacilitiesMap(facilities);
     renderReferralTable(referrals);
     renderOutreach(outreach);
     renderMinesDatalist(mines);
@@ -105,26 +107,57 @@ function renderStats(week, referrals, today) {
   $('stat-completion').textContent = `${Math.round(week.referral_completion_rate * 100)}%`;
   const openCount = referrals.filter((r) => !['attended', 'closed'].includes(r.status)).length;
   $('stat-openreferrals').textContent = openCount;
+  // 22 August 2026 — GET /api/dashboard/week's new avg_rescreen_interval_days:
+  // mean day-gap between consecutive screenings of the same miner, across
+  // every miner screened more than once. null until somebody actually has
+  // a repeat screening (a fresh/small demo dataset).
+  $('stat-rescreen-interval').textContent =
+    week.avg_rescreen_interval_days == null ? '—' : `${week.avg_rescreen_interval_days}d`;
 }
 
-// ── RENDER: tier distribution (inline SVG-free CSS bars) ──────
+// ── RENDER: tier distribution + site breakdown (Chart.js, 22-23 August
+// 2026 — previously raw CSS height/width bars, see index.html's head
+// comment on the dashboard's tech-stack decision) ──────────────────────
 const TIER_ORDER = ['GREEN', 'YELLOW', 'ORANGE', 'RED'];
 const TIER_COLOUR = { GREEN: '#02C39A', YELLOW: '#FFB800', ORANGE: '#FF8C00', RED: '#FF3B3B' };
 
+// Chart.js instances are kept here and destroyed before every re-render —
+// loadAll() runs on every login, manual refresh, and 45s auto-refresh tick,
+// and Chart.js throws if you construct a second chart on a canvas that
+// already has one attached.
+let _tierChart = null;
+let _siteChart = null;
+
+// Dark theme to match style.css's --card/--muted/--border tokens — Chart.js
+// defaults to a light-mode grid/text colour that would be unreadable here.
+Chart.defaults.color = '#8BA0B0';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.10)';
+Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+
 function renderTierChart(distribution) {
   const counts = TIER_ORDER.map((t) => distribution?.[t] ?? 0);
-  const max = Math.max(...counts, 1);
-  const el = $('tier-chart');
-  el.innerHTML = TIER_ORDER.map((tier, i) => {
-    const count = counts[i];
-    const heightPct = Math.max((count / max) * 100, count > 0 ? 6 : 2);
-    return `
-      <div class="tier-bar-col">
-        <div class="tier-bar-count" style="color:${TIER_COLOUR[tier]}">${count}</div>
-        <div class="tier-bar" style="height:${heightPct}%; background:${TIER_COLOUR[tier]}"></div>
-        <div class="tier-bar-label">${tier}</div>
-      </div>`;
-  }).join('');
+  const ctx = $('tier-chart-canvas');
+  if (_tierChart) _tierChart.destroy();
+  _tierChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: TIER_ORDER,
+      datasets: [{
+        data: counts,
+        backgroundColor: TIER_ORDER.map((t) => TIER_COLOUR[t]),
+        borderColor: '#111F33',
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 14 } },
+        tooltip: { callbacks: { label: (item) => ` ${item.label}: ${item.raw}` } },
+      },
+    },
+  });
 }
 
 // ── RENDER: AI narrative ──────────────────────────────────────
@@ -134,24 +167,88 @@ function renderNarrative(text) {
 
 // ── RENDER: site breakdown ────────────────────────────────────
 function renderSiteBreakdown(sites) {
-  const el = $('site-breakdown');
+  const ctx = $('site-chart-canvas');
+  if (_siteChart) _siteChart.destroy();
   if (!sites || sites.length === 0) {
-    el.innerHTML = '<p class="muted small">No screenings recorded yet.</p>';
+    return; // empty canvas — no chart to build yet
+  }
+  const sorted = sites.slice().sort((a, b) => b.count - a.count);
+  _siteChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: sorted.map((s) => s.mine_site),
+      datasets: [{
+        data: sorted.map((s) => s.count),
+        backgroundColor: '#02C39A',
+        borderRadius: 4,
+        maxBarThickness: 28,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { precision: 0 }, grid: { color: 'rgba(255,255,255,0.06)' } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
+}
+
+// ── RENDER: Facilities Map (22 August 2026, Leaflet) ────────────
+// GET /api/facilities returns real lat/long for every hospital/clinic the
+// Smart Referral Router routes to — this was true since 12 August but
+// never rendered anywhere until now (dashboard/app.js never even called
+// this endpoint before). Mine/miner locations aren't mapped here — those
+// tables have no coordinates in the schema at all, a real gap, not
+// attempted this close to submission (see docs/DEMO_GUIDE.md Section 11).
+let _facilitiesMap = null;
+const LEVEL_COLOUR = { district_hospital: '#FF3B3B', clinic: '#02C39A' };
+
+function renderFacilitiesMap(facilities) {
+  const el = $('facilities-map');
+  const withCoords = (facilities || []).filter((f) => f.latitude != null && f.longitude != null);
+
+  if (!_facilitiesMap) {
+    _facilitiesMap = L.map(el, { scrollWheelZoom: false });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 18,
+    }).addTo(_facilitiesMap);
+    _facilitiesMap._markerLayer = L.layerGroup().addTo(_facilitiesMap);
+  }
+
+  _facilitiesMap._markerLayer.clearLayers();
+
+  if (withCoords.length === 0) {
+    _facilitiesMap.setView([-19.0, 29.8], 8); // Midlands province, Zimbabwe — sane default
     return;
   }
-  const max = Math.max(...sites.map((s) => s.count), 1);
-  el.innerHTML = sites
-    .slice()
-    .sort((a, b) => b.count - a.count)
-    .map(
-      (s) => `
-      <div class="site-row">
-        <span class="site-name" title="${escapeHtml(s.mine_site)}">${escapeHtml(s.mine_site)}</span>
-        <div class="site-bar-track"><div class="site-bar-fill" style="width:${(s.count / max) * 100}%"></div></div>
-        <span class="site-count">${s.count}</span>
-      </div>`
-    )
-    .join('');
+
+  withCoords.forEach((f) => {
+    const colour = LEVEL_COLOUR[f.level] || '#8BA0B0';
+    L.circleMarker([f.latitude, f.longitude], {
+      radius: 9,
+      color: colour,
+      fillColor: colour,
+      fillOpacity: 0.75,
+      weight: 2,
+    })
+      .bindPopup(
+        `<strong>${escapeHtml(f.name)}</strong><br>${escapeHtml(f.level || '')}<br>${escapeHtml(f.address || '')}${f.phone ? '<br>' + escapeHtml(f.phone) : ''}`
+      )
+      .addTo(_facilitiesMap._markerLayer);
+  });
+
+  const bounds = L.latLngBounds(withCoords.map((f) => [f.latitude, f.longitude]));
+  _facilitiesMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 13 });
+  // Leaflet sizes itself from the container's dimensions at creation time;
+  // this section is inside a tab that's visible on load here (unlike a
+  // hidden-tab map, which would need this call deferred to first reveal),
+  // but the call is cheap and correct to always make after (re)filling it.
+  setTimeout(() => _facilitiesMap.invalidateSize(), 0);
 }
 
 // ── RENDER: referral table ────────────────────────────────────
@@ -301,6 +398,47 @@ async function scheduleOutreachVisit(e) {
   }
 }
 
+// ── Teach Mode's SMS-channel demonstration (22 August 2026) ────
+// See docs/DEMO_GUIDE.md Section 7 and services/education_messages.py for
+// the full context on why this exists instead of the master doc's in-app
+// illustrated cards.
+async function sendEducationTip(e) {
+  e.preventDefault();
+  const errEl = $('education-form-error');
+  const okEl = $('education-form-success');
+  errEl.hidden = true;
+  okEl.hidden = true;
+
+  const site = $('education-site-input').value.trim();
+  const topic = $('education-topic-select').value;
+  if (!site) {
+    errEl.textContent = 'Pick a site.';
+    errEl.hidden = false;
+    return;
+  }
+
+  const btn = $('education-submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const result = await fetchJSON('/api/education/broadcast', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ site, topic }),
+    });
+    okEl.textContent = result.recipient_count === 0
+      ? `No miners registered at ${site} yet — nothing to send.`
+      : `✓ Sent "${result.topic.replace(/_/g, ' ')}" to ${result.sent_count} of ${result.recipient_count} miners at ${site}.`;
+    okEl.hidden = false;
+  } catch (err) {
+    errEl.textContent = err.message || 'Failed to send.';
+    errEl.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send tip';
+  }
+}
+
 // ── RENDER: Miners directory ───────────────────────────────────
 function renderMinersTable() {
   const tbody = $('miners-tbody');
@@ -374,6 +512,7 @@ async function toggleMinerDetail(row) {
     const worker = await fetchJSON(`/api/workers/${encodeURIComponent(phone)}`);
     _minerHistoryCache.set(phone, worker);
     detailEl.innerHTML = renderMinerHistoryHtml(worker);
+    renderMinerTrendChart(detailEl, worker);
   } catch (err) {
     detailEl.innerHTML = `<p class="muted">Could not load history: ${escapeHtml(err.message || 'unknown error')}</p>`;
   }
@@ -383,16 +522,76 @@ function renderMinerHistoryHtml(worker) {
   if (!worker.screenings || worker.screenings.length === 0) {
     return '<p class="muted">No screenings recorded for this miner yet.</p>';
   }
-  return worker.screenings
+  // 22 August 2026 — days_since_previous (WorkerScreeningSummary, new) is
+  // the answer to "how long between this miner's screenings" — previously
+  // this list was the only repeat-screening view anywhere, with no interval
+  // shown at all.
+  const rows = worker.screenings
     .map(
       (s) => `
       <div class="miner-history-row">
         <span class="tier-pill ${s.tier || 'GREEN'}">${s.tier || '—'}</span>
         <span class="muted">${escapeHtml(s.created_at)}</span>
+        ${s.days_since_previous != null ? `<span class="miner-history-gap">+${s.days_since_previous}d since previous</span>` : ''}
         <span class="miner-history-advice">${escapeHtml(s.advice_line || '')}</span>
       </div>`
     )
     .join('');
+  // Canvas only makes sense with 2+ points on a trend line — a single
+  // screening has nothing to compare against.
+  const chartHtml = worker.screenings.length > 1
+    ? '<div class="miner-trend-box"><canvas></canvas></div>'
+    : '';
+  return chartHtml + rows;
+}
+
+// Tier mapped to an ordinal 1-4 purely for plotting position — this is
+// visualisation only, the same ordinal list services/deterioration.py
+// already treats GREEN..RED as internally, not a new scale.
+const TIER_ORDINAL = { GREEN: 1, YELLOW: 2, ORANGE: 3, RED: 4 };
+
+function renderMinerTrendChart(detailEl, worker) {
+  const canvas = detailEl.querySelector('.miner-trend-box canvas');
+  if (!canvas) return; // 0 or 1 screenings — renderMinerHistoryHtml didn't add a canvas
+  const oldestFirst = worker.screenings.slice().reverse();
+  new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: oldestFirst.map((s) => (s.created_at || '').slice(0, 10)),
+      datasets: [{
+        data: oldestFirst.map((s) => TIER_ORDINAL[s.tier] ?? null),
+        stepped: true,
+        borderColor: '#02C39A',
+        backgroundColor: 'rgba(2,195,154,0.15)',
+        fill: true,
+        pointBackgroundColor: oldestFirst.map((s) => TIER_COLOUR[s.tier] || '#8BA0B0'),
+        pointRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => ` ${oldestFirst[item.dataIndex].tier || '—'}`,
+          },
+        },
+      },
+      scales: {
+        y: {
+          min: 0.5, max: 4.5,
+          ticks: {
+            stepSize: 1,
+            callback: (v) => TIER_ORDER[v - 1] || '',
+          },
+          grid: { color: 'rgba(255,255,255,0.06)' },
+        },
+        x: { grid: { display: false } },
+      },
+    },
+  });
 }
 
 // ── RENDER: All Screenings activity log ────────────────────────
@@ -511,6 +710,7 @@ $('miner-tier-filter').addEventListener('change', (e) => {
 });
 
 $('outreach-form').addEventListener('submit', scheduleOutreachVisit);
+$('education-form').addEventListener('submit', sendEducationTip);
 // Default the planner's date field to tomorrow — a visit scheduled for
 // today would already be past next scheduler tick's SMS windows.
 {
