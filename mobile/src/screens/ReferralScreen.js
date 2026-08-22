@@ -9,28 +9,35 @@ import { colours, light, typography, spacing, radius, riskConfig } from '../them
 import { notifyReferralEmail } from '../services/api';
 import PhotoHeader from '../components/PhotoHeader';
 
-// Generate a readable miner ID from phone + timestamp
-const generateReferralId = (phone) => {
-  const digits = phone.replace(/\D/g, '').slice(-4);
-  const stamp  = Date.now().toString().slice(-5);
-  return `SG-${digits}-${stamp}`;
-};
-
-const formatDeadline = (tier) => {
-  const now = new Date();
-  const hours = tier === 'RED' ? 48 : 14 * 24;
-  now.setHours(now.getHours() + hours);
-  return now.toLocaleDateString('en-GB', {
+// Pretty-prints the real deadline the backend computed
+// (referral_cascade.py — 48h for RED, 14 days for ORANGE), e.g.
+// "2026-08-24 07:15:55" -> "Monday, 24 August 2026". Falls back to the raw
+// string if it doesn't parse — real-but-ugly beats a silently blank field.
+const formatDeadlineDisplay = (raw) => {
+  if (!raw) return null;
+  const parsed = new Date(raw.replace(' ', 'T'));
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 };
 
 export default function ReferralScreen({ navigation, route }) {
   const { miner, result } = route.params;
-  const config     = riskConfig[result.tier] || riskConfig.RED;
-  const referralId = generateReferralId(miner.phone);
-  const deadline   = formatDeadline(result.tier);
-  const isRed      = result.tier === 'RED';
+  const config = riskConfig[result.tier] || riskConfig.RED;
+  const isRed  = result.tier === 'RED';
+
+  // Real values from POST /api/screen's response (22 August — previously
+  // fabricated client-side: a fake SG-####-##### id, a hardcoded "Kwekwe
+  // District Hospital", and a locally-recomputed deadline that could drift
+  // from what the backend actually set). null only if this screening never
+  // reached the real backend (a still-offline provisional result) — the
+  // referral will exist once services/offlineQueue.js syncs it, just not
+  // yet, so this shows an honest "not yet synced" state instead of a fake
+  // code nobody could ever look up.
+  const referralCode  = result.referral_code || null;
+  const facilityName  = result.facility_name || 'Not yet matched — will confirm once synced';
+  const deadlineDisplay = formatDeadlineDisplay(result.deadline);
 
   // Fires the moment this card is generated — a real, live email send tied
   // to this exact screen mount (12 August), not just the automatic one
@@ -101,7 +108,7 @@ export default function ReferralScreen({ navigation, route }) {
           <View style={[s.cardHeader, { backgroundColor: config.colour }]}>
             <View style={s.cardHeaderLeft}>
               <Text style={s.cardHeaderLabel}>SILICAGUARD REFERRAL</Text>
-              <Text style={s.cardHeaderId}>{referralId}</Text>
+              <Text style={s.cardHeaderId}>{referralCode || 'Syncing…'}</Text>
             </View>
             <Text style={s.cardHeaderEmoji}>{config.emoji}</Text>
           </View>
@@ -124,8 +131,7 @@ export default function ReferralScreen({ navigation, route }) {
           {/* Facility */}
           <View style={s.cardSection}>
             <Text style={s.cardSectionLabel}>REFER TO</Text>
-            <Text style={s.cardValue}>Kwekwe District Hospital</Text>
-            <Text style={s.cardMeta}>Occupational Health Department · Kwekwe, Midlands</Text>
+            <Text style={s.cardValue}>{facilityName}</Text>
           </View>
 
           <View style={s.cardDivider} />
@@ -137,7 +143,9 @@ export default function ReferralScreen({ navigation, route }) {
               <Text style={[s.deadlineLabel, { color: config.colour }]}>
                 {isRed ? 'ATTEND WITHIN 48 HOURS' : 'ATTEND WITHIN 14 DAYS'}
               </Text>
-              <Text style={s.deadlineDate}>By {deadline}</Text>
+              <Text style={s.deadlineDate}>
+                {deadlineDisplay ? `By ${deadlineDisplay}` : 'Deadline confirms once synced'}
+              </Text>
             </View>
           </View>
 
@@ -167,7 +175,7 @@ export default function ReferralScreen({ navigation, route }) {
             {[
               'Hand this referral card to the miner — they must keep it.',
               'Explain the risk level and urgency in Shona.',
-              `Tell the miner to attend Kwekwe District Hospital by ${isRed ? 'tomorrow' : 'within 14 days'}.`,
+              `Tell the miner to attend ${facilityName} by ${isRed ? 'tomorrow' : 'within 14 days'}.`,
               'Record the miner\'s phone number so you can follow up if they don\'t attend.',
               'The hospital has already received a digital pre-alert.',
             ].map((step, i) => (
@@ -185,7 +193,7 @@ export default function ReferralScreen({ navigation, route }) {
         <View style={s.shonaCard}>
           <Text style={s.shonaTitle}>🗣  Say this to the miner (Shona)</Text>
           <Text style={s.shonaScript}>
-            "{miner.name}, maongororo ako aratidza kuti {config.shona.toLowerCase()}. {result.explanation_shona} {isRed ? 'Enda kuchipatara nhasi kana mangwana.' : 'Enda kuchipatara mumazuva gumi nemana.'} Kwekwe District Hospital — vane ruzivo rwako."
+            "{miner.name}, maongororo ako aratidza kuti {config.shona.toLowerCase()}. {result.explanation_shona} {isRed ? 'Enda kuchipatara nhasi kana mangwana.' : 'Enda kuchipatara mumazuva gumi nemana.'} {facilityName} — vane ruzivo rwako."
           </Text>
         </View>
 

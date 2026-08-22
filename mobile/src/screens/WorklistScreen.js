@@ -1,11 +1,13 @@
 import {
   StyleSheet, Text, View, TouchableOpacity,
-  ScrollView, Linking,
+  ScrollView, Linking, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { useState } from 'react';
 import { colours, light, typography, spacing, radius, riskConfig } from '../theme';
 import PhotoHeader from '../components/PhotoHeader';
+import { confirmReferralAttendance } from '../services/api';
 
 // Explicit colour-coded status, not just raw enum text — mint/checkmark for
 // resolved (attended/closed), amber for still pending, red for missed its
@@ -40,11 +42,44 @@ const STATUS_CONFIG = {
  * follow up with someone who hasn't taken action yet.
  */
 export default function WorklistScreen({ navigation, route }) {
-  const { title = '', shonaTitle = '', items = [], kind = 'log' } = route.params || {};
+  const { title = '', shonaTitle = '', kind = 'log' } = route.params || {};
+
+  // Local copy (22 August) so a successful "Mark Attended" can update this
+  // item's status pill immediately — this screen deliberately has no fetch
+  // of its own (see docstring above), so there's nothing to re-fetch from.
+  const [items, setItems] = useState(route.params?.items || []);
+  const [confirming, setConfirming] = useState({}); // { [referral_id]: true } while a confirm is in flight
 
   const call = (phone) => {
     if (!phone) return;
     Linking.openURL(`tel:${phone}`).catch(() => {});
+  };
+
+  // Uses referral_code (live 22 August on refer_now items) against the same
+  // unauthenticated confirm-attendance route dashboard/lookup.html uses —
+  // PATCH /api/referrals/{id} is auth-gated and this app has no login, so
+  // that route was never reachable from here. See services/api.js.
+  const markAttended = async (item) => {
+    if (!item.referral_code || confirming[item.referral_id]) return;
+    setConfirming((c) => ({ ...c, [item.referral_id]: true }));
+    try {
+      await confirmReferralAttendance(item.referral_code);
+      setItems((prev) =>
+        prev.map((it) => (it.referral_id === item.referral_id ? { ...it, status: 'attended' } : it))
+      );
+    } catch (e) {
+      if (e.status === 409) {
+        // Someone else (the hospital, via the lookup page) already
+        // confirmed it — not a real failure, just reflect that.
+        setItems((prev) =>
+          prev.map((it) => (it.referral_id === item.referral_id ? { ...it, status: 'attended' } : it))
+        );
+      } else {
+        Alert.alert('Could not confirm', e.message || 'Try again in a moment.');
+      }
+    } finally {
+      setConfirming((c) => ({ ...c, [item.referral_id]: false }));
+    }
   };
 
   return (
@@ -108,10 +143,25 @@ export default function WorklistScreen({ navigation, route }) {
                 <Text style={s.deadline}>⏱ Deadline: {item.deadline}</Text>
               )}
 
-              <TouchableOpacity style={s.callRow} onPress={() => call(item.phone)} activeOpacity={0.7}>
-                <Text style={s.callIcon}>📞</Text>
-                <Text style={s.callText}>{item.phone}</Text>
-              </TouchableOpacity>
+              <View style={s.actionsRow}>
+                <TouchableOpacity style={s.callRow} onPress={() => call(item.phone)} activeOpacity={0.7}>
+                  <Text style={s.callIcon}>📞</Text>
+                  <Text style={s.callText}>{item.phone}</Text>
+                </TouchableOpacity>
+
+                {kind === 'refer_now' && item.referral_code && !['attended', 'closed'].includes(item.status) && (
+                  <TouchableOpacity
+                    style={[s.attendBtn, confirming[item.referral_id] && s.attendBtnDisabled]}
+                    onPress={() => markAttended(item)}
+                    activeOpacity={0.75}
+                    disabled={!!confirming[item.referral_id]}
+                  >
+                    <Text style={s.attendBtnText}>
+                      {confirming[item.referral_id] ? 'Confirming…' : '✓ Mark Attended'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           );
         })}
@@ -158,12 +208,23 @@ const s = StyleSheet.create({
   statusPillText: { fontSize: typography.micro, fontWeight: typography.bold, textTransform: 'capitalize' },
   watchCaption: { fontSize: typography.tiny, color: light.textMuted, fontStyle: 'italic', marginTop: spacing.xs },
   deadline: { fontSize: typography.caption, color: light.textMuted, marginTop: spacing.xs },
+  actionsRow: {
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap',
+    gap: spacing.sm, marginTop: spacing.md,
+  },
   callRow: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    marginTop: spacing.md, alignSelf: 'flex-start',
     backgroundColor: 'rgba(47,127,239,0.10)', borderRadius: radius.pill,
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
   },
   callIcon: { fontSize: 14 },
   callText: { fontSize: typography.caption, color: light.accentStart, fontWeight: typography.semibold },
+  // "Mark Attended" (22 August) — filled, not an outline like callRow, so
+  // it reads as the more committal of the two actions.
+  attendBtn: {
+    backgroundColor: colours.low, borderRadius: radius.pill,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
+  },
+  attendBtnDisabled: { opacity: 0.6 },
+  attendBtnText: { fontSize: typography.caption, color: colours.white, fontWeight: typography.semibold },
 });
