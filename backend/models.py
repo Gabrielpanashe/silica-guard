@@ -21,6 +21,12 @@ class WorkerScreeningSummary(BaseModel):
     tier: Optional[str] = None
     created_at: str
     advice_line: Optional[str] = None
+    # 22 August 2026 — days between this screening and the miner's previous
+    # one (None for a miner's first screening, or the oldest in the list).
+    # Powers the dashboard's per-miner trend chart and "how long since last
+    # screened" framing; computed in Python from created_at, no schema
+    # change (routers/workers.py::get_worker_by_phone).
+    days_since_previous: Optional[int] = None
 
 
 class WorkerDetail(BaseModel):
@@ -282,3 +288,32 @@ class ScreeningLogItem(BaseModel):
     channel: str
     advice_line: Optional[str] = None
     created_at: str
+
+
+class OutreachSendNowOut(BaseModel):
+    """22 August 2026 — POST /api/outreach/{id}/send-now. On-demand escape
+    hatch for the outreach 3-day/1-day announcement, which otherwise only
+    fires from the APScheduler job (up to a 10-minute wait, and only once
+    the visit is genuinely inside its window) — added so this can actually
+    be demonstrated live rather than waited out."""
+    visit_id: int
+    site: str
+    stage: str
+    sent_count: int
+
+
+class EducationBroadcastRequest(BaseModel):
+    """22 August 2026 — Teach Mode's SMS-channel demonstration (master doc
+    Section 1's six illustrated in-app cards remain unbuilt; this is a
+    pragmatic stand-in, documented as such in docs/DEMO_GUIDE.md). One of
+    services/education_messages.TOPICS."""
+    site: str
+    topic: str
+
+
+class EducationBroadcastOut(BaseModel):
+    site: str
+    topic: str
+    message_preview: str
+    sent_count: int
+    recipient_count: int
