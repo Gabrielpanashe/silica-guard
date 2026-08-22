@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
-import { colours, typography, spacing, radius, riskConfig } from '../theme';
+import { colours, light, typography, spacing, radius, riskConfig } from '../theme';
 import { getDashboardToday } from '../services/api';
 
 const TIER_ORDER = ['GREEN', 'YELLOW', 'ORANGE', 'RED'];
@@ -67,7 +67,7 @@ export default function OutreachStatsScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={s.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* ── HEADER ── */}
       <View style={s.header}>
@@ -150,7 +150,7 @@ export default function OutreachStatsScreen({ navigation, route }) {
                 <View style={s.reportSection}>
                   <View style={s.summaryRow}>
                     {[
-                      ['Screened', visit.screened_count, colours.white],
+                      ['Screened', visit.screened_count, light.textDark],
                       ['Attended', (visit.referral_list || []).filter((r) => ['attended', 'closed'].includes(r.status)).length, colours.low],
                       ['Pending', (visit.referral_list || []).filter((r) => !['attended', 'closed'].includes(r.status)).length, colours.watch],
                       ['High Risk', (visit.tier_distribution.ORANGE ?? 0) + (visit.tier_distribution.RED ?? 0), colours.refer],
@@ -197,76 +197,76 @@ export default function OutreachStatsScreen({ navigation, route }) {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colours.navy },
+  root: { flex: 1, backgroundColor: light.bg },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
-    borderBottomWidth: 0.5, borderBottomColor: colours.card, gap: spacing.md,
+    borderBottomWidth: 0.5, borderBottomColor: light.border, gap: spacing.md,
   },
   backBtn: {
     width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: colours.card, alignItems: 'center',
-    justifyContent: 'center', borderWidth: 1, borderColor: colours.teal,
+    backgroundColor: light.surface, alignItems: 'center',
+    justifyContent: 'center', borderWidth: 1, borderColor: light.accentStart,
   },
-  backArrow: { fontSize: 18, color: colours.teal },
+  backArrow: { fontSize: 18, color: light.accentStart },
   headerText: { flex: 1 },
-  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: colours.white },
-  headerShona: { fontSize: typography.micro, color: colours.muted, fontStyle: 'italic', marginTop: 1 },
+  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
+  headerShona: { fontSize: typography.micro, color: light.textMuted, fontStyle: 'italic', marginTop: 1 },
   countBadge: {
-    backgroundColor: colours.tealFade, borderRadius: radius.pill,
+    backgroundColor: 'rgba(47,127,239,0.12)', borderRadius: radius.pill,
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    borderWidth: 1, borderColor: colours.teal, minWidth: 32, alignItems: 'center',
+    borderWidth: 1, borderColor: light.accentStart, minWidth: 32, alignItems: 'center',
   },
-  countText: { fontSize: typography.caption, color: colours.teal, fontWeight: typography.black },
+  countText: { fontSize: typography.caption, color: light.accentStart, fontWeight: typography.black },
 
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
-  loadingText: { color: colours.muted, textAlign: 'center', marginTop: spacing.xxl },
+  loadingText: { color: light.textMuted, textAlign: 'center', marginTop: spacing.xxl },
 
   // Cross-site rollup, shown once above every visit card.
   totalsRow: {
-    flexDirection: 'row', backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.mid, padding: spacing.lg,
+    flexDirection: 'row', backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: light.border, padding: spacing.lg,
     marginBottom: spacing.lg, justifyContent: 'space-between',
   },
   totalsStat: { alignItems: 'center', flex: 1 },
-  totalsValue: { fontSize: typography.title, fontWeight: typography.black, color: colours.white },
-  totalsLabel: { fontSize: typography.micro, color: colours.muted, fontWeight: typography.semibold, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
+  totalsValue: { fontSize: typography.title, fontWeight: typography.black, color: light.textDark },
+  totalsLabel: { fontSize: typography.micro, color: light.textMuted, fontWeight: typography.semibold, marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
 
-  pendingNote: { fontSize: typography.caption, color: colours.muted, fontStyle: 'italic', marginTop: spacing.md },
+  pendingNote: { fontSize: typography.caption, color: light.textMuted, fontStyle: 'italic', marginTop: spacing.md },
 
   emptyState: { alignItems: 'center', paddingTop: spacing.xxl * 2, gap: spacing.md },
   emptyEmoji: { fontSize: 40 },
-  emptyText: { fontSize: typography.body, color: colours.muted, textAlign: 'center', paddingHorizontal: spacing.xl },
+  emptyText: { fontSize: typography.body, color: light.textMuted, textAlign: 'center', paddingHorizontal: spacing.xl },
 
   card: {
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.mid,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: light.border,
     padding: spacing.lg, marginBottom: spacing.md,
   },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md },
-  site: { fontSize: typography.body, fontWeight: typography.bold, color: colours.white },
-  meta: { fontSize: typography.caption, color: colours.muted, marginTop: 2 },
+  site: { fontSize: typography.body, fontWeight: typography.bold, color: light.textDark },
+  meta: { fontSize: typography.caption, color: light.textMuted, marginTop: 2 },
   reportBadge: { borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3 },
   reportReady: { backgroundColor: 'rgba(2,195,154,0.15)' },
   reportPending: { backgroundColor: 'rgba(255,184,0,0.15)' },
   reportBadgeText: { fontSize: typography.micro, fontWeight: typography.black, textTransform: 'uppercase', letterSpacing: 0.3 },
 
   progressRow: { marginTop: spacing.md, gap: spacing.xs },
-  progressTrack: { height: 6, backgroundColor: colours.mid, borderRadius: 999, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: colours.mint, borderRadius: 999 },
-  progressText: { fontSize: typography.tiny, color: colours.muted },
+  progressTrack: { height: 6, backgroundColor: light.border, borderRadius: 999, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: light.accentEnd, borderRadius: 999 },
+  progressText: { fontSize: typography.tiny, color: light.textMuted },
 
-  reportSection: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: colours.mid },
+  reportSection: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 0.5, borderTopColor: light.border },
   summaryRow: { flexDirection: 'row', marginBottom: spacing.md, gap: spacing.md },
   summaryStat: { flex: 1 },
   summaryValue: { fontSize: typography.subtitle, fontWeight: typography.black },
-  summaryLabel: { fontSize: typography.micro, color: colours.muted, fontWeight: typography.semibold, marginTop: 1, textTransform: 'uppercase' },
+  summaryLabel: { fontSize: typography.micro, color: light.textMuted, fontWeight: typography.semibold, marginTop: 1, textTransform: 'uppercase' },
   tierRow: { flexDirection: 'row', gap: spacing.lg, marginBottom: spacing.sm },
   tierChip: { alignItems: 'center' },
   tierChipCount: { fontSize: typography.subtitle, fontWeight: typography.black },
-  tierChipLabel: { fontSize: typography.micro, color: colours.muted, fontWeight: typography.semibold, marginTop: 2 },
+  tierChipLabel: { fontSize: typography.micro, color: light.textMuted, fontWeight: typography.semibold, marginTop: 2 },
   referralRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs },
-  referralName: { fontSize: typography.caption, color: colours.offwhite },
-  referralMeta: { fontSize: typography.caption, color: colours.muted, textTransform: 'capitalize' },
-  noReferrals: { fontSize: typography.caption, color: colours.muted, fontStyle: 'italic' },
+  referralName: { fontSize: typography.caption, color: light.textBody },
+  referralMeta: { fontSize: typography.caption, color: light.textMuted, textTransform: 'capitalize' },
+  noReferrals: { fontSize: typography.caption, color: light.textMuted, fontStyle: 'italic' },
 });

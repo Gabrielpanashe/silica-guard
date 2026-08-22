@@ -5,7 +5,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useRef, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { colours, typography, spacing, radius } from '../theme';
+import { colours, light, typography, spacing, radius } from '../theme';
 
 // ─────────────────────────────────────────────────────────────
 //  SCREENING QUESTIONS
@@ -211,7 +211,7 @@ export default function QuestionScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={s.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* ── HEADER ── */}
       <View style={s.header}>
@@ -303,87 +303,87 @@ export default function QuestionScreen({ navigation, route }) {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colours.navy },
+  root: { flex: 1, backgroundColor: light.bg },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingVertical: spacing.md, gap: spacing.md,
   },
   backBtn: {
     width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: colours.card, alignItems: 'center',
-    justifyContent: 'center', borderWidth: 1, borderColor: colours.teal,
+    backgroundColor: light.surface, alignItems: 'center',
+    justifyContent: 'center', borderWidth: 1, borderColor: light.accentStart,
   },
-  backArrow: { fontSize: 18, color: colours.teal },
+  backArrow: { fontSize: 18, color: light.accentStart },
   headerMeta: { flex: 1 },
-  minerName: { fontSize: typography.caption, fontWeight: typography.bold, color: colours.white },
-  minerSub: { fontSize: typography.micro, color: colours.muted, marginTop: 1 },
+  minerName: { fontSize: typography.caption, fontWeight: typography.bold, color: light.textDark },
+  minerSub: { fontSize: typography.micro, color: light.textMuted, marginTop: 1 },
   stepBadge: {
-    backgroundColor: colours.tealFade, borderRadius: radius.pill,
+    backgroundColor: 'rgba(47,127,239,0.12)', borderRadius: radius.pill,
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    borderWidth: 1, borderColor: colours.teal,
+    borderWidth: 1, borderColor: light.accentStart,
   },
-  stepText: { fontSize: typography.tiny, color: colours.teal, fontWeight: typography.bold },
+  stepText: { fontSize: typography.tiny, color: light.accentStart, fontWeight: typography.bold },
   progressTrack: {
-    height: 4, backgroundColor: colours.card,
+    height: 4, backgroundColor: light.border,
     marginHorizontal: spacing.xl, borderRadius: radius.pill, marginBottom: spacing.lg,
   },
-  progressFill: { height: 4, backgroundColor: colours.teal, borderRadius: radius.pill },
+  progressFill: { height: 4, backgroundColor: light.accentStart, borderRadius: radius.pill },
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.sm },
   qNumber: {
     fontSize: typography.micro, fontWeight: typography.bold,
-    color: colours.teal, letterSpacing: 2, marginBottom: spacing.md,
+    color: light.accentStart, letterSpacing: 2, marginBottom: spacing.md,
   },
   qText: {
-    fontSize: 22, fontWeight: typography.black, color: colours.white,
+    fontSize: 22, fontWeight: typography.black, color: light.textDark,
     lineHeight: 30, letterSpacing: -0.3, marginBottom: spacing.md,
   },
   qShona: {
-    fontSize: typography.body, color: colours.muted,
+    fontSize: typography.body, color: light.textMuted,
     fontStyle: 'italic', lineHeight: 22, marginBottom: spacing.md,
   },
   captionBadge: {
-    alignSelf: 'flex-start', backgroundColor: colours.tealFade,
+    alignSelf: 'flex-start', backgroundColor: 'rgba(47,127,239,0.12)',
     borderRadius: radius.pill, paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs, borderWidth: 1,
-    borderColor: colours.teal, marginBottom: spacing.lg,
+    borderColor: light.accentStart, marginBottom: spacing.lg,
   },
-  captionText: { fontSize: typography.tiny, color: colours.teal, fontWeight: typography.semibold },
+  captionText: { fontSize: typography.tiny, color: light.accentStart, fontWeight: typography.semibold },
   answersContainer: { gap: spacing.md, marginTop: spacing.sm, marginBottom: spacing.xl },
   answerCard: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1.5, borderColor: colours.mid, padding: spacing.lg, gap: spacing.md,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1.5, borderColor: light.border, padding: spacing.lg, gap: spacing.md,
   },
-  answerCardSelected: { borderColor: colours.teal, backgroundColor: colours.tealFade },
+  answerCardSelected: { borderColor: light.accentStart, backgroundColor: 'rgba(47,127,239,0.08)' },
   answerRadio: {
     width: 22, height: 22, borderRadius: 11,
-    borderWidth: 2, borderColor: colours.muted,
+    borderWidth: 2, borderColor: light.textMuted,
     alignItems: 'center', justifyContent: 'center',
   },
-  answerRadioSelected: { borderColor: colours.teal },
-  answerRadioInner: { width: 11, height: 11, borderRadius: 6, backgroundColor: colours.teal },
+  answerRadioSelected: { borderColor: light.accentStart },
+  answerRadioInner: { width: 11, height: 11, borderRadius: 6, backgroundColor: light.accentStart },
   answerText: { flex: 1 },
-  answerLabel: { fontSize: typography.body, fontWeight: typography.semibold, color: colours.muted },
-  answerLabelSelected: { color: colours.white },
-  answerShona: { fontSize: typography.tiny, color: colours.muted, fontStyle: 'italic', marginTop: 2 },
-  answerShonaSelected: { color: colours.teal },
+  answerLabel: { fontSize: typography.body, fontWeight: typography.semibold, color: light.textBody },
+  answerLabelSelected: { color: light.textDark },
+  answerShona: { fontSize: typography.tiny, color: light.textMuted, fontStyle: 'italic', marginTop: 2 },
+  answerShonaSelected: { color: light.accentStart },
   selectedCheck: {
     width: 26, height: 26, borderRadius: 13,
-    backgroundColor: colours.teal, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: light.accentStart, alignItems: 'center', justifyContent: 'center',
   },
   checkMark: { fontSize: 13, color: colours.white, fontWeight: typography.bold },
   nextBtn: { marginTop: spacing.sm },
   nextBtnDisabled: { opacity: 0.4 },
   nextInner: {
-    backgroundColor: colours.teal, borderRadius: radius.lg,
+    backgroundColor: light.accentStart, borderRadius: radius.lg,
     padding: spacing.xl, alignItems: 'center',
-    borderWidth: 2, borderColor: colours.mint, zIndex: 2,
+    borderWidth: 2, borderColor: light.accentEnd, zIndex: 2,
   },
-  nextInnerDisabled: { backgroundColor: colours.mid, borderColor: colours.mid },
+  nextInnerDisabled: { backgroundColor: light.border, borderColor: light.border },
   nextShadow: {
     position: 'absolute', bottom: -5, right: -5, left: 5,
     height: '100%', borderRadius: radius.lg,
-    backgroundColor: colours.mint, zIndex: 1, opacity: 0.3,
+    backgroundColor: light.accentEnd, zIndex: 1, opacity: 0.3,
   },
   nextText: {
     fontSize: typography.body, fontWeight: typography.black,

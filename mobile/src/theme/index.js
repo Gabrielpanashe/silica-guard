@@ -29,6 +29,31 @@ export const colours = {
   whiteFade:  'rgba(255,255,255,0.07)',
 };
 
+// Light surface palette — medical-booking-app redesign (16 August), starting
+// with LandingScreen. Additive only: every screen still on the dark `navy`/
+// `card` surfaces above keeps working untouched. Migrate a screen at a time;
+// don't rename/remove the dark tokens above until every screen that reads
+// them has moved.
+//
+// Accent switched from the reference mock's teal/mint to a Cimas-style blue
+// (16 August, per reference: cimas.co.zw's brand blue) — SilicaGuard is
+// built for the Cimas Healthathon (see ReferralScreen.js's card footer), so
+// this reads as "on-brand for the sponsor" rather than the generic mock's
+// teal. `colours.teal`/`colours.mint` above are untouched — still used by
+// every dark screen — this is a separate accent pair for `light` surfaces.
+export const light = {
+  bg:          '#EFF6FF',   // page background — pale azure
+  bgAlt:       '#DCEAFB',   // decorative blob / section fill
+  surface:     '#FFFFFF',   // cards
+  surfaceAlt:  '#F2F7FE',   // soft inset surface (search bars, chips)
+  border:      '#DCE7F7',
+  textDark:    colours.navy, // headings — reuse existing brand navy, just on light bg now
+  textBody:    '#3A4A54',
+  textMuted:   '#7C8DA6',
+  accentStart: '#0B3D91',   // deep royal blue — gradient dark end
+  accentEnd:   '#2F7FEF',   // vivid blue — gradient bright end, ~cimas.co.zw button blue
+};
+
 export const typography = {
   // Weights
   black:      '900',
@@ -109,4 +134,4 @@ export const riskConfig = {
   },
 };
 
-export default { colours, typography, spacing, radius, riskConfig };
+export default { colours, light, typography, spacing, radius, riskConfig };

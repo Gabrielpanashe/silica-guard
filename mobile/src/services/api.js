@@ -18,7 +18,9 @@ const authHeaders = () => ({
 const handleResponse = async (res) => {
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data?.detail || `HTTP ${res.status}`);
+    const err = new Error(data?.detail || `HTTP ${res.status}`);
+    err.status = res.status; // lets a caller distinguish e.g. 409 "already done" from a real failure
+    throw err;
   }
   return data;
 };
@@ -95,6 +97,35 @@ export const getWorkerByPhone = async (phone) => {
   return handleResponse(res);
 };
 
+/**
+ * Resolves a { name, phone, mine_site } to a backend miner_id, registering
+ * them if this is the first time or looking them up if they already exist
+ * (409). Pulled out of ResultScreen.js (16 August) so
+ * services/offlineQueue.js's retry path uses the exact same
+ * register-or-look-up logic instead of a second, driftable copy —
+ * `resolveMinerId(miner)` replaces ResultScreen's old inline try/catch.
+ *
+ * @param {object} miner — { name, phone, mine_site }
+ * @returns {Promise<number>} miner_id
+ */
+export const resolveMinerId = async (miner) => {
+  try {
+    const worker = await registerWorker({
+      name: miner.name,
+      phone: miner.phone,
+      mine_site: miner.mine_site,
+    });
+    return worker.id;
+  } catch (e) {
+    const msg = e.message?.toLowerCase() || '';
+    if (msg.includes('already registered') || msg.includes('409')) {
+      const existing = await getWorkerByPhone(miner.phone);
+      return existing.id;
+    }
+    throw e; // genuine failure — caller decides what to do
+  }
+};
+
 // ── SCREENING ─────────────────────────────────────────────────
 /**
  * Submit a completed screening.
@@ -119,6 +150,10 @@ export const getWorkerByPhone = async (phone) => {
  *   previous_screening_id number | null
  *   provisional           boolean
  *   deterioration         { compared_to_screening_id, changed, summary }
+ *   referral_code         string | null  (22 August — the REAL code, ORANGE/RED only;
+ *                          null for GREEN/YELLOW where no referral exists)
+ *   facility_name         string | null  (same conditions as referral_code)
+ *   deadline              string | null  (same conditions as referral_code)
  *
  * Error 404: unknown miner_id
  * Error 422: empty answers
@@ -208,7 +243,12 @@ export const getDashboardWeek = async () => {
  * Response:
  *   screened_today  number
  *   todays_log      [{ screening_id, miner_name, phone, mine_site, tier, created_at }]
- *   refer_now       { count, items: [{ referral_id, miner_name, phone, mine_site, tier, status, deadline }] }
+ *   refer_now       { count, items: [{ referral_id, miner_name, phone, mine_site, tier,
+ *                     status, deadline, referral_code, facility_name }] }
+ *                     — referral_code/facility_name live 22 August, specifically so
+ *                     the mobile app (no login) can confirm attendance via
+ *                     confirmReferralAttendance() below instead of the auth-gated
+ *                     PATCH /api/referrals/{id}, which it can never reach.
  *   watch           { count, items: [{ screening_id, miner_name, phone, mine_site, tier, created_at }] }
  *
  * refer_now is a live worklist (not scoped to today) — an item drops off
@@ -312,6 +352,26 @@ export const notifyReferralEmail = async (phone) => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone }),
+  });
+  return handleResponse(res);
+};
+
+/**
+ * Mark a referral attended, by its referral_code — the mobile-reachable
+ * equivalent of updateReferralStatus() above, which hits an auth-gated
+ * route this app can never call (no login). Same unauthenticated route
+ * dashboard/lookup.html uses (22 August).
+ * POST /api/referrals/lookup/{code}/confirm-attendance — unauthenticated.
+ *
+ * @param {string} code — e.g. "SG-4K7Q"
+ * Response: { referral_code, status: "attended", attended_at }
+ * Error 404: unknown code
+ * Error 409: already attended/closed — treat as success, not a real failure
+ */
+export const confirmReferralAttendance = async (code) => {
+  const res = await fetch(`${BASE_URL}/api/referrals/lookup/${encodeURIComponent(code)}/confirm-attendance`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
   });
   return handleResponse(res);
 };

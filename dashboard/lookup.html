@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SilicaGuard — Referral Code Lookup</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Standalone, unauthenticated (16 August, master doc v6.0 Section
+       1.1/16.6) — hospital/clinic staff have no dashboard login, same
+       precedent as POST /api/screen and GET /api/workers/{phone}. Backed
+       by GET /api/referrals/lookup/{code} and
+       POST /api/referrals/lookup/{code}/confirm-attendance
+       (backend/routers/referral_lookup.py), live since 14 August but
+       unconsumed by any frontend until now. -->
+  <div class="login-wrap">
+    <div class="login-card lookup-card">
+      <div class="brand">
+        <span class="brand-word">SILICA</span><span class="brand-accent">Guard<span class="brand-dot">●</span></span>
+      </div>
+      <p class="login-sub">Referral Code Lookup</p>
+      <p class="login-hint">
+        For hospital and clinic staff. Enter the code from the miner's SMS or referral
+        card to see their screening result and confirm they attended.
+      </p>
+
+      <form id="lookup-form">
+        <label class="field-label" for="code-input">Referral code</label>
+        <div class="lookup-code-row">
+          <input
+            id="code-input"
+            type="text"
+            placeholder="SG-4K7Q"
+            autocapitalize="characters"
+            autocomplete="off"
+            maxlength="12"
+          />
+          <button type="submit" id="lookup-btn">Look up</button>
+        </div>
+        <p id="lookup-error" class="error-text" hidden></p>
+      </form>
+
+      <div id="result-panel" class="lookup-result" hidden>
+        <div class="lookup-result-head">
+          <span id="result-tier" class="tier-pill"></span>
+          <span id="result-code" class="lookup-code-display"></span>
+        </div>
+
+        <div class="lookup-field">
+          <div class="lookup-field-label">Patient</div>
+          <div class="lookup-field-value" id="result-miner"></div>
+        </div>
+
+        <div class="lookup-field">
+          <div class="lookup-field-label">Refer to</div>
+          <div class="lookup-field-value" id="result-facility"></div>
+        </div>
+
+        <div class="lookup-field">
+          <div class="lookup-field-label">Deadline</div>
+          <div class="lookup-field-value" id="result-deadline"></div>
+        </div>
+
+        <div class="lookup-field">
+          <div class="lookup-field-label">Advice given to patient</div>
+          <div class="lookup-field-value" id="result-advice"></div>
+        </div>
+
+        <div class="lookup-field" id="result-factors-wrap">
+          <div class="lookup-field-label">Contributing factors</div>
+          <div class="lookup-factors" id="result-factors"></div>
+        </div>
+
+        <div id="attended-banner" class="lookup-attended-banner" hidden></div>
+        <button id="confirm-btn" type="button" style="width:100%; margin-top: 14px;">Confirm Attendance</button>
+        <p id="confirm-error" class="error-text" hidden></p>
+      </div>
+
+      <div id="not-found-panel" class="lookup-not-found" hidden>
+        No referral found for that code. Check it against the miner's SMS or referral card and try again.
+      </div>
+
+      <p class="login-footnote">First lookup of the day can take up to a minute — the free-tier backend has to wake up.</p>
+    </div>
+  </div>
+
+  <script src="lookup.js"></script>
+</body>
+</html>

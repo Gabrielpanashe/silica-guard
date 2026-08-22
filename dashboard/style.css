@@ -107,6 +107,7 @@ body {
   border-radius: 999px; padding: 7px 16px; font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
 .btn-ghost:hover { border-color: var(--teal); color: var(--teal); }
+a.btn-ghost { text-decoration: none; display: inline-block; }
 .btn-signout:hover { border-color: var(--refer); color: var(--refer); }
 .role-badge {
   font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px;
@@ -333,3 +334,36 @@ body {
   .outreach-form-row { flex-direction: column; align-items: stretch; }
   .outreach-form-field-narrow { width: 100%; }
 }
+
+/* ── Referral Code Lookup (lookup.html, 16 August) ──
+   Standalone, unauthenticated page for hospital/clinic staff — no login,
+   same precedent as POST /api/screen. Reuses .login-wrap/.login-card for
+   the centred-card frame rather than inventing a second layout. */
+.lookup-card { max-width: 440px; }
+.lookup-code-row { display: flex; gap: 8px; align-items: flex-start; }
+.lookup-code-row input { flex: 1; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; }
+#lookup-btn, #confirm-btn {
+  background: var(--teal); color: var(--white); border: 2px solid var(--mint);
+  border-radius: var(--radius-md); padding: 10px 16px; font-size: 14px; font-weight: 800;
+  letter-spacing: 0.3px; cursor: pointer; white-space: nowrap;
+}
+#lookup-btn:hover, #confirm-btn:hover { filter: brightness(1.08); }
+#lookup-btn:disabled, #confirm-btn:disabled { opacity: 0.6; cursor: wait; }
+
+.lookup-result { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border-strong); }
+.lookup-result-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.lookup-code-display { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 15px; font-weight: 700; color: var(--white); letter-spacing: 0.5px; }
+.lookup-field { margin-bottom: 14px; }
+.lookup-field-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 4px; }
+.lookup-field-value { font-size: 14.5px; color: var(--offwhite); line-height: 1.5; }
+.lookup-factors { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.lookup-factor-chip {
+  font-size: 11.5px; background: var(--card-2); border: 1px solid var(--border-strong);
+  border-radius: 999px; padding: 3px 10px; color: var(--offwhite);
+}
+.lookup-attended-banner {
+  background: rgba(2,195,154,0.12); border: 1px solid var(--low); color: var(--low);
+  border-radius: var(--radius-md); padding: 12px 14px; font-size: 13.5px; font-weight: 700;
+  margin-top: 6px;
+}
+.lookup-not-found { color: var(--muted); font-size: 13.5px; text-align: center; padding: 12px 0; }

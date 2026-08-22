@@ -6,7 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { colours, typography, spacing, radius } from '../theme';
+import { colours, light, typography, spacing, radius } from '../theme';
 import MineSitePicker from '../components/MineSitePicker';
 import { useOutreachSite } from '../context/OutreachSiteContext';
 
@@ -45,7 +45,7 @@ export default function IntakeScreen({ navigation }) {
 
   return (
     <SafeAreaView style={s.root}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
 
       {/* ── HEADER ── */}
       <View style={s.header}>
@@ -81,7 +81,7 @@ export default function IntakeScreen({ navigation }) {
             <TextInput
               style={[s.input, errors.name && s.inputError]}
               placeholder="e.g. Tendai Moyo"
-              placeholderTextColor={colours.muted}
+              placeholderTextColor={light.textMuted}
               value={name}
               onChangeText={t => { setName(t); setErrors(e => ({ ...e, name: null })); }}
               autoCapitalize="words"
@@ -95,7 +95,7 @@ export default function IntakeScreen({ navigation }) {
             <TextInput
               style={[s.input, errors.phone && s.inputError]}
               placeholder="+263771234567"
-              placeholderTextColor={colours.muted}
+              placeholderTextColor={light.textMuted}
               value={phone}
               onChangeText={t => { setPhone(t); setErrors(e => ({ ...e, phone: null })); }}
               keyboardType="phone-pad"
@@ -116,7 +116,7 @@ export default function IntakeScreen({ navigation }) {
           <View style={s.infoCard}>
             <Text style={s.infoIcon}>ℹ️</Text>
             <Text style={s.infoText}>
-              The next step is 10 clinical questions. They take about 5 minutes. 
+              The next step is 10 clinical questions. They take about 5 minutes.
               Read each question aloud to the miner — they do not need to touch the screen.
             </Text>
           </View>
@@ -138,71 +138,73 @@ export default function IntakeScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colours.navy },
+  root: { flex: 1, backgroundColor: light.bg },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.xl, paddingVertical: spacing.md,
-    borderBottomWidth: 0.5, borderBottomColor: colours.card, gap: spacing.md,
+    borderBottomWidth: 0.5, borderBottomColor: light.border, gap: spacing.md,
   },
   backBtn: {
     width: 36, height: 36, borderRadius: radius.sm,
-    backgroundColor: colours.card, alignItems: 'center',
-    justifyContent: 'center', borderWidth: 1, borderColor: colours.teal,
+    backgroundColor: light.surface, alignItems: 'center',
+    justifyContent: 'center', borderWidth: 1, borderColor: light.accentStart,
   },
-  backArrow: { fontSize: 18, color: colours.teal },
+  backArrow: { fontSize: 18, color: light.accentStart },
   headerText: { flex: 1 },
-  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: colours.white },
-  headerShona: { fontSize: typography.micro, color: colours.muted, fontStyle: 'italic', marginTop: 1 },
+  headerTitle: { fontSize: typography.subtitle, fontWeight: typography.bold, color: light.textDark },
+  headerShona: { fontSize: typography.micro, color: light.textMuted, fontStyle: 'italic', marginTop: 1 },
   stepBadge: {
-    backgroundColor: colours.tealFade, borderRadius: radius.pill,
+    backgroundColor: 'rgba(47,127,239,0.12)', borderRadius: radius.pill,
     paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-    borderWidth: 1, borderColor: colours.teal,
+    borderWidth: 1, borderColor: light.accentStart,
   },
-  stepText: { fontSize: typography.tiny, color: colours.teal, fontWeight: typography.bold },
+  stepText: { fontSize: typography.tiny, color: light.accentStart, fontWeight: typography.bold },
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg },
   sectionLabel: {
     fontSize: typography.micro, fontWeight: typography.bold,
-    color: colours.teal, letterSpacing: 2, marginBottom: spacing.sm,
+    color: light.accentStart, letterSpacing: 2, marginBottom: spacing.sm,
   },
   sectionHint: {
-    fontSize: typography.caption, color: colours.muted,
+    fontSize: typography.caption, color: light.textMuted,
     marginBottom: spacing.xl, lineHeight: 18,
   },
   field: { marginBottom: spacing.lg },
   fieldLabel: {
-    fontSize: typography.caption, color: colours.muted,
+    fontSize: typography.caption, color: light.textMuted,
     fontWeight: typography.semibold, marginBottom: spacing.xs,
     textTransform: 'uppercase', letterSpacing: 0.5,
   },
-  required: { color: colours.red },
+  // Was `colours.red`, a key that doesn't exist in theme/index.js (only
+  // `colours.refer`) — fixed while converting this screen's colours.
+  required: { color: colours.refer },
   input: {
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1.5, borderColor: colours.mid,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1.5, borderColor: light.border,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-    fontSize: typography.body, color: colours.white,
+    fontSize: typography.body, color: light.textDark,
   },
-  inputError: { borderColor: colours.red },
-  errorText: { fontSize: typography.tiny, color: colours.red, marginTop: spacing.xs, fontWeight: typography.semibold },
-  fieldHint: { fontSize: typography.tiny, color: colours.muted, marginTop: spacing.xs, lineHeight: 16 },
+  inputError: { borderColor: colours.refer },
+  errorText: { fontSize: typography.tiny, color: colours.refer, marginTop: spacing.xs, fontWeight: typography.semibold },
+  fieldHint: { fontSize: typography.tiny, color: light.textMuted, marginTop: spacing.xs, lineHeight: 16 },
   infoCard: {
     flexDirection: 'row', gap: spacing.md,
-    backgroundColor: colours.card, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.teal,
+    backgroundColor: light.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: light.accentStart,
     padding: spacing.lg, marginBottom: spacing.xl,
     borderLeftWidth: 4,
   },
   infoIcon: { fontSize: 18 },
-  infoText: { flex: 1, fontSize: typography.caption, color: colours.muted, lineHeight: 18 },
+  infoText: { flex: 1, fontSize: typography.caption, color: light.textBody, lineHeight: 18 },
   nextBtn: { marginTop: spacing.sm },
   nextInner: {
-    backgroundColor: colours.teal, borderRadius: radius.lg,
+    backgroundColor: light.accentStart, borderRadius: radius.lg,
     padding: spacing.xl, alignItems: 'center',
-    borderWidth: 2, borderColor: colours.mint, zIndex: 2,
+    borderWidth: 2, borderColor: light.accentEnd, zIndex: 2,
   },
   nextShadow: {
     position: 'absolute', bottom: -5, right: -5, left: 5,
     height: '100%', borderRadius: radius.lg,
-    backgroundColor: colours.mint, zIndex: 1, opacity: 0.3,
+    backgroundColor: light.accentEnd, zIndex: 1, opacity: 0.3,
   },
   nextText: { fontSize: typography.body, fontWeight: typography.black, color: colours.white, letterSpacing: 0.5 },
   nextShona: { fontSize: typography.caption, color: 'rgba(255,255,255,0.7)', marginTop: spacing.xs, fontStyle: 'italic' },
