@@ -80,6 +80,16 @@ export default function ResultScreen({ navigation, route }) {
         // a re-screened miner never showed anything different from a
         // brand-new one. { compared_to_screening_id, changed, summary }.
         deterioration: screening.deterioration,
+        // Real referral_code/facility_name/deadline (22 August) — backend
+        // has returned these since 16/21 August (see docs/API_CONTRACT.md),
+        // but this setResult() never actually copied them out of the
+        // response, so ReferralScreen's switch away from its old
+        // generateReferralId()/formatDeadline() fakes (this same session)
+        // was still receiving undefined for all three. None for GREEN/
+        // YELLOW, where no referral is created.
+        referral_code: screening.referral_code,
+        facility_name: screening.facility_name,
+        deadline: screening.deadline,
       });
       setOffline(false);
 
