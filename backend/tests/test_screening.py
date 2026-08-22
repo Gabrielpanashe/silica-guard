@@ -398,3 +398,72 @@ def test_screen_ai_failure_returns_502(client):
 
     assert resp.status_code == 502
     assert resp.json()["detail"] == "AI risk engine unavailable, please retry"
+
+
+def test_screen_ai_failure_leaves_no_orphaned_screening_row(client):
+    """23 August 2026 — real bug found live: a failed AI call used to leave
+    the already-committed screening+answers permanently orphaned (tier
+    forever NULL), and every mobile retry (services/offlineQueue.js, fires
+    on every HomeScreen focus) created a brand-new row on top rather than
+    completing that one — one miner accumulated 18 rows during a real
+    Gemini flakiness window, inflating screened_today/the dashboard's
+    Miners screening_count. A 502 must now clean up after itself so a
+    retry starts from zero rows, not N."""
+    from db_models import Screening, ScreeningAnswer
+
+    miner_id = _register_miner(client, phone="+263700000006")
+
+    with patch(
+        "routers.screening.assess_risk", side_effect=RuntimeError("Gemini is down")
+    ):
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+        client.post("/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()})
+
+    db = database.get_fresh_session()
+    try:
+        assert db.query(Screening).filter_by(miner_id=miner_id).count() == 0
+        assert db.query(ScreeningAnswer).count() == 0
+    finally:
+        db.close()
+
+    # Once the AI recovers, a "retry" (a fresh POST /api/screen, exactly
+    # what the mobile app's offline queue does) produces exactly one row.
+    with patch("routers.screening.assess_risk", return_value=FAKE_RESULT):
+        resp = client.post(
+            "/api/screen", json={"miner_id": miner_id, "answers": _ten_answers()}
+        )
+    assert resp.status_code == 200
+
+    db = database.get_fresh_session()
+    try:
+        assert db.query(Screening).filter_by(miner_id=miner_id).count() == 1
+    finally:
+        db.close()
+
+
+def test_screen_ai_failure_decrements_outreach_screened_count(client):
+    """The screened_count increment (for a screening linked to an outreach
+    visit) must roll back alongside the orphaned row, or a failed attempt
+    would permanently inflate a visit's live headcount."""
+    from db_models import OutreachVisit
+
+    visit_resp = client.post(
+        "/api/outreach",
+        json={"site": "Sherwood Mine", "scheduled_date": "2026-09-01", "expected_headcount": 5},
+    )
+    visit_id = visit_resp.json()["id"]
+    miner_id = _register_miner(client, phone="+263700000007")
+
+    with patch(
+        "routers.screening.assess_risk", side_effect=RuntimeError("Gemini is down")
+    ):
+        client.post(
+            "/api/screen",
+            json={"miner_id": miner_id, "outreach_visit_id": visit_id, "answers": _ten_answers()},
+        )
+
+    db = database.get_fresh_session()
+    try:
+        assert db.get(OutreachVisit, visit_id).screened_count == 0
+    finally:
+        db.close()
