@@ -14,28 +14,39 @@ from models import ScreeningAnswerIn
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "risk_engine_prompt.txt"
 SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
 
-MODEL = "gemini-flash-latest"
+# 23 August 2026 — root-caused live, not guessed: "gemini-flash-latest" is a
+# MOVING ALIAS, and Google had silently repointed it at a brand-new model
+# generation (Gemini 3.x was already in this project's model catalog,
+# alongside 3.1/3.5/3.6/3.7) — freshly-released models are exactly what
+# gets 503'd/queued under load before Google finishes scaling capacity for
+# them. Confirmed directly: gemini-3.6-flash (Google's own suggested
+# replacement once even gemini-2.5-flash came back 404 "no longer
+# available to new users") returned successfully every time but with
+# wildly inconsistent latency — 1.8s, 10.3s, 12.1s, 29.1s, 61.8s, 101.9s
+# across 6 back-to-back calls — worse for a live demo than an occasional
+# clean 503, since it never fails fast, it just hangs unpredictably.
+#
+# gemini-3.1-flash-lite tested consistently fast (~1-2s, zero retries
+# needed across 6 calls) AND produced clinically consistent judgments
+# matching what the flagship model concluded independently on the same
+# two test cases (a heavy-exposure/mild-symptom scenario → ORANGE both
+# times; a low-exposure/asymptomatic scenario → GREEN both times, high
+# confidence). Pinned to this specific version, not another "-latest"
+# alias, so this can't silently repoint at an unstable model again —
+# revisit deliberately, not by surprise.
+MODEL = "gemini-3.1-flash-lite"
 
 logger = logging.getLogger("silicaguard.ai_risk_engine")
 
-# 23 August 2026 — found live, via Render's own request logs, that
-# POST /api/screen's 502s were caused by Gemini itself returning a genuine
-# "503 Service Unavailable" for gemini-flash-latest, not a code bug, bad
-# key, or network problem (a request against the same key from a different
-# network succeeded on the very next attempt). A 503 from Gemini is
-# Google's own "model temporarily overloaded, try again" signal, not a
-# hard failure — a short retry-with-backoff resolves most of these without
-# ever surfacing a 502 to the miner at all. Against the APP path's no hard
-# deadline (unlike the USSD path's true 10-second limit, which never calls
-# this function at all).
+# Retry-with-backoff for whatever transient failures remain (a 503, a
+# brief network blip) — cheap insurance now that MODEL itself is the
+# primary fix, not the main mitigation it was before pinning away from
+# the unstable "-latest" alias.
 #
 # _REQUEST_TIMEOUT_MS caps each individual attempt — added after a live
-# test showed a "successful" retry taking 83 seconds end-to-end with no
-# per-call timeout set at all (the SDK's own default was left to whatever
-# it is, observed to be very generous), which is a bad experience even
-# when it does eventually work. 3 attempts x 12s worst case + backoff
-# bounds the whole function to roughly 38s worst case instead of however
-# long an unbounded hang could take.
+# test against the old alias showed a "successful" retry taking 83
+# seconds end-to-end with no per-call timeout set at all (the SDK's own
+# default was left to whatever it is, observed to be very generous).
 _MAX_ATTEMPTS = 3
 _BACKOFF_SECONDS = (0.5, 1.5)
 _REQUEST_TIMEOUT_MS = 12_000
