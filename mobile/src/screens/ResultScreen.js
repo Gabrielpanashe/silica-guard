@@ -27,6 +27,14 @@ export default function ResultScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [result, setResult]   = useState(null);
   const [offline, setOffline] = useState(false);
+  // 23 August 2026 — a 502 from POST /api/screen means the backend was
+  // reached fine and the miner's answers were received; only the Gemini
+  // call inside it failed. That's a materially different situation from a
+  // real network failure (fetch throws before any response arrives, no
+  // `.status` on the error — see services/api.js's handleResponse) and
+  // deserves different, honest banner copy instead of "offline mode,
+  // backend unavailable" for both.
+  const [aiUnavailable, setAiUnavailable] = useState(false);
   // Set once the offline-scored screening has been written to the local
   // pending-sync queue (16 August) — see services/offlineQueue.js. Purely
   // informational (drives the banner copy below); the queue write itself
@@ -102,7 +110,21 @@ export default function ResultScreen({ navigation, route }) {
         console.warn("Could not load screening history:", histErr.message);
       }
     } catch (err) {
-      console.warn("Backend unavailable, using offline score:", err.message);
+      // status 502 = services/ai_risk_engine.py's assess_risk() threw
+      // (Gemini flaked) — the backend itself received and briefly stored
+      // the answers just fine. Anything else with no status at all is a
+      // real fetch() failure (genuine no-connectivity). Both still fall
+      // back to the same offline-scored/queued-for-retry behaviour below —
+      // the miner still needs a result on screen either way — but the
+      // banner text now says which one actually happened.
+      const isAiFailure = err.status === 502;
+      setAiUnavailable(isAiFailure);
+      console.warn(
+        isAiFailure
+          ? "AI risk engine unavailable, using offline score:"
+          : "Backend unreachable, using offline score:",
+        err.message
+      );
       const scored = offlineScore(answers);
       const tier = scored?.tier || "GREEN";
       const total = scored?.total || 0;
@@ -179,15 +201,17 @@ export default function ResultScreen({ navigation, route }) {
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
-        {/* Offline banner — copy updated (16 August) once this screening
-            actually gets queued and retried instead of just vanishing;
-            see services/offlineQueue.js. */}
+        {/* Offline banner — copy updated (16 August, then 23 August to stop
+            calling an AI-side 502 "offline mode" — see aiUnavailable's
+            declaration above for why that distinction matters). */}
         {offline && (
           <View style={s.offlineBanner}>
             <Text style={s.offlineText}>
-              📵 Offline mode — backend unavailable. Scored algorithmically with safety overrides.
+              {aiUnavailable
+                ? '🤖 AI assessment temporarily unavailable — backend is reachable, only Gemini failed. Scored algorithmically with safety overrides as a backup.'
+                : '📵 Offline mode — backend unreachable. Scored algorithmically with safety overrides.'}
               {queued
-                ? ' This screening is queued and will sync automatically once the connection is back.'
+                ? ' This screening is queued and will sync automatically once it goes through.'
                 : ' Could not save it to the sync queue — screen this miner again once you have a connection.'}
             </Text>
           </View>
