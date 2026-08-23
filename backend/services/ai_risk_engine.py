@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List
 
 from google import genai
+from google.genai import types
 
 from models import ScreeningAnswerIn
 
@@ -24,12 +25,20 @@ logger = logging.getLogger("silicaguard.ai_risk_engine")
 # network succeeded on the very next attempt). A 503 from Gemini is
 # Google's own "model temporarily overloaded, try again" signal, not a
 # hard failure — a short retry-with-backoff resolves most of these without
-# ever surfacing a 502 to the miner at all. 3 attempts / short backoff
-# keeps the added worst-case latency small (~2s) against the APP path's
-# no hard deadline (unlike the USSD path's true 10-second limit, which
-# never calls this function at all).
+# ever surfacing a 502 to the miner at all. Against the APP path's no hard
+# deadline (unlike the USSD path's true 10-second limit, which never calls
+# this function at all).
+#
+# _REQUEST_TIMEOUT_MS caps each individual attempt — added after a live
+# test showed a "successful" retry taking 83 seconds end-to-end with no
+# per-call timeout set at all (the SDK's own default was left to whatever
+# it is, observed to be very generous), which is a bad experience even
+# when it does eventually work. 3 attempts x 12s worst case + backoff
+# bounds the whole function to roughly 38s worst case instead of however
+# long an unbounded hang could take.
 _MAX_ATTEMPTS = 3
 _BACKOFF_SECONDS = (0.5, 1.5)
+_REQUEST_TIMEOUT_MS = 12_000
 
 _client_instance: genai.Client | None = None
 
@@ -37,7 +46,10 @@ _client_instance: genai.Client | None = None
 def _client() -> genai.Client:
     global _client_instance
     if _client_instance is None:
-        _client_instance = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        _client_instance = genai.Client(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            http_options=types.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
+        )
     return _client_instance
 
 
