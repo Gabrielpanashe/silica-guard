@@ -299,6 +299,47 @@ def test_dashboard_with_no_data(client):
     assert body["site_breakdown"] == []
     assert body["ai_narrative"] == "mocked narrative"
     assert body["tier_distribution"] == {"GREEN": 0, "YELLOW": 0, "ORANGE": 0, "RED": 0}
+    assert body["avg_rescreen_interval_days"] is None  # nobody re-screened yet
+
+
+def test_dashboard_avg_rescreen_interval_days(client):
+    """22 August 2026 — GET /api/dashboard/week's avg_rescreen_interval_days.
+    Seeds two miners each with two screenings (10-day and 20-day gaps) via
+    database.get_fresh_session() (same reasoning as
+    test_workers.test_lookup_worker_screenings_carry_days_since_previous —
+    POST /api/screen always stamps "now"), and confirms the endpoint
+    averages across every miner's gap(s), not just the first one found."""
+    import database
+    from datetime import datetime
+
+    from db_models import Miner, Screening
+
+    client.post(
+        "/api/workers", json={"name": "M1", "phone": "+263790000010", "site": "Site A"}
+    )
+    client.post(
+        "/api/workers", json={"name": "M2", "phone": "+263790000011", "site": "Site A"}
+    )
+
+    db = database.get_fresh_session()
+    try:
+        m1 = db.query(Miner).filter_by(phone="+263790000010").one()
+        m2 = db.query(Miner).filter_by(phone="+263790000011").one()
+        db.add(Screening(miner_id=m1.id, tier="GREEN", created_at=datetime(2026, 8, 1)))
+        db.add(Screening(miner_id=m1.id, tier="GREEN", created_at=datetime(2026, 8, 11)))  # 10-day gap
+        db.add(Screening(miner_id=m2.id, tier="GREEN", created_at=datetime(2026, 8, 1)))
+        db.add(Screening(miner_id=m2.id, tier="GREEN", created_at=datetime(2026, 8, 21)))  # 20-day gap
+        db.commit()
+    finally:
+        db.close()
+
+    token = _login(client)
+    with patch("routers.dashboard.generate_weekly_narrative", return_value="mocked"):
+        resp = client.get(
+            "/api/dashboard/week", headers={"Authorization": f"Bearer {token}"}
+        )
+    assert resp.status_code == 200
+    assert resp.json()["avg_rescreen_interval_days"] == 15.0  # mean of 10 and 20
 
 
 def test_dashboard_tier_distribution_reflects_real_screenings(client):

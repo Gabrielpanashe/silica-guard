@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SilicaGuard — Intelligence Dashboard</title>
   <link rel="stylesheet" href="style.css" />
+  <!-- 22-23 August 2026: real charts + a facility map, kept zero-build-step.
+       Documented target stack is React+Vite+Recharts+Leaflet; a full
+       framework rewrite was deliberately not attempted this close to
+       submission (no way to build-and-verify a new toolchain blind in this
+       environment — the exact reasoning that produced this static page in
+       the first place). Leaflet is used for real; Chart.js stands in for
+       Recharts specifically — both load fine from a CDN in a plain page,
+       no bundler needed. See docs/DEMO_GUIDE.md Section 11. -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 
@@ -57,6 +68,7 @@
       <a href="#section-referrals">Referrals</a>
       <a href="#section-watch">Watch</a>
       <a href="#section-outreach">Outreach</a>
+      <a href="#section-education">Education</a>
     </nav>
 
     <div id="wake-banner" class="wake-banner" hidden>
@@ -89,6 +101,10 @@
             <div class="stat-value" id="stat-openreferrals">—</div>
             <div class="stat-label">Open Referrals</div>
           </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-rescreen-interval">—</div>
+            <div class="stat-label">Avg. Days Between Re-screens</div>
+          </div>
         </section>
 
         <div class="grid-2">
@@ -96,16 +112,23 @@
           <section class="card">
             <h2 class="card-h">Tier Distribution</h2>
             <p class="card-sub">Every screening on record, by risk tier</p>
-            <div id="tier-chart" class="tier-chart"></div>
+            <div class="chart-box"><canvas id="tier-chart-canvas"></canvas></div>
           </section>
 
           <!-- Site breakdown -->
           <section class="card">
             <h2 class="card-h">Screenings by Site</h2>
             <p class="card-sub">Where the risk is concentrated</p>
-            <div id="site-breakdown" class="site-breakdown"></div>
+            <div class="chart-box"><canvas id="site-chart-canvas"></canvas></div>
           </section>
         </div>
+
+        <!-- Facilities Map (22 August 2026) -->
+        <section class="card">
+          <h2 class="card-h">Facilities Map</h2>
+          <p class="card-sub">Hospitals and clinics the Smart Referral Router routes to — real coordinates from GET /api/facilities</p>
+          <div id="facilities-map" class="facilities-map"></div>
+        </section>
 
         <!-- AI Narrative -->
         <section class="card narrative-card">
@@ -218,6 +241,38 @@
         </form>
 
         <div id="outreach-list" class="outreach-list"></div>
+      </section>
+
+      <!-- Teach Mode's SMS-channel demonstration (22 August 2026) -->
+      <section class="card" id="section-education">
+        <div class="card-head-row">
+          <div>
+            <h2 class="card-h">Health Education — Send a Tip</h2>
+            <p class="card-sub">Teach Mode's six illustrated in-app cards aren't built yet (see docs/DEMO_GUIDE.md) — this broadcasts the same six topics as an SMS to every miner at a site, on demand</p>
+          </div>
+        </div>
+        <form id="education-form" class="outreach-form">
+          <div class="outreach-form-row">
+            <div class="outreach-form-field">
+              <label class="field-label" for="education-site-input">Site</label>
+              <input id="education-site-input" class="search-input" type="text" list="mines-datalist" placeholder="Select or type a mine…" required autocomplete="off" />
+            </div>
+            <div class="outreach-form-field">
+              <label class="field-label" for="education-topic-select">Topic</label>
+              <select id="education-topic-select" class="filter-select">
+                <option value="dust_danger">What the dust does</option>
+                <option value="silent_disease">Why it's silent</option>
+                <option value="mask_that_works" selected>The mask that works</option>
+                <option value="water_suppression">Water changes everything</option>
+                <option value="red_flag_signs">The signs that mean go now</option>
+                <option value="nssa_rights">Your rights (NSSA compensation)</option>
+              </select>
+            </div>
+            <button type="submit" id="education-submit-btn" class="btn-ghost btn-schedule">Send tip</button>
+          </div>
+          <p id="education-form-error" class="error-text" hidden></p>
+          <p id="education-form-success" class="outreach-form-success" hidden></p>
+        </form>
       </section>
 
     </main>

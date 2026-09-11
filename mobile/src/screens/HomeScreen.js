@@ -214,7 +214,18 @@ export default function HomeScreen({ navigation }) {
           <Text style={s.brandAccent}>Guard<Text style={s.brandDot}>●</Text></Text>
         </View>
         <View style={s.headerRight}>
-          <SyncPill connected={true} />
+          {/* 22 August 2026 — this used to be a hardcoded connected={true},
+              so the pill claimed "LIVE" even mid-demo with airplane mode on
+              and screenings genuinely queued below. There's no real network
+              check anywhere in this app (no NetInfo dependency, deliberately
+              not adding one this close to submission) — pendingCount === 0
+              is the one honest signal already on this screen: it only
+              reaches 0 once syncPendingScreenings() has actually confirmed
+              the backend is reachable. Known gap this doesn't cover: a
+              phone that's offline but has nothing queued yet still reads
+              LIVE, same class of approximation as offlineQueue.js's own
+              documented gaps. */}
+          <SyncPill connected={pendingCount === 0} />
           <Text style={s.dateText}>{today}</Text>
         </View>
       </View>

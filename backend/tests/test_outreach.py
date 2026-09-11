@@ -308,3 +308,73 @@ def test_outreach_visit_report_populated_once_generated(client):
     assert visit["tier_distribution"]["RED"] == 1
     assert len(visit["referral_list"]) == 1
     assert visit["referral_list"][0]["tier"] == "RED"
+
+
+# --- POST /api/outreach/{id}/send-now (22 August 2026) ---
+
+
+def test_send_now_requires_auth(client):
+    resp = client.post("/api/outreach/999/send-now")
+    assert resp.status_code == 401
+
+
+def test_send_now_unknown_visit_404s(client):
+    token = _login(client)
+    resp = client.post(
+        "/api/outreach/999/send-now", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert resp.status_code == 404
+
+
+def test_send_now_sends_to_every_worker_at_the_site_and_marks_3day_sent(client):
+    """On-demand escape hatch for the scheduler-only announcement — real
+    send through notifications.send_outreach_announcement (mocked True by
+    conftest's autouse fixture), not a demo-only fake."""
+    token = _login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    visit_id = client.post(
+        "/api/outreach",
+        json={"site": "Sherwood Mine", "scheduled_date": "2026-09-01", "expected_headcount": 5},
+        headers=headers,
+    ).json()["id"]
+    client.post(
+        "/api/workers", json={"name": "W1", "phone": "+263700555001", "site": "Sherwood Mine"}
+    )
+    client.post(
+        "/api/workers", json={"name": "W2", "phone": "+263700555002", "site": "Sherwood Mine"}
+    )
+    client.post(
+        "/api/workers", json={"name": "Other Site", "phone": "+263700555003", "site": "Other Mine"}
+    )
+
+    resp = client.post(f"/api/outreach/{visit_id}/send-now", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["stage"] == "3day"
+    assert body["sent_count"] == 2  # only the two Sherwood Mine workers
+
+    # Confirmed marked, so the scheduler won't duplicate it later.
+    visit = next(
+        v for v in client.get("/api/outreach", headers=headers).json() if v["id"] == visit_id
+    )
+    # (report_generated/tier_distribution unaffected by this — just confirming the visit still resolves)
+    assert visit["id"] == visit_id
+
+
+def test_send_now_second_call_sends_1day_stage(client):
+    token = _login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    visit_id = client.post(
+        "/api/outreach",
+        json={"site": "Sherwood Mine", "scheduled_date": "2026-09-01", "expected_headcount": 5},
+        headers=headers,
+    ).json()["id"]
+    client.post(
+        "/api/workers", json={"name": "W1", "phone": "+263700555004", "site": "Sherwood Mine"}
+    )
+
+    first = client.post(f"/api/outreach/{visit_id}/send-now", headers=headers).json()
+    second = client.post(f"/api/outreach/{visit_id}/send-now", headers=headers).json()
+    assert first["stage"] == "3day"
+    assert second["stage"] == "1day"

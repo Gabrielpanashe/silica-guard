@@ -153,6 +153,36 @@ def process_due_outreach_visits(db: Session, now: Optional[datetime] = None) -> 
             logger.exception("Failed to process outreach visit id=%s", visit.id)
 
 
+def send_now(db: Session, visit: OutreachVisit) -> tuple[str, int]:
+    """22 August 2026 — on-demand escape hatch for POST
+    /api/outreach/{id}/send-now. The scheduled announcement
+    (process_due_outreach_visits above) only fires from the APScheduler job,
+    only once the visit is genuinely inside its 3-day/1-day window, and only
+    every SCHEDULER_INTERVAL_MINUTES — none of which is compatible with
+    showing it live in a demo. This sends through the exact same
+    notifications.send_outreach_announcement function, so it's a real SMS
+    blast, not a demo-only fake; it still marks whichever of
+    sms_3day_sent/sms_1day_sent isn't set yet, so the scheduler won't
+    duplicate it later. Returns (stage, sent_count)."""
+    stage = "3day" if not visit.sms_3day_sent else "1day"
+    workers = db.scalars(
+        select(Miner).where(func.lower(Miner.mine_site) == func.lower(visit.site))
+    ).all()
+    sent_count = sum(
+        1
+        for worker in workers
+        if notifications.send_outreach_announcement(
+            worker.id, worker.phone, visit.site, visit.scheduled_date.isoformat(), stage
+        )
+    )
+    if stage == "3day":
+        visit.sms_3day_sent = 1
+    else:
+        visit.sms_1day_sent = 1
+    db.commit()
+    return stage, sent_count
+
+
 def run_scheduled_outreach() -> None:
     """The APScheduler job target (main.py) — same defensive shape as
     run_scheduled_cascade: owns its own session, never raises."""

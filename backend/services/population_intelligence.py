@@ -23,11 +23,18 @@ import os
 from pathlib import Path
 
 from google import genai
+from google.genai import types
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "population_narrative_prompt.txt"
 SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8")
 
-MODEL = "gemini-flash-latest"
+# 23 August 2026 — same fix as services/ai_risk_engine.py's MODEL, same
+# reasoning (see that file's comment for the full investigation):
+# "gemini-flash-latest" is a moving alias that had drifted onto an
+# unstable, freshly-released model generation. Pinned to the same tested,
+# fast, reliable version rather than another alias.
+MODEL = "gemini-3.1-flash-lite"
+_REQUEST_TIMEOUT_MS = 12_000
 
 _client_instance: genai.Client | None = None
 
@@ -35,7 +42,10 @@ _client_instance: genai.Client | None = None
 def _client() -> genai.Client:
     global _client_instance
     if _client_instance is None:
-        _client_instance = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        _client_instance = genai.Client(
+            api_key=os.getenv("GEMINI_API_KEY"),
+            http_options=types.HttpOptions(timeout=_REQUEST_TIMEOUT_MS),
+        )
     return _client_instance
 
 

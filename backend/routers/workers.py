@@ -44,18 +44,31 @@ def get_worker_by_phone(phone: str, db: Session = Depends(get_db)):
         .order_by(Screening.created_at.desc(), Screening.id.desc())
     ).all()
 
-    return WorkerDetail(
-        id=miner.id,
-        name=miner.name,
-        phone=miner.phone,
-        site=miner.mine_site,
-        screenings=[
+    # days_since_previous (22 August 2026): screenings are newest-first, so
+    # each row's "previous" screening is the next one in this list, not the
+    # one before it. None for the oldest/only screening — there's nothing
+    # earlier to measure against. Pure Python datetime diff, no schema
+    # change; feeds the dashboard's per-miner trend chart.
+    screening_summaries = []
+    for i, s in enumerate(screenings):
+        days_since_previous = None
+        older = screenings[i + 1] if i + 1 < len(screenings) else None
+        if older is not None and s.created_at and older.created_at:
+            days_since_previous = (s.created_at - older.created_at).days
+        screening_summaries.append(
             WorkerScreeningSummary(
                 id=s.id,
                 tier=s.tier,
                 created_at=format_datetime(s.created_at),
                 advice_line=s.advice_line,
+                days_since_previous=days_since_previous,
             )
-            for s in screenings
-        ],
+        )
+
+    return WorkerDetail(
+        id=miner.id,
+        name=miner.name,
+        phone=miner.phone,
+        site=miner.mine_site,
+        screenings=screening_summaries,
     )

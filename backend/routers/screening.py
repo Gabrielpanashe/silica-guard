@@ -111,8 +111,30 @@ def screen_miner(payload: ScreeningCreate, db: Session = Depends(get_db)):
     try:
         result = assess_risk(payload.answers)
     except Exception:
-        # screening_id + answers are already saved for audit purposes;
-        # risk fields stay NULL until a retry succeeds.
+        # 23 August 2026 — this used to leave the just-committed screening
+        # + answers permanently orphaned (tier stays NULL forever, nothing
+        # ever completes it), on the assumption that "a retry" would
+        # somehow finish this same row. No such mechanism exists: a mobile
+        # retry (services/offlineQueue.js, on every HomeScreen focus) calls
+        # POST /api/screen fresh, creating a BRAND NEW screening every
+        # single attempt. During a real Gemini flakiness window this
+        # produced double-digit duplicate rows per miner (confirmed live:
+        # one miner accumulated 18), each inflating screened_today/the
+        # dashboard's Activity Log/Miners screening_count, and kept the
+        # mobile app's offline-sync banner (and SyncPill, fixed the same
+        # day) permanently "pending" since the client never received a
+        # success response to clear it. A null-tier row has no audit value
+        # anyway (no AI output ever landed) — cleanly undoing the persist
+        # step here means a retry starts from a blank slate and produces
+        # exactly one real row once the AI actually succeeds, matching
+        # what "sync cleanly" is supposed to mean.
+        db.query(ScreeningAnswer).filter(ScreeningAnswer.screening_id == screening.id).delete()
+        if outreach_visit_id is not None:
+            visit = db.get(OutreachVisit, outreach_visit_id)
+            if visit is not None and visit.screened_count:
+                visit.screened_count -= 1
+        db.delete(screening)
+        db.commit()
         raise HTTPException(status_code=502, detail="AI risk engine unavailable, please retry")
 
     # Longitudinal Deterioration Detection: escalate one tier on any

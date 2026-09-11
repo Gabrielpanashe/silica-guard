@@ -1,15 +1,15 @@
 import json
 from datetime import date as date_type
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
 from db_models import OutreachVisit
-from models import OutreachVisitCreate, OutreachVisitOut
+from models import OutreachSendNowOut, OutreachVisitCreate, OutreachVisitOut
 from routers.auth import get_current_user
-from services.outreach import visit_to_out
+from services.outreach import send_now, visit_to_out
 
 router = APIRouter(prefix="/api", tags=["outreach"])
 
@@ -49,3 +49,19 @@ def create_outreach_visit(payload: OutreachVisitCreate, db: Session = Depends(ge
 def list_outreach_visits(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     visits = db.scalars(select(OutreachVisit).order_by(OutreachVisit.scheduled_date.desc())).all()
     return [visit_to_out(db, v) for v in visits]
+
+
+@router.post("/outreach/{visit_id}/send-now", response_model=OutreachSendNowOut)
+def send_outreach_now(
+    visit_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)
+):
+    """22 August 2026 — on-demand trigger for the outreach announcement SMS
+    blast, for live demo use (see services/outreach.send_now's docstring for
+    why the scheduled path alone isn't demoable). Authenticated like the
+    rest of the coordinator-facing outreach/dashboard routes."""
+    visit = db.get(OutreachVisit, visit_id)
+    if visit is None:
+        raise HTTPException(status_code=404, detail="Outreach visit not found")
+
+    stage, sent_count = send_now(db, visit)
+    return OutreachSendNowOut(visit_id=visit.id, site=visit.site, stage=stage, sent_count=sent_count)

@@ -140,7 +140,10 @@ a.btn-ghost { text-decoration: none; display: inline-block; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
 
 /* ── Stat row ── */
-.statrow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
+/* 22 August 2026: repeat(5,1fr) -> auto-fit/minmax — a 6th stat
+   (avg re-screen interval) was added and a hardcoded column count would
+   have squeezed it onto a second, uneven row on wide screens. */
+.statrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 20px; }
 .stat {
   background: var(--card); border: 1.5px solid var(--border-strong); border-radius: var(--radius-lg);
   padding: 20px; text-align: center;
@@ -154,14 +157,27 @@ a.btn-ghost { text-decoration: none; display: inline-block; }
 .card-sub { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; }
 .card-head-row { display: flex; justify-content: space-between; align-items: flex-start; }
 
-/* ── Tier chart (inline SVG bars) ── */
+/* ── Tier distribution + site breakdown (Chart.js canvases, 22-23 August
+   2026 — previously raw CSS height/width bars; the .tier-bar-*/.site-*
+   rules below are now dead but left in place, harmless, in case anything
+   else still references them). ── */
+.chart-box { position: relative; height: 220px; }
+
+/* ── Facilities Map (Leaflet, 22 August 2026) ── */
+.facilities-map { height: 320px; border-radius: var(--radius-md); overflow: hidden; }
+
+/* ── Per-miner trend chart (Chart.js, 22 August 2026) ── */
+.miner-trend-box { position: relative; height: 140px; margin-bottom: 14px; }
+.miner-history-gap { color: var(--mint); font-size: 11.5px; font-weight: 600; white-space: nowrap; margin-left: 12px; }
+
+/* ── Tier chart (legacy, dead — kept for safety, see note above) ── */
 .tier-chart { display: flex; align-items: flex-end; gap: 18px; height: 160px; padding-top: 10px; }
 .tier-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
 .tier-bar { width: 100%; max-width: 56px; border-radius: 6px 6px 0 0; transition: height 0.4s ease; min-height: 3px; }
 .tier-bar-count { font-size: 15px; font-weight: 800; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
 .tier-bar-label { font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; color: var(--muted); margin-top: 8px; text-transform: uppercase; }
 
-/* ── Site breakdown ── */
+/* ── Site breakdown (legacy, dead — kept for safety, see note above) ── */
 .site-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px; }
 .site-name { width: 150px; flex-shrink: 0; color: var(--offwhite); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .site-bar-track { flex: 1; background: var(--card-2); border-radius: 999px; height: 10px; overflow: hidden; }

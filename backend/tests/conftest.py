@@ -47,6 +47,9 @@ def _mock_notifications(monkeypatch):
     monkeypatch.setattr(
         notifications, "send_outreach_announcement", lambda *a, **k: True
     )
+    monkeypatch.setattr(
+        notifications, "send_education_tip", lambda *a, **k: True
+    )
     # services/email_notifications.py (10 August) — same reasoning: without
     # this, every test that creates an ORANGE/RED referral would actually
     # run the real function (its own no-credentials guard means no network

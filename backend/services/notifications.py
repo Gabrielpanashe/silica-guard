@@ -228,3 +228,22 @@ def send_outreach_announcement(
     template = f"outreach_announcement_{stage}"
     _log_notification(worker_id, template, body, "sent" if ok else "failed")
     return ok
+
+
+# --- Teach Mode's SMS-channel demonstration (22 August 2026) ---
+# See services/education_messages.py's module docstring for why this exists
+# instead of the master doc's in-app illustrated cards. Same draft-copy
+# caveat as everything else in this file.
+
+
+def send_education_tip(worker_id: int, phone_number: str, topic_key: str, message_shona: str) -> bool:
+    """Sent in Shona, matching the convention every other miner-facing SMS
+    in this file already uses (send_miner_result/send_screening_result_sms)
+    — English is reserved for hospital-facing messages. `template` is
+    topic-specific (`teach_mode_tip_{topic_key}`) so the notifications audit
+    trail shows exactly which of the six topics went out, not just that
+    "an education SMS" was sent."""
+    body = f"SilicaGuard: {message_shona}"
+    ok = _send_sms(phone_number, body)
+    _log_notification(worker_id, f"teach_mode_tip_{topic_key}", body, "sent" if ok else "failed")
+    return ok

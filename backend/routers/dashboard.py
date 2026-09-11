@@ -41,6 +41,33 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _avg_rescreen_interval_days(db: Session) -> Optional[float]:
+    """Mean number of days between consecutive screenings of the same
+    miner, across every miner screened more than once — the population-level
+    answer to "how long between re-screens, on average" (22 August 2026).
+    None if nobody has been re-screened yet. Pure Python over a single
+    ordered query, no schema change and no per-miner N+1 — same style as
+    the deterioration/advice-engine calculations elsewhere in this project
+    (a comparison/average over stored values, not a statistical model)."""
+    rows = db.execute(
+        select(Screening.miner_id, Screening.created_at)
+        .where(Screening.created_at.is_not(None))
+        .order_by(Screening.miner_id, Screening.created_at)
+    ).all()
+
+    gaps_days: list[float] = []
+    prev_miner_id: Optional[int] = None
+    prev_created_at = None
+    for miner_id, created_at in rows:
+        if miner_id == prev_miner_id and prev_created_at is not None:
+            gaps_days.append((created_at - prev_created_at).total_seconds() / 86400)
+        prev_miner_id, prev_created_at = miner_id, created_at
+
+    if not gaps_days:
+        return None
+    return round(sum(gaps_days) / len(gaps_days), 1)
+
+
 def _referral_to_out(referral: Referral) -> ReferralOut:
     return ReferralOut(
         id=referral.id,
@@ -250,6 +277,7 @@ def dashboard_week(db: Session = Depends(get_db), user: dict = Depends(get_curre
         "ai_narrative": ai_narrative,
         "tier_distribution": tier_distribution,
         "site_breakdown": site_breakdown,
+        "avg_rescreen_interval_days": _avg_rescreen_interval_days(db),
     }
 
 
