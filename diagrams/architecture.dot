@@ -1,0 +1,45 @@
+// Figure 1 — SilicaGuard high-level architecture.
+// Source: Master Reference v1.0 §10.2. The clinical core is deterministic;
+// the model layer is downstream and non-blocking.
+// Render: dot -Tpng architecture.dot -o architecture.png
+digraph architecture {
+    graph [fontname="Helvetica", fontsize=11, rankdir=TB, splines=true, nodesep=0.45, ranksep=0.55, bgcolor="white"];
+    node  [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#102A72", fillcolor="#E8ECF7", penwidth=1.2];
+    edge  [fontname="Helvetica", fontsize=9, color="#555555", arrowsize=0.8];
+
+    subgraph cluster_channels {
+        label="ENTRY CHANNELS"; fontcolor="#102A72"; color="#102A72"; style="rounded"; penwidth=1.5;
+        app       [label="Health worker app\nAndroid, offline first"];
+        ussd      [label="Miner self screen\nUSSD, any handset"];
+        dashboard [label="Dashboard\ncoordinator, hospital"];
+    }
+
+    api [label="API layer (FastAPI)\nscreening sync, USSD webhook,\nrole boundary, open code lookup", fillcolor="#F3F5FB"];
+
+    subgraph cluster_core {
+        label="DETERMINISTIC CLINICAL CORE\nno model on this path"; fontcolor="#07966F"; color="#07966F"; style="rounded"; penwidth=1.8;
+        rules   [label="Rules engine\nscores against the\nversioned instrument", fillcolor="#E3F3EE"];
+        deter   [label="Deterioration\nvs last screening", fillcolor="#E3F3EE"];
+        safety  [label="SAFETY OVERRIDES\nraise only, never lower", fillcolor="#CDEBE0", color="#07966F", penwidth=2];
+        routing [label="Facility match,\nurgency window,\nreferral code", fillcolor="#E3F3EE"];
+        rules -> deter -> safety -> routing;
+    }
+
+    store     [label="PostgreSQL\npeople, contacts, exposure,\nsessions, results per condition,\nreferrals, consent", shape=box3d, fillcolor="#E8ECF7"];
+    content   [label="Instrument, rules\nand content store\nversioned, immutable\nEN / SN / ND"];
+    scheduler [label="Scheduler\ncascade, outreach,\nkeep alive"];
+    model     [label="Model layer, downstream\npopulation narrative from\naggregates only; optional second\nreader may escalate, never assigns", style="rounded,filled,dashed", color="#888888", fillcolor="#F2F2F2"];
+    outbound  [label="Outbound messaging\nresult, pre alert, reminders,\nescalation, delivery receipts", fillcolor="white"];
+
+    app -> api; ussd -> api; dashboard -> api;
+    api -> rules;
+    routing -> store [label="results carry\nrule version"];
+    content -> rules [label="reads\nversion", style=dashed];
+    store -> model [label="flag only", style=dashed, dir=both];
+    outbound -> store [label="receipts"];
+    store -> outbound;
+    scheduler -> outbound;
+
+    { rank=same; store; content; scheduler; }
+    { rank=same; model; outbound; }
+}

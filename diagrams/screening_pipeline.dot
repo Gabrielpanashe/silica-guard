@@ -1,0 +1,29 @@
+// Figure 2 — Screening pipeline (target, §10.3).
+// Answers are persisted before scoring; overrides run after every other step;
+// the result is identical online or offline.
+// Render: dot -Tpng screening_pipeline.dot -o screening_pipeline.png
+digraph screening_pipeline {
+    graph [fontname="Helvetica", fontsize=11, rankdir=TB, nodesep=0.3, ranksep=0.4, bgcolor="white"];
+    node  [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#102A72", fillcolor="white", penwidth=1.2];
+    edge  [fontname="Helvetica", fontsize=9, color="#555555", arrowsize=0.8];
+
+    s1  [label="1. Resolve identity\nparticipant code, bundle match,\nprovisional if unknown", fillcolor="#E8ECF7"];
+    s2  [label="2. Record consent\nversioned text, timestamp"];
+    s3  [label="3. Load instrument version\nquestions, options, thresholds", fillcolor="#E8ECF7"];
+    s4  [label="4. Collect answers\nand persist raw answers first"];
+    s5  [label="5. Score per condition\ndeterministic rules", fillcolor="#E3F3EE"];
+    s6  [label="6. Deterioration check\nagainst previous session", fillcolor="#E3F3EE"];
+    s7  [label="7. Apply safety overrides\nraise only, never lower", fillcolor="#CDEBE0", color="#07966F", penwidth=2];
+    s8  [label="8. Write result rows\none per condition, with\ninstrument and rule version", fillcolor="#E8ECF7"];
+    s9  [label="9. Select patient facing text\nreviewed strings in the\nperson's language"];
+    q   [label="Tier 3 or 4 ?", shape=diamond, style="filled", fillcolor="white"];
+    s10a [label="10a. Create referral\nfacility, window, code,\npre alert, reminder cascade"];
+    s10b [label="10b. Result message only\nplus education if consented"];
+    s11 [label="11. Return result to the channel\nidentical output online or offline"];
+
+    s1 -> s2 -> s3 -> s4 -> s5 -> s6 -> s7 -> s8 -> s9 -> q;
+    q -> s10a [label="yes"];
+    q -> s10b [label="no"];
+    s10a -> s11;
+    s10b -> s11;
+}
