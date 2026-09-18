@@ -47,7 +47,7 @@ In a Dutch study of a mobile COPD self-management application, 76.4 percent of p
 | Question | Why it matters | Who is needed |
 |---|---|---|
 | Tier-specific sensitivity and specificity against radiological confirmation | The core validation claim. Requested explicitly by Professor Mushiri. Without it no performance claim can be made. | University partner, statistician, radiologist reads, ethics-approved protocol |
-| USSD-specific validation, separate from app-administered screening | The channels are administered differently and must be validated separately. Also requested explicitly. | Same partnership; pilot designed so the channels are separable |
+| USSD-specific validation, separate from app-administered screening | The channels are administered differently and must be validated separately. Also requested explicitly. | The same prospective university partnership; pilot designed so the channels are separable |
 | Calibration by site, age and exposure | A single threshold may be wrong for subgroups. | Statistician; sufficient sample |
 | Linguistic validation | Back translation and comprehension testing in Shona and Ndebele. | A university language or public-health department |
 | Health economics: cost per case found, cost per referral completed | Converts a technology result into a policy argument — the number a ministry acts on. | Health economist |
