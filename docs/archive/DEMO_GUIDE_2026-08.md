@@ -1,4 +1,6 @@
-# SilicaGuard — Demo & System Guide
+# SilicaGuard — Demo & System Guide (archived)
+
+> **Historical document — the August 2026 Healthathon demo guide.** Kept for the record of what was shown and claimed on 24–28 August 2026. It describes the prototype, not the target system; its "four AI modules" framing and its status claims are superseded by `README.md`, `ARCHITECTURE.md` and the master document (`docs/master/MASTER_REFERENCE.md`, v1.0). Do not use it to prepare any future demonstration.
 
 Written 22–23 August 2026, ahead of the 24 August submission video, to answer one question precisely for every module: **what is this, is it really AI, is it actually working right now, and how do I show it live on camera in under a minute.** Ground-truth, verified against the real code and (where noted) the live production backend — not the master doc's aspirational description. Where the two disagree, that's called out explicitly rather than smoothed over.
 
