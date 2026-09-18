@@ -1,6 +1,6 @@
 # SilicaGuard — Product & Technical Reference
 
-Version 6.0 shape. This document mirrors the master reference document (`SilicaGuard_MasterDocument_Reference_v6.docx`, v6.0, "Final Showcase Edition") — if the two ever disagree, the `.docx` wins and this file needs updating. v6.0 explicitly supersedes v5.0 and every earlier version, including v4.0 (which this file previously tracked). **As of 14 August 2026 this file reflects v6.0's deadline change, the QR→referral-code reframe, and the assigned backend roadmap for the 14–20 August build window (see Section 16 and `CLAUDE.md`'s "Current sprint status" for what's actually landed vs. still pending).** For day-to-day working rules see `CLAUDE.md` and `SKILL.md`; for exact request/response shapes see `docs/API_CONTRACT.md`.
+Version 6.0 shape. This document mirrors the master reference document (`SilicaGuard_MasterDocument_Reference_v6.docx`, v6.0, "Final Showcase Edition") — if the two ever disagree, the `.docx` wins and this file needs updating. v6.0 explicitly supersedes v5.0 and every earlier version, including v4.0 (which this file previously tracked). **As of 14 August 2026 this file reflects v6.0's deadline change, the QR→referral-code reframe, and the assigned backend roadmap for the 14–20 August build window (see Section 16, `CLAUDE.md`'s "Current state" for what's actually landed vs. still pending, and `docs/PROGRESS_LOG.md` for the dated history).** For day-to-day working rules see `CLAUDE.md` and `SKILL.md`; for exact request/response shapes see `docs/API_CONTRACT.md`.
 
 ## 1. Project Identity
 
@@ -60,7 +60,7 @@ Kwekwe District Hospital records roughly one silicosis death a week — 50 to 60
 
 ## 6. Project Structure
 
-**This tree is illustrative, not exhaustive** — `routers/`, `services/`, and `tests/` have grown well beyond the files listed below since this section was last fully rewritten; treat it as "the pattern," and check the directories directly for the current full list. Several things landed since 14 August (master doc v6.0 — see `CLAUDE.md`'s "Current sprint status"): `backend/db_models.py` + a rewritten `database.py` (the SQLAlchemy ORM, replacing the raw-SQL shape this tree used to describe — live 15 August), `backend/alembic/` (Alembic migrations, targeting Postgres via Supabase in production — Step B, live 16 August), `backend/services/db_keepalive.py` (Supabase free-tier keep-alive job), and `backend/static/ussd_simulator.html` (the USSD web simulator, also live).
+**This tree is illustrative, not exhaustive** — `routers/`, `services/`, and `tests/` have grown well beyond the files listed below since this section was last fully rewritten; treat it as "the pattern," and check the directories directly for the current full list. Several things landed since 14 August (master doc v6.0 — see `docs/PROGRESS_LOG.md`): `backend/db_models.py` + a rewritten `database.py` (the SQLAlchemy ORM, replacing the raw-SQL shape this tree used to describe — live 15 August), `backend/alembic/` (Alembic migrations, targeting Postgres via Supabase in production — Step B, live 16 August), `backend/services/db_keepalive.py` (Supabase free-tier keep-alive job), and `backend/static/ussd_simulator.html` (the USSD web simulator, also live).
 
 ```
 backend/

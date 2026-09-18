@@ -46,7 +46,7 @@ Talks directly to the deployed backend (`https://silicaguard-backend.onrender.co
 
 ### Dashboard (plain HTML/CSS/JS, no build step)
 
-No install, no build — it's static files. Either open `dashboard/index.html` directly in a browser, or serve the folder locally (e.g. `npx serve dashboard`) if you need it under `http://` rather than `file://`. Same hardcoded `BASE_URL` pattern as mobile (`dashboard/app.js`), pointed at the deployed backend. `dashboard/lookup.html` is the hospital-facing referral-code entry page (master doc v6.0 Section 1.1/16.6) — open it directly, or via the "Referral Lookup ↗" link in the main dashboard's topbar. **Not yet on `main`** as of 21 August — currently on `feat/mobile-redesign-blue-theme`, check `CLAUDE.md`'s sprint status for whether it's merged yet.
+No install, no build — it's static files. Either open `dashboard/index.html` directly in a browser, or serve the folder locally (e.g. `npx serve dashboard`) if you need it under `http://` rather than `file://`. Same hardcoded `BASE_URL` pattern as mobile (`dashboard/app.js`), pointed at the deployed backend. `dashboard/lookup.html` is the hospital-facing referral-code entry page (master doc v6.0 Section 1.1/16.6) — open it directly, or via the "Referral Lookup ↗" link in the main dashboard's topbar. Merged to `main` on 22 August 2026.
 
 ## How to add a new API endpoint
 
@@ -61,7 +61,7 @@ Follow the existing pattern in `backend/routers/` and `backend/services/`:
 
 ## How to add or change a database field
 
-The schema is declared as SQLAlchemy models in `backend/db_models.py`, applied via Alembic migrations in `backend/alembic/` (live since 15–16 August — see `CLAUDE.md`'s sprint status for the ORM/Postgres migration history).
+The schema is declared as SQLAlchemy models in `backend/db_models.py`, applied via Alembic migrations in `backend/alembic/` (live since 15–16 August — see `docs/PROGRESS_LOG.md` for the ORM/Postgres migration history).
 
 1. Edit the field on the relevant model in `backend/db_models.py`.
 2. `cd backend && ./venv/Scripts/python.exe -m alembic revision --autogenerate -m "describe the change"` — generates a migration in `backend/alembic/versions/`.
@@ -83,7 +83,7 @@ Pattern used in `backend/services/ai_risk_engine.py` — follow it for any new G
 
 ## How to test the offline flow
 
-`mobile/src/services/offlineQueue.js` (on `feat/mobile-redesign-blue-theme`, not yet on `main` as of 21 August) persists a failed screening to `AsyncStorage` and retries it every time `HomeScreen` regains focus — see `CLAUDE.md`'s sprint status for the full mechanism. Code-complete but **never actually verified with a real airplane-mode test** as of this writing — no offline feature is "done" until this passes:
+`mobile/src/services/offlineQueue.js` (on `main` since 22 August) persists a failed screening to `AsyncStorage` and retries it every time `HomeScreen` regains focus — see `docs/PROGRESS_LOG.md` for the full mechanism. Code-complete but **never actually verified with a real airplane-mode test** as of this writing — no offline feature is "done" until this passes:
 
 1. Put the device in airplane mode.
 2. Complete three screenings entirely offline — each should fall into `ResultScreen.js`'s offline path (`offlineScore()` shown immediately, `queueOfflineScreening()` persisting it) rather than erroring out.
