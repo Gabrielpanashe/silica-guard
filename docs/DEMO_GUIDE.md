@@ -14,7 +14,7 @@ This matters because CLAUDE.md's own module list slightly overclaims it, and ove
 
 | Module | Real AI call? | What it actually is |
 |---|---|---|
-| **Risk Stratification Engine** | **Yes** — real Gemini (`gemini-flash-latest`) call, `prompts/risk_engine_prompt.txt` | The LLM reads the 10 raw answers and reasons about tier/confidence/contributing factors/explanation as a combination, not a formula |
+| **Risk Stratification Engine** | **Yes** — real Gemini (`gemini-3.1-flash-lite`, pinned 23 August) call, `prompts/risk_engine_prompt.txt` | The LLM reads the 10 raw answers and reasons about tier/confidence/contributing factors/explanation as a combination, not a formula |
 | **Longitudinal Deterioration Detection** | **No** | Pure Python: compares specific answer scores to the previous screening, escalates tier one level on any worsening (`services/deterioration.py`) |
 | **"Smart" Referral Router** | **No** | 100% deterministic rules: facility name-matching, fixed urgency windows (RED 48h / ORANGE 14d), fixed reminder/escalation timedeltas (`services/facility_matching.py`, `services/referral_cascade.py`). "Smart" describes the composition of rules + real side effects (SMS, referral codes), not a model |
 | **Population Health Intelligence** | **Yes, partially** — the narrative paragraph is a real Gemini call | The underlying "clustering" is a plain SQL `GROUP BY site` count; the LLM's genuine contribution is judging in prose whether one site's ORANGE/RED share looks disproportionate, not a clustering algorithm |
