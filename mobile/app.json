@@ -30,6 +30,9 @@
         "projectId": "23c1340e-0e32-44de-8175-0b01c661193c"
       }
     },
-    "owner": "teekay001"
+    "owner": "teekay001",
+    "plugins": [
+      "expo-font"
+    ]
   }
 }
