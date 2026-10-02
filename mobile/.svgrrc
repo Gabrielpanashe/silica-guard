@@ -1,0 +1,23 @@
+{
+  "native": true,
+  "replaceAttrValues": {
+    "#94A3B8": "currentColor",
+    "#1D4ED8": "currentColor"
+  },
+  "svgoConfig": {
+    "plugins": [
+      {
+        "name": "preset-default",
+        "params": {
+          "overrides": {
+            "inlineStyles": { "onlyMatchedOnce": false },
+            "removeViewBox": false,
+            "removeUnknownsAndDefaults": false,
+            "convertColors": false
+          }
+        }
+      },
+      { "name": "removeAttrs", "params": { "attrs": "svg:style" } }
+    ]
+  }
+}

@@ -65,8 +65,12 @@ export default function MineSitePicker({ value, onChange, onSelectMine, renderTr
   };
 
   // Mines list unusable (offline / empty / error) — plain text input,
-  // same behaviour as before this component existed.
-  if (loadFailed || (mines.length === 0 && !modalOpen)) {
+  // same behaviour as before this component existed. Not when the caller
+  // supplied its own trigger (2 October 2026): the redesigned Home hero card
+  // puts "Change ▾" inside a dark gradient card, and swapping that for a
+  // bare text box would break the card. The modal below still has the
+  // "Site not listed? Type it below" field, so free-typing keeps working.
+  if (!renderTrigger && (loadFailed || (mines.length === 0 && !modalOpen))) {
     return (
       <TextInput
         style={s.fallbackInput}
@@ -103,6 +107,13 @@ export default function MineSitePicker({ value, onChange, onSelectMine, renderTr
             </View>
 
             <ScrollView style={s.list}>
+              {mines.length === 0 && (
+                <Text style={[s.optionDistrict, { paddingVertical: spacing.md }]}>
+                  {loadFailed
+                    ? 'Couldn’t load the mine list (offline?). Type the site below.'
+                    : 'Loading mine list…'}
+                </Text>
+              )}
               {mines.map((mine) => (
                 <TouchableOpacity
                   key={mine.id}

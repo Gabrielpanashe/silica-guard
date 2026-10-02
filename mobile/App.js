@@ -14,8 +14,25 @@ import ResultScreen from './src/screens/ResultScreen';
 import ReferralScreen from './src/screens/ReferralScreen';
 import WorklistScreen from './src/screens/WorklistScreen';
 import OutreachStatsScreen from './src/screens/OutreachStatsScreen';
+import { useFonts } from 'expo-font';
+import {
+  Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold,
+} from '@expo-google-fonts/inter';
+import { Provider as AntProvider } from '@ant-design/react-native';
+import enUS from '@ant-design/react-native/lib/locale-provider/en_US';
 import { OutreachSiteProvider } from './src/context/OutreachSiteContext';
-import { light } from './src/theme';
+import { light, ui } from './src/theme';
+
+// Ant Design RN (2 October 2026, design revamp) — used for toasts, badges,
+// the date picker and bottom-sheet popups. Its components default to
+// Chinese copy, hence the explicit en_US locale; the theme override points
+// its primary colour at the redesign's blue.
+const ANT_THEME = {
+  brand_primary: ui.primary,
+  brand_primary_tap: ui.tabActive,
+  primary_button_fill: ui.primary,
+  primary_button_fill_tap: ui.tabActive,
+};
 
 const Stack = createStackNavigator();
 
@@ -44,13 +61,22 @@ export default function App() {
   // the screen, not silently skip it.
   const [initialRoute, setInitialRoute] = useState(null);
 
+  // Inter for the redesign (theme `fonts`), plus Ant Design's own icon
+  // fonts — its Toast/DatePicker icons render from these. On a load error
+  // the app still starts; text just falls back to the system font.
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold,
+    antoutline: require('@ant-design/icons-react-native/fonts/antoutline.ttf'),
+    antfill: require('@ant-design/icons-react-native/fonts/antfill.ttf'),
+  });
+
   useEffect(() => {
     AsyncStorage.getItem(SEEN_LANDING_KEY)
       .then((seen) => setInitialRoute(seen === 'true' ? 'Home' : 'Landing'))
       .catch(() => setInitialRoute('Landing'));
   }, []);
 
-  if (!initialRoute) {
+  if (!initialRoute || (!fontsLoaded && !fontError)) {
     // Themed to match Landing's own background so there's no flash of an
     // unstyled screen during the (typically near-instant) storage read.
     return <View style={{ flex: 1, backgroundColor: light.bg }} />;
@@ -58,6 +84,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
+      <AntProvider locale={enUS} theme={ANT_THEME}>
       <OutreachSiteProvider>
         <NavigationContainer>
           <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRoute}>
@@ -72,6 +99,7 @@ export default function App() {
           </Stack.Navigator>
         </NavigationContainer>
       </OutreachSiteProvider>
+      </AntProvider>
     </SafeAreaProvider>
   );
 }
