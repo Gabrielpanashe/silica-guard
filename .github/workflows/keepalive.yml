@@ -1,0 +1,88 @@
+# Keeps the hosted services warm so a quiet period cannot take the system down.
+#
+# Two outages in six weeks (6 September, ~14 October) had the same cause: the
+# free Supabase project auto-pauses after 7 idle days, and the in-process
+# keep-alive job in services/db_keepalive.py cannot prevent that **by
+# construction** — it only runs while the Render instance is awake, which is
+# exactly when it is not needed. The ping has to come from outside.
+#
+# GET /api/health is the right target because, since the degraded-boot change
+# (PR #27), it runs a real `SELECT 1` through database_reachable(). One request
+# therefore does both jobs: it wakes the Render free tier and it registers
+# database activity with Supabase. Before that change it returned a static
+# object and would only have warmed Render.
+#
+# This is a stopgap, not the answer. Master Reference §20.2 requires paid tiers
+# for both services before any live demonstration or the pilot; a scheduled
+# ping does not survive a Supabase billing change, a URL change, or GitHub
+# disabling the schedule (see the caveats below).
+name: Keep-alive
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub treats scheduled runs as best effort and delays
+    # them under load, which is fine here: Supabase needs activity within 7
+    # days, and Render's 15-minute idle window only matters before a demo.
+    #
+    # CAVEAT worth knowing: GitHub disables scheduled workflows after 60 days
+    # with no repository activity. A quiet stretch is precisely when this
+    # matters, so if the repository goes quiet for two months this stops and
+    # the pause returns. 60 days is comfortably longer than Supabase's 7, so
+    # any commit inside two months keeps it running — but do not treat it as
+    # unattended infrastructure.
+    - cron: "*/10 * * * *"
+  # Manual trigger, for warming the service a few minutes before a
+  # demonstration or a stakeholder walkthrough.
+  workflow_dispatch:
+
+concurrency:
+  # A delayed run must never pile up behind a queued one.
+  group: keepalive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Ping /api/health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the backend
+        run: |
+          # --max-time 120: a cold Render free-tier instance takes 30-50s to
+          # wake, and waking it is the point, so a slow response is a success.
+          # --retry covers the case where the wake itself times out once.
+          body=$(curl -sS --max-time 120 --retry 2 --retry-delay 15 \
+                   --retry-all-errors \
+                   -w '\n%{http_code}' \
+                   https://silicaguard-backend.onrender.com/api/health) || {
+            echo "::error::Backend unreachable — this is the failure the ping exists to prevent."
+            exit 1
+          }
+          code=$(printf '%s' "$body" | tail -n1)
+          json=$(printf '%s' "$body" | sed '$d')
+          echo "HTTP $code  $json"
+          {
+            echo "### Keep-alive"
+            echo ""
+            echo "- HTTP \`$code\`"
+            echo "- Response \`$json\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$code" != "200" ]; then
+            echo "::error::Health endpoint returned HTTP $code"
+            exit 1
+          fi
+
+          # A paused or unreachable database is annotated, not failed. Failing
+          # would send an alert every ten minutes for as long as the pause
+          # lasts, which trains everyone to ignore the alert. The warning shows
+          # on the run and in the summary without that.
+          case "$json" in
+            *'"database":"down"'*)
+              echo "::warning::API is serving but the database is unreachable. If this persists, restore the Supabase project from its dashboard — the keep-alive cannot do it."
+              echo "- :warning: **Database unreachable** — restore the Supabase project." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *'"database":"up"'*)
+              echo "- Database reachable." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
