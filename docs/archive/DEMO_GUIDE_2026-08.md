@@ -1,4 +1,6 @@
-# SilicaGuard — Demo & System Guide
+# SilicaGuard — Demo & System Guide (archived)
+
+> **Historical document — the August 2026 Healthathon demo guide.** Kept for the record of what was shown and claimed on 24–28 August 2026. It describes the prototype, not the target system; its "four AI modules" framing and its status claims are superseded by `README.md`, `ARCHITECTURE.md` and the master document (`docs/master/MASTER_REFERENCE.md`, v1.0). Do not use it to prepare any future demonstration.
 
 Written 22–23 August 2026, ahead of the 24 August submission video, to answer one question precisely for every module: **what is this, is it really AI, is it actually working right now, and how do I show it live on camera in under a minute.** Ground-truth, verified against the real code and (where noted) the live production backend — not the master doc's aspirational description. Where the two disagree, that's called out explicitly rather than smoothed over.
 
@@ -14,7 +16,7 @@ This matters because CLAUDE.md's own module list slightly overclaims it, and ove
 
 | Module | Real AI call? | What it actually is |
 |---|---|---|
-| **Risk Stratification Engine** | **Yes** — real Gemini (`gemini-flash-latest`) call, `prompts/risk_engine_prompt.txt` | The LLM reads the 10 raw answers and reasons about tier/confidence/contributing factors/explanation as a combination, not a formula |
+| **Risk Stratification Engine** | **Yes** — real Gemini (`gemini-3.1-flash-lite`, pinned 23 August) call, `prompts/risk_engine_prompt.txt` | The LLM reads the 10 raw answers and reasons about tier/confidence/contributing factors/explanation as a combination, not a formula |
 | **Longitudinal Deterioration Detection** | **No** | Pure Python: compares specific answer scores to the previous screening, escalates tier one level on any worsening (`services/deterioration.py`) |
 | **"Smart" Referral Router** | **No** | 100% deterministic rules: facility name-matching, fixed urgency windows (RED 48h / ORANGE 14d), fixed reminder/escalation timedeltas (`services/facility_matching.py`, `services/referral_cascade.py`). "Smart" describes the composition of rules + real side effects (SMS, referral codes), not a model |
 | **Population Health Intelligence** | **Yes, partially** — the narrative paragraph is a real Gemini call | The underlying "clustering" is a plain SQL `GROUP BY site` count; the LLM's genuine contribution is judging in prose whether one site's ORANGE/RED share looks disproportionate, not a clustering algorithm |

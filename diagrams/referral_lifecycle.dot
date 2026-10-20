@@ -1,0 +1,25 @@
+// Figure 3 — Referral lifecycle (§10.4).
+// Attendance is confirmed by the facility entering the referral code, not by
+// the worker. Closing captures the clinical outcome for the person's record.
+// Render: dot -Tpng referral_lifecycle.dot -o referral_lifecycle.png
+digraph referral_lifecycle {
+    graph [fontname="Helvetica", fontsize=11, rankdir=TB, nodesep=0.5, ranksep=0.5, bgcolor="white"];
+    node  [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#102A72", fillcolor="white", penwidth=1.2];
+    edge  [fontname="Helvetica", fontsize=9, color="#555555", arrowsize=0.8];
+
+    open       [label="OPEN\nreferral created,\ncode issued", fillcolor="#E8ECF7"];
+    prealerted [label="PRE ALERTED\nfacility notified by\nmessage and email"];
+    reminded   [label="REMINDED\nTier 4: 24h\nTier 3: day 3 and day 7"];
+    escalated  [label="ESCALATED\nTier 4: 48h\nTier 3: day 14", color="#A63D3D", fillcolor="#F6E4E4"];
+    attended   [label="ATTENDED\nconfirmed by facility staff\nentering the code", color="#07966F", fillcolor="#CDEBE0", penwidth=2];
+    closed     [label="CLOSED\noutcome recorded,\nradiology result returned\nto the person's record", fillcolor="#CDEBE0"];
+
+    open -> prealerted;
+    prealerted -> reminded;
+    prealerted -> attended [label="attends early"];
+    reminded -> escalated [label="window expires"];
+    reminded -> attended [label="attends"];
+    escalated -> attended [label="attends after chase"];
+    escalated -> closed [label="closed unattended,\nreason recorded", style=dashed];
+    attended -> closed;
+}

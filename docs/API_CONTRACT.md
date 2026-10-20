@@ -1,4 +1,6 @@
-# SilicaGuard API Contract
+# SilicaGuard API Contract — v1
+
+> **This is the v1 contract: the prototype API as it runs today.** The Phase One rebuild (`ARCHITECTURE.md` — per-condition result rows, person/contact identity, instrument versions, consent) changes the shape of most routes here; v2 of this document arrives with that schema and is versioned so the mobile application and dashboard migrate in step. Until then, this file is accurate for the deployed backend and is what both frontends build against.
 
 This is the source of truth for the backend's HTTP interface. Build the mobile app and dashboard against this document, not against reading the Python.
 
@@ -79,7 +81,7 @@ Replaces the old `POST /api/miners` (removed 5 August 2026 — that route now 40
 
 **Errors**: `409` if `phone` is already registered (phone is the persistent worker identity).
 
-**Still TARGET, not in this shape yet**: `job_role`, `employer_id` (the latter is moot post-pivot — see `SILICAGUARD.md` Section 13 — and won't be added). No `workers` schema column exists for `job_role` yet either; don't build UI against it until it lands.
+**Still TARGET, not in this shape yet**: `job_role`, `employer_id` (the latter is moot post-pivot — no formal-sector features in phase one, see `README.md` "Scope decisions that are locked" — and won't be added; the v2 schema's nullable programme reference replaces the concept). No `workers` schema column exists for `job_role` yet either; don't build UI against it until it lands.
 
 ### `GET /api/workers/{phone}` — LIVE
 
@@ -290,11 +292,11 @@ Requires `Authorization: Bearer <token>`.
 
 **Errors**: `401` missing/invalid token.
 
-`deadline` is set on creation from the fixed urgency windows in `SILICAGUARD.md` Section 7 Pillar 2 (RED = created_at + 48h, ORANGE = created_at + 14 days).
+`deadline` is set on creation from the fixed urgency windows (RED = created_at + 48h, ORANGE = created_at + 14 days) — the tier-3 window is one of the items awaiting explicit clinical confirmation in `docs/CLINICAL.md`.
 
 `facility_id`/`facility_name` (new) are matched by `backend/services/facility_matching.py`: RED always matches a `district_hospital`-level facility, regardless of `mine_site` — the 48h window is too tight to risk a lower-acuity facility. ORANGE tries to match a `clinic`-level facility whose name plausibly serves the worker's site, falling back to the hospital if none matches. `facility_id` is `null` (and `facility_name` falls back to the literal `"Kwekwe District Hospital"`) only if no hospital-level facility is seeded at all.
 
-`reminder_stage` (new) and the `reminded`/`escalated` statuses are now live, driven by an in-process scheduler (`backend/services/referral_cascade.py`, fired via APScheduler in `main.py`) — **not** synchronously on any request: RED gets one reminder at ~24h and escalates at 48h if still unattended; ORANGE reminds at day 3 and day 7 and escalates at day 14. This only runs while the server process is awake — see `SKILL.md`'s Render free-tier warm-up note.
+`reminder_stage` (new) and the `reminded`/`escalated` statuses are now live, driven by an in-process scheduler (`backend/services/referral_cascade.py`, fired via APScheduler in `main.py`) — **not** synchronously on any request: RED gets one reminder at ~24h and escalates at 48h if still unattended; ORANGE reminds at day 3 and day 7 and escalates at day 14. This only runs while the server process is awake — see the free-tier notes in `docs/STACK.md`.
 
 ### `PATCH /api/referrals/{referral_id}` — LIVE (new status lifecycle)
 
@@ -478,7 +480,7 @@ Requires `Authorization: Bearer <token>`.
   "total_screened": 142,
   "high_risk_count": 9,
   "referral_completion_rate": 0.67,
-  "ai_narrative": "This week 142 miners were screened across three sites, with 9 at elevated risk...",
+  "ai_narrative": "This week 142 miners were screened across three sites, with 9 at elevated risk...",   // illustrative example output, not a figure
   "tier_distribution": { "GREEN": 90, "YELLOW": 43, "ORANGE": 7, "RED": 2 },
   "site_breakdown": [
     { "mine_site": "Sherwood Mine", "count": 62 },
