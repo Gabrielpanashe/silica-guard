@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://silicaguard.health/schemas/instrument.schema.json",
+  "title": "SilicaGuard screening instrument version",
+  "description": "One version of the clinical screening instrument, held as reviewable data. Implements Master Reference v1.0 Appendix A and the versioned-data requirement of 8.3. Patient-facing wording is NOT stored here: every question and option references a message code in content/, so that one store carries every string a worker reads (8.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "version", "status", "conditions", "blocks", "questions", "tier_rules", "safety_rules", "intervals", "unknown_handling", "limitations"],
+  "properties": {
+    "code": {
+      "description": "Stable instrument identifier, uppercase. Never changed once an approved version uses it.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9-]{2,31}$"
+    },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": {
+      "description": "draft and review are editable. approved is immutable: a change is a new version, because every screening result stores the version that produced it. retired is no longer selectable. example is a format illustration and is refused by the loader.",
+      "enum": ["draft", "review", "approved", "retired", "example"]
+    },
+    "approved_by": {
+      "description": "The Clinical Lead's name. Required when status is approved.",
+      "type": "string",
+      "minLength": 2
+    },
+    "approved_at": { "type": "string", "format": "date" },
+    "supersedes": {
+      "description": "Version number this one replaces, if any.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "conditions": {
+      "description": "Condition codes this instrument assesses. A screening session produces one result row per condition (8.1). Lowercase, so that a condition is a value and never a column name.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/condition_code" },
+      "uniqueItems": true
+    },
+    "blocks": {
+      "description": "Question blocks in presentation order. The symptom core is shared across conditions; the exposure block is what changes for a new sector (12.1).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "title_message_code"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+          "title_message_code": { "$ref": "#/$defs/message_code" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/question" }
+    },
+    "tier_rules": {
+      "description": "Per condition, the tier cascade as predicates. Evaluated in descending priority; first match wins. A pure score band is one predicate.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/tier_rule" }
+    },
+    "safety_rules": {
+      "description": "Red flags. Evaluated BEFORE the tier cascade; a match forces its tier and the rule code is recorded on the result. Can raise a tier, never lower one. Owned by the Clinical Lead rather than inherited from code (12.2 item 1).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/safety_rule" }
+    },
+    "intervals": {
+      "description": "Re-screen interval and referral window per condition and tier. Both are open clinical decisions in 12.2 (items 7 and 8) and must be stated explicitly here rather than implied by code.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["condition", "tier", "rescreen_days"],
+        "properties": {
+          "condition": { "$ref": "#/$defs/condition_code" },
+          "tier": { "$ref": "#/$defs/tier" },
+          "rescreen_days": {
+            "description": "Null where the interval is linked to a referral outcome rather than a fixed period.",
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "referral_window_hours": {
+            "description": "Required for tiers that generate a referral. Null for tiers that do not.",
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "citation": { "type": "string" }
+        }
+      }
+    },
+    "unknown_handling": {
+      "description": "12.2 item 10: an unanswered red-flag question must never default to a negative. States how unknown and refused are scored, and that a partially answered instrument may not produce a tier (13.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unknown_score", "refused_score", "partial_session_may_produce_tier"],
+      "properties": {
+        "unknown_score": { "type": "integer" },
+        "refused_score": { "type": "integer" },
+        "partial_session_may_produce_tier": { "const": false },
+        "notes": { "type": "string" }
+      }
+    },
+    "limitations": {
+      "description": "12.5: an honest statement of what the instrument does not detect, including the asymptomatic early-disease limitation. Required, because it forms part of the ethics submission and of what is said on stage.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 10 }
+    },
+    "notes": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "approved" } }, "required": ["status"] },
+      "then": { "required": ["approved_by", "approved_at"] }
+    }
+  ],
+  "$defs": {
+    "message_code": {
+      "description": "Key into content/. The words themselves live there, in every supported language.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]{2,63}$"
+    },
+    "condition_code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,31}$" },
+    "question_code": {
+      "description": "Stable uppercase identifier. Never changed once an approved version uses it, because stored answers reference it.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{1,39}$"
+    },
+    "tier": {
+      "description": "Internal tier. Messages say Level 1 to Level 4 instead, because colour does not survive plain text (2.6).",
+      "enum": ["GREEN", "YELLOW", "ORANGE", "RED"]
+    },
+    "question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "block", "clinical_label", "response_type", "label_message_code", "citation"],
+      "properties": {
+        "code": { "$ref": "#/$defs/question_code" },
+        "block": { "type": "string" },
+        "clinical_label": {
+          "description": "Internal clinical name. May use clinical terminology. Never shown to a worker.",
+          "type": "string",
+          "minLength": 3
+        },
+        "response_type": {
+          "description": "single_select covers graded responses, which 12.1 requires wherever the underlying variable is graded. integer_banded records a number but scores it by band.",
+          "enum": ["single_select", "multi_select", "integer_banded", "boolean"]
+        },
+        "label_message_code": { "$ref": "#/$defs/message_code" },
+        "options": {
+          "description": "Required for every response_type except integer_banded, which carries bands instead.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "label_message_code"],
+            "properties": {
+              "value": { "type": "string", "pattern": "^[a-z0-9_]{1,31}$" },
+              "label_message_code": { "$ref": "#/$defs/message_code" },
+              "is_unknown": {
+                "description": "Marks the explicit unknown or refused option, so the engine can test it with the unknown predicate rather than inferring from absence.",
+                "type": "boolean",
+                "default": false
+              }
+            }
+          }
+        },
+        "bands": {
+          "description": "For integer_banded: the inclusive lower bound of each band, ascending, each mapped to a value.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "value", "label_message_code"],
+            "properties": {
+              "from": { "type": "integer" },
+              "value": { "type": "string", "pattern": "^[a-z0-9_]{1,31}$" },
+              "label_message_code": { "$ref": "#/$defs/message_code" }
+            }
+          }
+        },
+        "scores": {
+          "description": "Per condition, the score each answer value contributes. Keyed by condition because the same answer can weigh differently for different conditions (8.3). Absent means the question is recorded but not scored, which is valid and must stay valid: demographics are not scored and are still part of the version.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["condition", "value", "score"],
+            "properties": {
+              "condition": { "$ref": "#/$defs/condition_code" },
+              "value": { "type": "string" },
+              "score": { "type": "integer" }
+            }
+          }
+        },
+        "channels": {
+          "description": "Which channels ask this question. A long instrument plus consent does not fit a 180-second USSD session, so the Clinical Lead defines any shorter USSD subset deliberately, as data, rather than having the channel truncate silently (13.1; docs/IMPLEMENTATION_PLAN.md disagreement 6). Absent means every channel.",
+          "type": "array",
+          "items": { "enum": ["app", "ussd"] },
+          "uniqueItems": true
+        },
+        "tracked_for_trajectory": {
+          "description": "Whether a worsening answer here counts as deterioration against the worker's previous session. Replaces the hardcoded set in services/deterioration.py.",
+          "type": "boolean",
+          "default": false
+        },
+        "branching": {
+          "description": "Predicate that must hold for this question to be asked. Absent means always asked.",
+          "$ref": "#/$defs/predicate"
+        },
+        "citation": {
+          "description": "Source for the question and for its scoring. Mandatory: 12.1 requires a citation for every question and every threshold, and the current draft has none. This is what an ethics committee asks for, and the difference between an instrument and an opinion.",
+          "type": "string",
+          "minLength": 4
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "tier_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition", "tier", "priority", "predicate", "citation"],
+      "properties": {
+        "condition": { "$ref": "#/$defs/condition_code" },
+        "tier": { "$ref": "#/$defs/tier" },
+        "priority": {
+          "description": "Higher is evaluated first. First match wins.",
+          "type": "integer"
+        },
+        "predicate": { "$ref": "#/$defs/predicate" },
+        "label": { "type": "string" },
+        "citation": { "type": "string", "minLength": 4 }
+      }
+    },
+    "safety_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "forces_tier", "predicate", "citation"],
+      "properties": {
+        "code": {
+          "description": "Recorded on any result this rule fires on, so a classification can be audited afterwards.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{2,47}$"
+        },
+        "condition": {
+          "description": "Absent means the rule applies to every condition.",
+          "$ref": "#/$defs/condition_code"
+        },
+        "forces_tier": { "$ref": "#/$defs/tier" },
+        "predicate": { "$ref": "#/$defs/predicate" },
+        "label": { "type": "string" },
+        "citation": { "type": "string", "minLength": 4 }
+      }
+    },
+    "predicate": {
+      "description": "Closed grammar. No expression language, nothing evaluated dynamically. See clinical/README.md.",
+      "type": "object",
+      "minProperties": 1,
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["all"],
+          "properties": { "all": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/predicate" } } }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["any"],
+          "properties": { "any": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/predicate" } } }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["not"],
+          "properties": { "not": { "$ref": "#/$defs/predicate" } }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["answer", "in"],
+          "properties": {
+            "answer": { "$ref": "#/$defs/question_code" },
+            "in": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["score"],
+          "properties": {
+            "score": { "$ref": "#/$defs/condition_code" },
+            "gte": { "type": "integer" },
+            "lte": { "type": "integer" }
+          },
+          "anyOf": [{ "required": ["gte"] }, { "required": ["lte"] }]
+        },
+        {
+          "additionalProperties": false,
+          "required": ["count", "gte"],
+          "properties": {
+            "count": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["codes", "in"],
+              "properties": {
+                "codes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/question_code" }, "uniqueItems": true },
+                "in": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true }
+              }
+            },
+            "gte": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["unknown"],
+          "properties": { "unknown": { "$ref": "#/$defs/question_code" } }
+        }
+      ]
+    }
+  }
+}

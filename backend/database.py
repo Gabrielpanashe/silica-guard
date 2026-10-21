@@ -1,10 +1,15 @@
+import logging
 import os
 import sqlite3
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from db_models import Base
+
+logger = logging.getLogger("silicaguard.database")
 
 # SQLAlchemy ORM migration (14 August 2026, master doc v6.0 Section 16.2).
 # Replaces the previous raw-sqlite3 database.py — see git history for that
@@ -90,10 +95,27 @@ _CLEANUP_STATEMENTS = (
 
 
 def get_db():
-    """FastAPI dependency — yields one Session per request, always closed."""
+    """FastAPI dependency — yields one Session per request, always closed.
+
+    A database that is unreachable (not a bad query — the server itself
+    being down, paused or unroutable) is turned into a clean 503 rather
+    than a raw 500 traceback. 11 September 2026: the Supabase project
+    auto-paused after the free tier's 7 idle days and every DB-backed route
+    started returning `psycopg.OperationalError` as an opaque 500, which
+    tells a client nothing about whether to retry. `OperationalError` is
+    SQLAlchemy's connection-level failure — a genuine query bug raises
+    `ProgrammingError`/`IntegrityError` instead and still surfaces as a 500,
+    which is correct.
+    """
     db = SessionLocal()
     try:
         yield db
+    except OperationalError:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable — the screening was not saved. Retry shortly.",
+        )
     finally:
         db.close()
 
@@ -188,6 +210,34 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def _current_engine():
+    """The engine matching the *current* `DATABASE_URL` — the module-level
+    one where it still matches, a freshly built one where a test (or
+    anything else) has changed `DATABASE_URL` since import. Extracted from
+    `init_db()` so `database_reachable()` resolves its engine exactly the
+    same way rather than keeping a second, subtly different copy of the
+    rule."""
+    if str(engine.url) == _normalize_database_url(DATABASE_URL):
+        return engine
+    return _make_engine(DATABASE_URL)
+
+
+def database_reachable() -> bool:
+    """Cheap liveness probe for /api/health — one `SELECT 1`, never raises.
+
+    Deliberately separate from whether the API process is up: those are
+    different failures with different responses (restart the service vs.
+    restore the database), and on 11 September 2026 they were indistinguishable
+    from outside, which cost real diagnosis time."""
+    try:
+        with _current_engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        logger.warning("Database liveness probe failed", exc_info=True)
+        return False
+
+
 def init_db(target_engine=None) -> None:
     """Defaults to the module-level `engine` — but if `DATABASE_URL` has
     been changed since that engine was built (e.g. a test monkeypatching
@@ -198,10 +248,7 @@ def init_db(target_engine=None) -> None:
     both mechanisms agree during the migration. Pass `target_engine`
     explicitly to skip that lookup entirely (e.g. Step B's Alembic setup)."""
     if target_engine is None:
-        if str(engine.url) == _normalize_database_url(DATABASE_URL):
-            target_engine = engine
-        else:
-            target_engine = _make_engine(DATABASE_URL)
+        target_engine = _current_engine()
     with target_engine.begin() as conn:
         for statement in _CLEANUP_STATEMENTS:
             conn.execute(text(statement))

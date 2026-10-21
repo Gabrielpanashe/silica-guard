@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from database import init_db
+from database import database_reachable, init_db
 from routers import auth, dashboard, education, facilities, mines, outreach, referral_lookup, screening, ussd, workers
 from services.db_keepalive import run_scheduled_keepalive
 from services.outreach import run_scheduled_outreach
@@ -27,7 +27,27 @@ scheduler: BackgroundScheduler | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global scheduler
-    init_db()
+    # A database that is down must not take the whole API down with it.
+    # 11 September 2026: the free-tier Supabase project auto-paused after 7
+    # idle days (Render had slept, so services/db_keepalive.py stopped
+    # pinging it), init_db() raised here, startup never completed, and
+    # Render marked the deploy `update_failed` — so there was no instance
+    # serving anything at all, not even /api/health, and nothing to tell
+    # anyone from outside whether the API or the database was the problem.
+    # Boot degraded instead: /api/health still answers (reporting the
+    # database as down) and DB-backed routes return a clean 503 from
+    # database.get_db(). The service then recovers on its own the moment
+    # the database comes back — no redeploy needed.
+    db_ready = False
+    try:
+        init_db()
+        db_ready = True
+    except Exception:
+        logger.exception(
+            "init_db() failed — starting in degraded mode. /api/health will "
+            "report database=down and DB-backed routes will return 503 until "
+            "the database is reachable again."
+        )
 
     # Render's free tier has no persistent disk — the SQLite file resets on
     # every redeploy and likely every sleep/wake cycle. Rather than silently
@@ -40,10 +60,13 @@ async def lifespan(app: FastAPI):
     # for a persistent disk or migrate to Postgres this close to feature
     # freeze — see CLAUDE.md's sprint status for the full reasoning.
     if os.getenv("AUTO_SEED_ON_BOOT", "false").lower() == "true":
-        from scripts.seed_demo_data import seed
+        if not db_ready:
+            logger.warning("AUTO_SEED_ON_BOOT=true but the database is unreachable — skipping seed")
+        else:
+            from scripts.seed_demo_data import seed
 
-        seed()
-        logger.info("AUTO_SEED_ON_BOOT=true — reseeded demo data on startup")
+            seed()
+            logger.info("AUTO_SEED_ON_BOOT=true — reseeded demo data on startup")
 
     # Smart Referral Router reminder/escalation cascade — an in-process
     # background job, not an external cron (Render free tier gives us no
@@ -98,7 +121,12 @@ app.include_router(education.router)
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    # `status` stays "ok" whenever the process is serving — that is what this
+    # endpoint has always meant and what warms Render's sleeping free tier
+    # before a demo. `database` is additive (11 September 2026): it separates
+    # "the API is down" from "the API is up but the database is unreachable",
+    # which from outside looked identical during the Supabase pause.
+    return {"status": "ok", "database": "up" if database_reachable() else "down"}
 
 
 # USSD web simulator (14 August 2026, master doc v6.0 Section 16.1) — a

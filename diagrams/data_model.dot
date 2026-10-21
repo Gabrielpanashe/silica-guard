@@ -1,0 +1,38 @@
+// Figure 4 — Core entities of the version two data model (§8.1, §10.5).
+// TARGET model, not the current schema. A screening session produces result
+// rows, one per condition; the nullable programme reference is the entire
+// formal sector seam. The word "silicosis" appears as a value, never a column.
+// Render: dot -Tpng data_model.dot -o data_model.png
+digraph data_model {
+    graph [fontname="Helvetica", fontsize=11, rankdir=TB, nodesep=0.35, ranksep=0.6, bgcolor="white"];
+    node  [fontname="Helvetica", fontsize=11, shape=box, style="filled", color="#102A72", fillcolor="white", penwidth=1.2];
+    edge  [fontname="Helvetica", fontsize=9, color="#555555", arrowsize=0.8];
+
+    person     [label="PERSON\ninternal id\nparticipant code\nage, sex, language\nno clinical content", fillcolor="#E8ECF7"];
+    contact    [label="CONTACT\nnumber\nvalid from / to\nprimary, verified"];
+    exposure   [label="EXPOSURE PROFILE\noccupation, task\nyears, controls\nsector"];
+    consent    [label="CONSENT RECORD\npermission\ntext version\ngranted / refused"];
+    site       [label="SITE\nname, sector, type"];
+    programme  [label="PROGRAMME\n(nullable)\nabsent = community\nvalue = employer or\ninsurer cohort", style="filled,dashed", color="#888888", fillcolor="#F2F2F2"];
+    instrument [label="INSTRUMENT VERSION\nquestions, options\nscoring, thresholds\nsafety rules\nimmutable", fillcolor="#E8ECF7"];
+    session    [label="SCREENING SESSION\nchannel, worker, site, time\ninstrument version, programme\nlink to previous session", fillcolor="#E8ECF7"];
+    answer     [label="SCREENING ANSWER\nquestion code\nvalue, score"];
+    result     [label="SCREENING RESULT\none row per condition\ntier, score, method\nrule version, override", color="#07966F", fillcolor="#CDEBE0", penwidth=2];
+    referral   [label="REFERRAL\nfacility, window\ncode, status\nreasons, outcome"];
+    facility   [label="FACILITY\nlevel, location"];
+
+    person -> contact;
+    person -> exposure;
+    person -> consent;
+    person -> session;
+    site -> session [style=dashed];
+    programme -> session [style=dashed];
+    instrument -> session [label="stamped", style=dashed];
+    session -> answer;
+    session -> result;
+    result -> referral;
+    referral -> facility;
+
+    { rank=same; person; site; programme; instrument; }
+    { rank=same; contact; exposure; consent; session; }
+}
