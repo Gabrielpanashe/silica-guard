@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  FORMAT ILLUSTRATION. NOT PATIENT-FACING CONTENT.
+#
+#  Every message here is `status: draft` and its text is structural filler
+#  that says what it is. None of it is a health message, and none of it may
+#  be sent to anybody.
+#
+#  The Shona and Ndebele entries are deliberately left as explicit
+#  "to be authored" markers rather than filled with invented text. Master
+#  Reference §8.4 requires every local-language string to be AUTHORED by a
+#  first-language health communicator and not translated — plausible-looking
+#  invented Shona in a repository is indistinguishable from reviewed Shona a
+#  month later, and this file would be the worst possible place for it.
+#
+#  The real strings are the Clinical Lead's deliverable: English within the
+#  channel budget by Week 8, Shona and Ndebele by Week 12 (ROADMAP.md).
+# ─────────────────────────────────────────────────────────────────────────────
+
+area: example
+notes: >-
+  Exercises every feature the validator checks: all four channels, the
+  placeholder contract, and a message close to the SMS budget. Keep it that
+  way — tests/test_validate_content.py reads this file.
+
+messages:
+  # An SMS near the one-segment budget. The whole point of the budget is that
+  # cost is per segment and a screening already generates several messages.
+  - code: example.sms.result
+    channel: sms
+    status: draft
+    purpose: Illustrates an SMS-channel message with placeholders, close to the 160-septet budget.
+    placeholders: [name, code]
+    text:
+      en: >-
+        EXAMPLE FILLER for {name}, reference {code}. This is not a health
+        message and must not be sent. Replace before approval.
+      sn: "(Shona: to be authored by a first-language health communicator)"
+      nd: "(Ndebele: to be authored by a first-language health communicator)"
+
+  # A USSD page. The 182-septet budget must cover the question AND its options
+  # and navigation hints, which is why it is checked here and not at render.
+  - code: example.ussd.prompt
+    channel: ussd
+    status: draft
+    purpose: Illustrates a USSD page whose budget includes options and navigation.
+    text:
+      en: >-
+        EXAMPLE FILLER prompt. 1. First option 2. Second option 3. Third
+        option 0. Back
+      sn: "(Shona: to be authored by a first-language health communicator)"
+      nd: "(Ndebele: to be authored by a first-language health communicator)"
+
+  # In-app text: a readability ceiling rather than a transport limit.
+  - code: example.app.notice
+    channel: app
+    status: draft
+    purpose: Illustrates longer in-app text, which a screen can scroll.
+    text:
+      en: >-
+        EXAMPLE FILLER notice shown in the application. Longer than a message
+        because a screen can scroll, but still bounded so that it stays
+        readable on the floor-specification handset in sunlight.
+      sn: "(Shona: to be authored by a first-language health communicator)"
+      nd: "(Ndebele: to be authored by a first-language health communicator)"
+
+  # Read by trained staff, not by a worker — still versioned and reviewed,
+  # because it describes a person's clinical result.
+  - code: example.clinician.summary
+    channel: clinician
+    status: draft
+    purpose: Illustrates clinician-facing text, such as a referral packet line.
+    placeholders: [tier]
+    text:
+      en: >-
+        EXAMPLE FILLER clinician summary. Tier {tier}. Read by trained staff
+        on the dashboard or in a referral packet, never by the worker.
+      sn: "(Shona: to be authored by a first-language health communicator)"
+      nd: "(Ndebele: to be authored by a first-language health communicator)"
