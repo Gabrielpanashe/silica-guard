@@ -1,0 +1,189 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  THIS IS NOT A CLINICAL INSTRUMENT.
+#
+#  It is a format illustration and a test fixture. The question codes are T1,
+#  T2 and T3 and they mean nothing. The scores, thresholds and rules were
+#  chosen to exercise every node of the predicate grammar, not to assess
+#  anybody's lungs.
+#
+#  `status: example` is refused by the loader, so this file cannot reach a
+#  database in any environment.
+#
+#  Why it looks like this: a plausible invented question set is the most
+#  dangerous artefact this directory could hold, because a month later it is
+#  indistinguishable from a reviewed one and may quietly become the
+#  instrument. Instrument version one is the Clinical Lead's deliverable
+#  (Master Reference §12.5) and does not exist yet. Nothing in this repository
+#  invents clinical content.
+# ─────────────────────────────────────────────────────────────────────────────
+
+code: TEST-INSTRUMENT
+version: 1
+status: example
+conditions:
+  - condition_a
+  - condition_b
+
+blocks:
+  - code: block_one
+    title_message_code: test.block.one.title
+  - code: block_two
+    title_message_code: test.block.two.title
+
+questions:
+  # Graded single select, scored differently for the two conditions — the
+  # reason scoring is keyed by condition rather than living on the option.
+  - code: T1
+    block: block_one
+    clinical_label: Test graded question one
+    response_type: single_select
+    label_message_code: test.q.t1
+    tracked_for_trajectory: true
+    options:
+      - { value: none, label_message_code: test.q.t1.none }
+      - { value: some, label_message_code: test.q.t1.some }
+      - { value: lots, label_message_code: test.q.t1.lots }
+      - { value: unknown, label_message_code: test.q.t1.unknown, is_unknown: true }
+    scores:
+      - { condition: condition_a, value: none, score: 0 }
+      - { condition: condition_a, value: some, score: 2 }
+      - { condition: condition_a, value: lots, score: 5 }
+      - { condition: condition_b, value: none, score: 0 }
+      - { condition: condition_b, value: some, score: 1 }
+      - { condition: condition_b, value: lots, score: 1 }
+    citation: "Not applicable — synthetic test fixture."
+
+  # Banded integer: a number is recorded, a band is scored.
+  - code: T2
+    block: block_one
+    clinical_label: Test banded question two
+    response_type: integer_banded
+    label_message_code: test.q.t2
+    bands:
+      - { from: 0,  value: low,  label_message_code: test.q.t2.low }
+      - { from: 5,  value: mid,  label_message_code: test.q.t2.mid }
+      - { from: 10, value: high, label_message_code: test.q.t2.high }
+    scores:
+      - { condition: condition_a, value: low,  score: 0 }
+      - { condition: condition_a, value: mid,  score: 3 }
+      - { condition: condition_a, value: high, score: 6 }
+    citation: "Not applicable — synthetic test fixture."
+
+  # Recorded but not scored, and asked only on the app channel. Both of those
+  # must stay expressible: demographics are unscored and still part of a
+  # version, and a long instrument cannot fit a 180-second USSD session.
+  - code: T3
+    block: block_two
+    clinical_label: Test unscored question three
+    response_type: single_select
+    label_message_code: test.q.t3
+    channels: [app]
+    options:
+      - { value: yes_, label_message_code: test.q.t3.yes }
+      - { value: no_,  label_message_code: test.q.t3.no }
+    branching:
+      answer: T1
+      in: [some, lots]
+    citation: "Not applicable — synthetic test fixture."
+
+# Safety rules run first and can only raise a tier. The engine enforces that
+# regardless of what a rule claims.
+safety_rules:
+  - code: test_red_flag
+    forces_tier: RED
+    predicate:
+      answer: T1
+      in: [lots]
+    label: Test red flag on the highest T1 answer
+    citation: "Not applicable — synthetic test fixture."
+
+  # An unanswered red-flag question must never read as a negative (§12.2
+  # item 10), so `unknown` is a value the rules can test.
+  - code: test_unknown_escalation
+    condition: condition_a
+    forces_tier: ORANGE
+    predicate:
+      unknown: T1
+    label: Unknown on T1 is escalated rather than scored as absent
+    citation: "Not applicable — synthetic test fixture."
+
+# Evaluated in descending priority; first match wins. These exercise every
+# remaining node type: all, any, not, score bands and count.
+tier_rules:
+  - condition: condition_a
+    tier: ORANGE
+    priority: 30
+    predicate:
+      all:
+        - { score: condition_a, gte: 6 }
+        - any:
+            - { answer: T2, in: [high] }
+            - { count: { codes: [T1, T3], in: [some, lots, yes_] }, gte: 2 }
+    label: Combination rule — the shape a score band alone cannot express
+    citation: "Not applicable — synthetic test fixture."
+
+  - condition: condition_a
+    tier: YELLOW
+    priority: 20
+    predicate:
+      score: condition_a
+      gte: 3
+    label: Plain score band — one predicate, nothing lost
+    citation: "Not applicable — synthetic test fixture."
+
+  - condition: condition_a
+    tier: GREEN
+    priority: 10
+    predicate:
+      all:
+        - { score: condition_a, lte: 2 }
+        - not: { answer: T1, in: [lots] }
+    label: Baseline
+    citation: "Not applicable — synthetic test fixture."
+
+  - condition: condition_b
+    tier: YELLOW
+    priority: 20
+    predicate:
+      answer: T1
+      in: [some, lots]
+    label: Second condition, scored from the shared answers
+    citation: "Not applicable — synthetic test fixture."
+
+  - condition: condition_b
+    tier: GREEN
+    priority: 10
+    predicate:
+      score: condition_b
+      lte: 0
+    label: Baseline
+    citation: "Not applicable — synthetic test fixture."
+
+intervals:
+  - { condition: condition_a, tier: GREEN,  rescreen_days: 365, referral_window_hours: null }
+  - { condition: condition_a, tier: YELLOW, rescreen_days: 180, referral_window_hours: null }
+  - { condition: condition_a, tier: ORANGE, rescreen_days: 90,  referral_window_hours: 336 }
+  - { condition: condition_a, tier: RED,    rescreen_days: null, referral_window_hours: 48 }
+  - { condition: condition_b, tier: GREEN,  rescreen_days: 365, referral_window_hours: null }
+  - { condition: condition_b, tier: YELLOW, rescreen_days: 180, referral_window_hours: null }
+  - { condition: condition_b, tier: ORANGE, rescreen_days: 90,  referral_window_hours: 336 }
+  - { condition: condition_b, tier: RED,    rescreen_days: null, referral_window_hours: 48 }
+
+unknown_handling:
+  unknown_score: 0
+  refused_score: 0
+  partial_session_may_produce_tier: false
+  notes: >-
+    Scored as zero but testable as a predicate, so a red-flag question left
+    unanswered escalates rather than reading as a negative. A session that has
+    not answered every applicable question produces no result at all.
+
+limitations:
+  - This is a synthetic test fixture and detects nothing.
+  - It exists to exercise the predicate grammar and the loader, not to assess any person.
+
+notes: >-
+  Every node type of the grammar appears at least once: all, any, not, answer,
+  score with gte, score with lte, count, and unknown. Keep it that way — the
+  rules engine's test suite reads this file, so a grammar node that stops being
+  represented here stops being covered.

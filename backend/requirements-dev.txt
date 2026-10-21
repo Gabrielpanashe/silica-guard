@@ -5,3 +5,10 @@ requests
 # deck deliverable, not runtime code, so these stay out of requirements.txt.
 simpy
 matplotlib
+
+# clinical/ and content/ validators (scripts/validate_instrument.py,
+# scripts/validate_content.py) and their tests. Dev-only for now: when the
+# Phase One loader migrations read these files at `alembic upgrade` time,
+# pyyaml moves to requirements.txt because migrations run in production.
+pyyaml
+jsonschema

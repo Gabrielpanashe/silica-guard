@@ -95,6 +95,48 @@ jobs:
           print("No drift: models and migrations agree.")
           PY
 
+  clinical:
+    name: Clinical specifications
+    runs-on: ubuntu-latest
+    # 11.8's instrument gate. Checks the shape of every instrument file
+    # against clinical/instrument.schema.json plus the cross-references a
+    # schema cannot express: that rules only reference questions and
+    # conditions that exist, that scores name answer values the question
+    # actually offers, that every condition has a reachable baseline tier, and
+    # that intervals cover every condition and tier. A typo in a rule
+    # otherwise produces a rule that silently can never fire.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.3"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Validate instrument specifications
+        run: python scripts/validate_instrument.py
+
+  content:
+    name: Content strings
+    runs-on: ubuntu-latest
+    # 11.8's character set validator and channel budget check, over every
+    # language. One character outside GSM 03.38 sends the whole message as
+    # 16-bit at 70 characters per segment instead of 160, permanently
+    # multiplying the cost of every send -- a failure invisible in review and
+    # silent at runtime. The budget is checked per language because the local
+    # language version is usually the longest, and a string that does not fit
+    # is rewritten, never truncated at runtime.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.3"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Validate patient-facing content
+        run: python scripts/validate_content.py
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
@@ -145,25 +187,22 @@ jobs:
         run: |
           python -m pip_audit --strict --desc -r backend/requirements.txt             --ignore-vuln PYSEC-2026-4298             --ignore-vuln PYSEC-2026-1325
 
-# Gates from §11.8 that are not yet wired, with the condition that turns each on
+# Gates from §11.8 still to wire, with the condition that turns each on
 # (see docs/IMPLEMENTATION_PLAN.md):
 #
-#   Character set validator   — when content/ exists (Phase One 1.6). Runs
-#                               backend/scripts/validate_content.py over every
-#                               language: GSM 03.38 basic + extension set, so a
-#                               single curly apostrophe cannot double the cost
-#                               of every message sent (§8.4).
-#   Channel budget check      — same job: every USSD question with its options
-#                               and navigation must fit the page limit in every
-#                               language (§13.1).
-#   Instrument regression     — when clinical/instruments/ exists (Phase One
-#                               1.4). Fixed answer profiles with Clinical
-#                               Lead-approved expected tiers, run against every
-#                               instrument version, so a clinical change that
-#                               moves an unrelated tier is caught (§11.7).
+#   Instrument regression     — when clinical/instruments/ holds a real
+#                               instrument (Phase One 1.4). Fixed answer
+#                               profiles with Clinical Lead-approved expected
+#                               tiers, run against every instrument version, so
+#                               a clinical change that moves an unrelated tier
+#                               is caught (§11.7). The fixture format is
+#                               <CODE>-v<N>.fixtures.yaml beside the spec.
 #
 # Also planned, not in §11.8's list but required by the same reasoning:
 #   Channel equivalence       — identical answers through both channels must
 #                               produce identical result rows (§10.1).
 #   No model string on a
 #   patient-facing field      — enforces §8.4 in code rather than by review.
+#
+# The character set validator, the channel budget check and the instrument
+# shape check are live above as the `content` and `clinical` jobs.
