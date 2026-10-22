@@ -54,6 +54,70 @@ export const light = {
   accentEnd:   '#2F7FEF',   // vivid blue — gradient bright end, ~cimas.co.zw button blue
 };
 
+// Figma "SilicaGuard — Home Redesign" palette (2 October 2026, branch
+// fe/design-revamp). Additive, same migration rule as `light` above: screens
+// move onto `ui` one at a time as each gets its redesign; nothing above is
+// renamed or removed until no screen reads it any more. Values are taken
+// verbatim from the Figma file (it defines no variables, so these are the
+// raw fills/strokes).
+export const ui = {
+  bg:            '#F4F6FB',   // page background behind the cards
+  surface:       '#FFFFFF',
+  border:        '#E6EAF2',
+  ink:           '#0B1B3A',   // headings, numbers
+  muted:         '#64748B',   // secondary text
+  primary:       '#2563EB',   // links, outline icons
+  primaryDeep:   '#0F2A5F',   // logo gradient start, text on white buttons
+  primarySoft:   '#EFF4FF',   // icon tiles, date chips
+  heroStart:     '#0B1B3A',   // "today's site" card gradient
+  heroEnd:       '#1E40AF',
+  heroAccent:    '#5EEAD4',   // percentage, pin icon on the hero
+  ctaStart:      '#0D9488',   // "Screen new miner" gradient
+  ctaEnd:        '#0F766E',
+  refer:         '#DC2626',
+  referSoft:     '#FEF2F2',
+  referBorder:   '#FECACA',
+  watch:         '#D97706',
+  watchSoft:     '#FFFBEB',
+  watchBorder:   '#FDE68A',
+  success:       '#15803D',
+  successDot:    '#16A34A',
+  successSoft:   '#DCFCE7',
+  track:         '#E8EDF5',   // progress bar track on white
+  dashed:        '#A5B8F3',   // "Schedule a visit" dashed outline
+  dashedFill:    '#F8FAFF',
+  tabActive:     '#1D4ED8',
+  tabActiveSoft: '#E0E9FF',
+  tabInactive:   '#94A3B8',
+};
+
+// Inter, loaded in App.js via @expo-google-fonts/inter. On Android a custom
+// font's weight comes from the family name, not `fontWeight`, so every text
+// style in the redesign picks one of these instead of a numeric weight. If
+// the fonts ever fail to load, React Native falls back to the system font.
+export const fonts = {
+  regular:   'Inter_400Regular',
+  medium:    'Inter_500Medium',
+  semibold:  'Inter_600SemiBold',
+  bold:      'Inter_700Bold',
+  extrabold: 'Inter_800ExtraBold',
+};
+
+export const shadows = {
+  card: {
+    shadowColor: '#0F172A', shadowOpacity: 0.05, shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 }, elevation: 2,
+  },
+  hero: {
+    shadowColor: '#1E3A8A', shadowOpacity: 0.25, shadowRadius: 28,
+    shadowOffset: { width: 0, height: 12 }, elevation: 8,
+  },
+  cta: {
+    shadowColor: '#0D9488', shadowOpacity: 0.35, shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 }, elevation: 6,
+  },
+};
+
 export const typography = {
   // Weights
   black:      '900',
@@ -134,4 +198,4 @@ export const riskConfig = {
   },
 };
 
-export default { colours, light, typography, spacing, radius, riskConfig };
+export default { colours, light, ui, fonts, shadows, typography, spacing, radius, riskConfig };

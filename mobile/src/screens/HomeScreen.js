@@ -1,25 +1,47 @@
 import {
   StyleSheet, Text, View, TouchableOpacity, ScrollView,
-  Modal, TextInput, Alert, Linking,
+  Modal, TextInput, Alert, Linking, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
-import { colours, light, typography, spacing, radius } from '../theme';
-import StatCard from '../components/StatCard';
-import SyncPill from '../components/SyncPill';
-import SecondaryButton from '../components/SecondaryButton';
+import { DatePicker, Toast } from '@ant-design/react-native';
+import { light, ui, fonts, shadows, typography, spacing, radius } from '../theme';
+import AppHeader from '../components/AppHeader';
+import HeroSiteCard from '../components/HeroSiteCard';
+import StatTile from '../components/StatTile';
+import PrimaryActionCard from '../components/PrimaryActionCard';
+import VisitRow from '../components/VisitRow';
+import BottomNav from '../components/BottomNav';
+import NotificationsSheet from '../components/NotificationsSheet';
 import MineSitePicker from '../components/MineSitePicker';
-import { useOutreachSite } from '../context/OutreachSiteContext';
+import { useOutreachSite, localDateKey } from '../context/OutreachSiteContext';
 import { getDashboardToday, getFacilities, createOutreachVisit } from '../services/api';
 import { getPendingScreenings, syncPendingScreenings } from '../services/offlineQueue';
+import { buildNotifications, getSeenIds, markSeen } from '../services/notificationsFeed';
+import UsersIcon from '../../assets/icons/stat-users.svg';
+import AlertIcon from '../../assets/icons/stat-alert.svg';
+import EyeIcon from '../../assets/icons/stat-eye.svg';
+import ViewAllArrow from '../../assets/icons/view-all-arrow.svg';
+import SchedulePlus from '../../assets/icons/schedule-plus.svg';
+
+// Redesigned 2 October 2026 to the Figma "SilicaGuard — Home Redesign"
+// frame (branch fe/design-revamp). Every feature the previous Home had is
+// still here — only restyled or moved:
+//   - Today's Log / Outreach Stats / Dashboard / Settings buttons -> BottomNav
+//   - LIVE/PENDING SyncPill -> AppHeader's status pill
+//   - date in the header -> greeting block
+//   - outreach banner + district/province -> HeroSiteCard
+//   - pending-sync banner, Outreach Planner card and Schedule Visit sheet
+//     stay, restyled
+// Added: "Confirm today's site", today's-visit progress, a sync button,
+// the notifications bell, pull-to-refresh, a real date picker in the
+// Schedule Visit sheet, and toasts instead of blocking alerts.
 
 // The Intelligence Dashboard (dashboard/, 9-10 August) — a separate static
-// web page, not part of this app, deployed to Render as a Static Site
-// (dashboard/index.html + style.css + app.js, no build step). Opened in
-// the phone's own browser, same one-tap pattern as every other secondary
-// action here.
+// web page, not part of this app, deployed to Render as a Static Site.
+// Opened in the phone's own browser.
 const DASHBOARD_URL = 'https://silicaguard-dashboard.onrender.com';
 
 const EMPTY_TODAY = {
@@ -30,23 +52,35 @@ const EMPTY_TODAY = {
   outreach_visits: [],
 };
 
+const WEEKDAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY',
+  'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+
+// Built by hand rather than toLocaleDateString — Hermes' Intl output varies
+// by Android version, and the design wants one exact format.
+function formatToday(d) {
+  return `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function greetingFor(d) {
+  const h = d.getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
 export default function HomeScreen({ navigation }) {
-  const today = new Date().toLocaleDateString('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  });
+  const now = new Date();
 
-  // Which mine the VHW is at today — shared app-wide (10 August, previously
-  // a hardcoded OUTREACH_SITE constant here). Real numbers below are
-  // filtered by this; changing it re-fetches immediately.
-  const { site, setSite, mine, setMine } = useOutreachSite();
+  // Which mine the VHW is at today — shared app-wide and persisted (see
+  // OutreachSiteContext). Real numbers below are filtered by this;
+  // changing it re-fetches immediately.
+  const { site, setSite, mine, setMine, confirmSite, isConfirmedToday } = useOutreachSite();
 
-  // Real numbers from GET /api/dashboard/today (7 August) — previously
-  // hardcoded to zero. Re-fetched every time this screen gains focus (not
-  // just on mount) AND whenever the selected site changes, so returning
-  // here after a screening — or switching mines — shows the update without
-  // needing a manual refresh. Fails silently to EMPTY_TODAY on any error
-  // (offline, cold Render instance) — this data is never allowed to block
-  // the primary "Screen New Miner" action.
+  // Real numbers from GET /api/dashboard/today (7 August). Re-fetched every
+  // time this screen gains focus AND whenever the selected site changes.
+  // Fails silently to EMPTY_TODAY on any error (offline, cold Render
+  // instance) — this data is never allowed to block "Screen new miner".
   const [stats, setStats] = useState(EMPTY_TODAY);
 
   useFocusEffect(
@@ -67,41 +101,86 @@ export default function HomeScreen({ navigation }) {
 
   // Offline screening sync (16 August) — see services/offlineQueue.js.
   // Home is the natural place to retry: it's the screen the VHW lands on
-  // between screenings and after walking back into signal range, and it
-  // already re-fetches on every focus. `syncing` gates the banner's retry
-  // button so a tap can't fire two attempts at once; a successful sync
-  // also refreshes today's stats, since a newly-synced screening should
-  // show up in Screened Today / Refer Now immediately, not after a manual
-  // pull-to-refresh.
+  // between screenings and after walking back into signal range. `syncing`
+  // gates the sync button so a tap can't fire two attempts at once; a
+  // successful sync also refreshes today's stats.
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
 
-  const attemptSync = useCallback(() => {
+  const attemptSync = useCallback(({ announce = false } = {}) => {
     setSyncing(true);
     return syncPendingScreenings()
       .then(({ synced, remaining }) => {
         setPendingCount(remaining);
         if (synced > 0) refreshStats();
+        if (announce) {
+          if (remaining === 0 && synced > 0) Toast.success(`${synced} screening${synced === 1 ? '' : 's'} synced`);
+          else if (remaining === 0) Toast.info('Everything is synced');
+          else Toast.offline(`${remaining} still waiting — will retry automatically`);
+        }
       })
-      .catch(() => {})
+      .catch(() => { if (announce) Toast.offline('Couldn’t reach the server — will retry automatically'); })
       .finally(() => setSyncing(false));
   }, [refreshStats]);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      // Show whatever's queued immediately (cheap local read), then try
-      // to actually sync it — so the banner never flashes "0 pending"
-      // before the real count loads on a slow/offline connection.
+      // Show whatever's queued immediately (cheap local read), then try to
+      // actually sync it — so the count never flashes 0 before the real
+      // number loads on a slow/offline connection.
       getPendingScreenings().then((q) => { if (!cancelled) setPendingCount(q.length); });
       attemptSync();
       return () => { cancelled = true; };
     }, [attemptSync])
   );
 
+  // Pull-to-refresh — re-fetches today's numbers and retries the sync queue.
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.all([refreshStats(), attemptSync()]).finally(() => setRefreshing(false));
+  }, [refreshStats, attemptSync]);
+
+  // Notifications bell — built on-device for now (services/notificationsFeed.js).
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [seenIds, setSeenIds] = useState(new Set());
+  useEffect(() => { getSeenIds().then(setSeenIds); }, []);
+
+  const notifications = useMemo(
+    () => buildNotifications({ stats, pendingCount }),
+    [stats, pendingCount]
+  );
+  const unreadCount = notifications.filter((n) => !seenIds.has(n.id)).length;
+
+  const openNotifications = () => {
+    setNotifOpen(true);
+    markSeen(notifications);
+    setSeenIds(new Set(notifications.map((n) => n.id)));
+  };
+
+  const handleNotification = (item) => {
+    setNotifOpen(false);
+    if (item.action === 'refer_now') openWorklist('refer_now');
+    else if (item.action === 'outreach') openOutreachStats();
+    else if (item.action === 'sync') attemptSync({ announce: true });
+  };
+
+  // Today's visit at this site, if one is scheduled — drives the hero
+  // card's "N miners planned" line and progress bar.
+  const todayKey = localDateKey(now);
+  const todaysVisit = stats.outreach_visits.find(
+    (v) => v.scheduled_date === todayKey && v.site?.toLowerCase() === site.toLowerCase()
+  ) || null;
+
+  const handleConfirmSite = () => {
+    confirmSite();
+    Toast.success(`Today's site: ${mine?.name || site}`);
+  };
+
   // Outreach Planner — schedule a visit inline from Home (12 August).
-  // POST /api/outreach is unauthenticated as of today specifically for
-  // this — see routers/outreach.py for the tradeoff.
+  // POST /api/outreach is unauthenticated specifically for this — see
+  // routers/outreach.py for the tradeoff.
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [plannerSite, setPlannerSite] = useState(site);
   const [plannerMine, setPlannerMine] = useState(mine);
@@ -118,7 +197,7 @@ export default function HomeScreen({ navigation }) {
   const openPlanner = () => {
     setPlannerSite(site);
     setPlannerMine(mine);
-    setPlannerDate(new Date(Date.now() + 86400000).toISOString().slice(0, 10));
+    setPlannerDate(localDateKey(new Date(Date.now() + 86400000)));
     setPlannerHeadcount('');
     setPlannerError(null);
     setPlannerOpen(true);
@@ -128,8 +207,8 @@ export default function HomeScreen({ navigation }) {
   // district_hospital is always the fallback/RED match; a clinic matches
   // if its name contains the mine's first word (e.g. "Sherwood Mine" ->
   // "Sherwood Clinic"). Informational preview only, not stored on the
-  // visit — the real match happens server-side per-referral at
-  // screening time, same as it always has.
+  // visit — the real match happens server-side per-referral at screening
+  // time, same as it always has.
   const nearestHospital = facilities.find((f) => f.level === 'district_hospital');
   const nearestClinic = plannerMine
     ? facilities.find(
@@ -146,7 +225,7 @@ export default function HomeScreen({ navigation }) {
       return;
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(plannerDate.trim())) {
-      setPlannerError('Date must be in YYYY-MM-DD format, e.g. 2026-08-20.');
+      setPlannerError('Pick a visit date.');
       return;
     }
     setPlannerSubmitting(true);
@@ -158,7 +237,7 @@ export default function HomeScreen({ navigation }) {
       });
       setPlannerOpen(false);
       await refreshStats();
-      Alert.alert('Visit scheduled', `${plannerSite.trim()} on ${plannerDate.trim()}.`);
+      Toast.success(`Visit scheduled: ${plannerSite.trim()} on ${plannerDate.trim()}`);
     } catch (e) {
       setPlannerError(e.message || 'Failed to schedule visit.');
     } finally {
@@ -175,14 +254,8 @@ export default function HomeScreen({ navigation }) {
     navigation.navigate('Worklist', { kind, ...configByKind[kind] });
   };
 
-  const comingSoon = (feature) =>
-    Alert.alert('Coming soon', `${feature} isn't built yet.`);
-
   // No site param — Outreach Stats shows every scheduled visit across every
-  // mine, not just wherever this Home screen is currently scoped to. Home's
-  // own live numbers above stay scoped to the selected site (the VHW is
-  // physically at one site during a visit); the stats screen is the
-  // cross-site rollup a coordinator actually needs.
+  // mine; Home's own numbers stay scoped to the selected site.
   const openOutreachStats = () => navigation.navigate('OutreachStats');
 
   const openDashboard = () => {
@@ -191,217 +264,129 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
+  const onTab = (key) => {
+    if (key === 'log') openWorklist('log');
+    else if (key === 'stats') openOutreachStats();
+    else if (key === 'dashboard') openDashboard();
+    else if (key === 'settings') Toast.info('Settings is coming soon');
+  };
+
   return (
-    <SafeAreaView style={s.root}>
+    <SafeAreaView style={s.root} edges={['top', 'left', 'right']}>
       <StatusBar style="dark" />
 
-      {/* Decorative blobs */}
-      <View style={s.blob1} />
-      <View style={s.blob2} />
-      <View style={s.blob3} />
-
-      {/* Whole body now scrolls (10 August) — was a fixed, non-scrolling
-          layout, which left a large dead gap below the secondary-action
-          row on anything taller than the shortest phones, and would have
-          clipped content once the Outreach Planner preview below made the
-          page taller than the screen on smaller devices. */}
-      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-
-      {/* ── HEADER ── */}
-      <View style={s.header}>
-        <View>
-          <Text style={s.brandWord}>SILICA</Text>
-          <Text style={s.brandAccent}>Guard<Text style={s.brandDot}>●</Text></Text>
-        </View>
-        <View style={s.headerRight}>
-          {/* 22 August 2026 — this used to be a hardcoded connected={true},
-              so the pill claimed "LIVE" even mid-demo with airplane mode on
-              and screenings genuinely queued below. There's no real network
-              check anywhere in this app (no NetInfo dependency, deliberately
-              not adding one this close to submission) — pendingCount === 0
-              is the one honest signal already on this screen: it only
-              reaches 0 once syncPendingScreenings() has actually confirmed
-              the backend is reachable. Known gap this doesn't cover: a
-              phone that's offline but has nothing queued yet still reads
-              LIVE, same class of approximation as offlineQueue.js's own
-              documented gaps. */}
-          <SyncPill connected={pendingCount === 0} />
-          <Text style={s.dateText}>{today}</Text>
-        </View>
-      </View>
-
-      {/* ── PENDING SYNC BANNER (16 August) ── one or more screenings were
-          scored offline (backend/AI unreachable at the time) and are
-          waiting in services/offlineQueue.js to be resubmitted. Retries
-          automatically on every focus; the button here is just for a VHW
-          who wants to force it right after regaining signal rather than
-          waiting to navigate away and back. */}
-      {pendingCount > 0 && (
-        <View style={s.syncBanner}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.syncBannerTitle}>
-              ⏳ {pendingCount} screening{pendingCount === 1 ? '' : 's'} waiting to sync
-            </Text>
-            <Text style={s.syncBannerSub}>Scored offline — will submit automatically once connected.</Text>
-          </View>
-          <TouchableOpacity
-            style={[s.syncRetryBtn, syncing && { opacity: 0.5 }]}
-            onPress={attemptSync}
-            disabled={syncing}
-            activeOpacity={0.8}
-          >
-            <Text style={s.syncRetryText}>{syncing ? 'Syncing…' : 'Retry now'}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* ── OUTREACH BANNER — now a real mine picker (10 August), was
-          hardcoded "Globe & Phoenix Mine" text with nothing behind it.
-          Whole card is the tap target, reusing MineSitePicker's list/modal
-          via renderTrigger so there's one single mines-picking
-          implementation, not two. ── */}
-      <MineSitePicker
-        value={site}
-        onChange={setSite}
-        onSelectMine={setMine}
-        renderTrigger={(open) => (
-          <TouchableOpacity style={s.outreachBanner} onPress={open} activeOpacity={0.85}>
-            <View style={s.outreachTop}>
-              <Text style={s.eyebrow}>TODAY'S OUTREACH SITE</Text>
-              <Text style={s.changeHint}>Change ▾</Text>
-            </View>
-            <Text style={s.outreachName}>{mine?.name || site}</Text>
-            <View style={s.outreachTag}>
-              <Text style={s.outreachTagText}>
-                {mine?.district ? `${mine.district} District · ${mine.province}` : 'Tap to confirm today’s site'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        )}
-      />
-
-      {/* ── STATS — real numbers, tappable (7 August) ── */}
-      <View style={s.statsRow}>
-        <StatCard
-          value={stats.screened_today}
-          label="Screened Today"
-          colour={light.accentEnd}
-          large
-          onPress={() => openWorklist('log')}
-        />
-        <View style={s.statCol}>
-          <StatCard
-            value={stats.refer_now.count}
-            label="Refer Now"
-            colour={colours.refer}
-            onPress={() => openWorklist('refer_now')}
-          />
-          <StatCard
-            value={stats.watch.count}
-            label="Watch"
-            colour={colours.watch}
-            onPress={() => openWorklist('watch')}
-          />
-        </View>
-      </View>
-
-      {/* ── MAIN CTA ── */}
-      <TouchableOpacity
-        style={s.cta}
-        activeOpacity={0.88}
-        onPress={() => navigation.navigate('Intake')}
+      <ScrollView
+        contentContainerStyle={s.scroll}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ui.primary} colors={[ui.primary]} />}
       >
-        <View style={s.ctaInner}>
-          <Text style={s.ctaPlus}>+</Text>
-          <View>
-            <Text style={s.ctaMain}>SCREEN NEW{'\n'}MINER</Text>
-            <Text style={s.ctaShona}>Tanga Kuongorora Mushandi →</Text>
+        {/* 22 August 2026 — the status pill used to be a hardcoded "LIVE".
+            There's no real network check anywhere in this app (no NetInfo
+            dependency) — pendingCount === 0 is the one honest signal: it
+            only reaches 0 once syncPendingScreenings() has actually
+            confirmed the backend is reachable. Known gap: a phone that's
+            offline but has nothing queued yet still reads Live. */}
+        <AppHeader
+          live={pendingCount === 0}
+          pendingCount={pendingCount}
+          syncing={syncing}
+          onSync={() => attemptSync({ announce: true })}
+          unreadCount={unreadCount}
+          onBell={openNotifications}
+        />
+
+        <View style={s.greeting}>
+          <Text style={s.dateLine}>{formatToday(now)}</Text>
+          <Text style={s.hello}>{greetingFor(now)}</Text>
+        </View>
+
+        {/* Pending sync banner (16 August) — screenings scored offline and
+            waiting in services/offlineQueue.js. Retries automatically on
+            every focus; the button is for a VHW who wants to force it
+            right after regaining signal. */}
+        {pendingCount > 0 && (
+          <View style={s.syncBanner}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.syncBannerTitle}>
+                {pendingCount} screening{pendingCount === 1 ? '' : 's'} waiting to sync
+              </Text>
+              <Text style={s.syncBannerSub}>Scored offline — will submit automatically once connected.</Text>
+            </View>
+            <TouchableOpacity
+              style={[s.syncRetryBtn, syncing && { opacity: 0.5 }]}
+              onPress={() => attemptSync({ announce: true })}
+              disabled={syncing}
+              activeOpacity={0.8}
+            >
+              <Text style={s.syncRetryText}>{syncing ? 'Syncing…' : 'Retry now'}</Text>
+            </TouchableOpacity>
           </View>
-        </View>
-        <View style={s.ctaShadow} />
-      </TouchableOpacity>
-
-      {/* ── SECONDARY ACTIONS ──
-          "Today's Log" opens WorklistScreen (GET /api/dashboard/today).
-          "Outreach Stats" now opens OutreachStatsScreen too (10 August) —
-          the same endpoint gained an unauthenticated outreach_visits field,
-          reusing the exact mapping GET /api/outreach uses for a logged-in
-          coordinator, so this VHW-facing view can never disagree with it.
-          "Settings" has nothing behind it yet — stays an honest
-          "coming soon" (7 August fix; previously these three navigate()
-          calls all pointed at unregistered screens, which is what was
-          producing the "action NAVIGATE not handled" warning). */}
-      <View style={s.secondRow}>
-        <SecondaryButton
-          icon="📋" label={'Today\'s\nLog'}
-          colour={light.accentStart}
-          onPress={() => openWorklist('log')}
-        />
-        <SecondaryButton
-          icon="📊" label={'Outreach\nStats'}
-          colour={colours.purple}
-          onPress={openOutreachStats}
-        />
-        <SecondaryButton
-          icon="🖥️" label="Dashboard"
-          colour={light.accentEnd}
-          onPress={openDashboard}
-        />
-        <SecondaryButton
-          icon="⚙️" label="Settings"
-          colour={light.textMuted}
-          onPress={() => comingSoon('Settings')}
-        />
-      </View>
-
-      {/* ── OUTREACH PLANNER preview (10 August) ──
-          Same site-scoped outreach_visits GET /api/dashboard/today already
-          returns for the stats above — no extra network call. Read-only:
-          scheduling a visit is POST /api/outreach, which requires a
-          dashboard login the VHW app deliberately doesn't have (same
-          unauthenticated-by-design boundary as every other VHW-facing
-          endpoint). "Manage" hands off to the web Dashboard, which does
-          have the real schedule-a-visit form. */}
-      <View style={s.plannerCard}>
-        <View style={s.plannerHead}>
-          <Text style={s.eyebrow}>OUTREACH PLANNER</Text>
-          <TouchableOpacity onPress={openOutreachStats}>
-            <Text style={s.plannerLink}>View all →</Text>
-          </TouchableOpacity>
-        </View>
-
-        {stats.outreach_visits.length === 0 && (
-          <Text style={s.plannerEmpty}>No visits scheduled for {mine?.name || site} yet.</Text>
         )}
 
-        {stats.outreach_visits.slice(0, 3).map((v) => {
-          const pct = v.expected_headcount > 0
-            ? Math.min((v.screened_count / v.expected_headcount) * 100, 100)
-            : 0;
-          return (
-            <View key={v.id} style={s.plannerRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.plannerDate}>{v.scheduled_date}</Text>
-                <View style={s.plannerProgressTrack}>
-                  <View style={[s.plannerProgressFill, { width: `${pct}%` }]} />
-                </View>
-                <Text style={s.plannerMeta}>{v.screened_count} / {v.expected_headcount} screened</Text>
-              </View>
-              <View style={[s.plannerBadge, v.report_generated ? s.plannerBadgeReady : s.plannerBadgePending]}>
-                <Text style={[s.plannerBadgeText, { color: v.report_generated ? colours.mint : colours.watch }]}>
-                  {v.report_generated ? 'Ready' : 'Pending'}
-                </Text>
-              </View>
-            </View>
-          );
-        })}
+        {/* Hero — MineSitePicker supplies the list/modal/offline fallback
+            through renderTrigger, so there's still one mine-picking
+            implementation, not two. */}
+        <MineSitePicker
+          value={site}
+          onChange={setSite}
+          onSelectMine={setMine}
+          renderTrigger={(open) => (
+            <HeroSiteCard
+              siteName={mine?.name || site}
+              mine={mine}
+              visit={todaysVisit}
+              confirmed={isConfirmedToday}
+              onConfirm={handleConfirmSite}
+              onChange={open}
+            />
+          )}
+        />
 
-        <TouchableOpacity style={s.plannerScheduleBtn} onPress={openPlanner} activeOpacity={0.85}>
-          <Text style={s.plannerScheduleText}>+ Schedule a visit</Text>
-        </TouchableOpacity>
-      </View>
+        {/* Stats — real numbers, tappable (7 August). */}
+        <View style={s.statsRow}>
+          <StatTile Icon={UsersIcon} value={stats.screened_today} label={'Screened\ntoday'} tone="primary" onPress={() => openWorklist('log')} />
+          <StatTile Icon={AlertIcon} value={stats.refer_now.count} label={'Refer\nnow'} tone="refer" onPress={() => openWorklist('refer_now')} />
+          <StatTile Icon={EyeIcon} value={stats.watch.count} label={'On\nwatch'} tone="watch" onPress={() => openWorklist('watch')} />
+        </View>
 
+        <PrimaryActionCard
+          title="Screen new miner"
+          subtitle="Tanga kuongorora mushandi"
+          onPress={() => navigation.navigate('Intake')}
+        />
+
+        {/* Outreach Planner (10 August) — same site-scoped outreach_visits
+            GET /api/dashboard/today already returns, no extra call. */}
+        <View style={[s.plannerCard, shadows.card]}>
+          <View style={s.plannerHead}>
+            <Text style={s.plannerTitle}>Outreach planner</Text>
+            <TouchableOpacity style={s.viewAll} onPress={openOutreachStats} hitSlop={8}>
+              <Text style={s.viewAllText}>View all</Text>
+              <ViewAllArrow />
+            </TouchableOpacity>
+          </View>
+
+          {stats.outreach_visits.length === 0 && (
+            <Text style={s.plannerEmpty}>No visits scheduled for {mine?.name || site} yet.</Text>
+          )}
+
+          {stats.outreach_visits.slice(0, 3).map((v) => <VisitRow key={v.id} visit={v} />)}
+
+          <TouchableOpacity style={s.scheduleBtn} onPress={openPlanner} activeOpacity={0.85}>
+            <SchedulePlus />
+            <Text style={s.scheduleText}>Schedule a visit</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
+
+      <BottomNav active="home" onSelect={onTab} />
+
+      <NotificationsSheet
+        visible={notifOpen}
+        items={notifications}
+        onClose={() => setNotifOpen(false)}
+        onAction={handleNotification}
+      />
 
       {/* ── Schedule Visit modal ── */}
       <Modal visible={plannerOpen} animationType="slide" transparent onRequestClose={() => setPlannerOpen(false)}>
@@ -409,7 +394,7 @@ export default function HomeScreen({ navigation }) {
           <View style={s.modalSheet}>
             <ScrollView keyboardShouldPersistTaps="handled">
               <View style={s.modalHeader}>
-                <Text style={s.modalTitle}>Schedule Outreach Visit</Text>
+                <Text style={s.modalTitle}>Schedule outreach visit</Text>
                 <TouchableOpacity onPress={() => setPlannerOpen(false)}>
                   <Text style={s.modalClose}>Done</Text>
                 </TouchableOpacity>
@@ -422,11 +407,11 @@ export default function HomeScreen({ navigation }) {
                 onSelectMine={setPlannerMine}
               />
 
-              {/* Location + nearest facility context — province, district,
-                  town come from the mines table via MineSitePicker's
-                  selection; nearest hospital/clinic from GET /api/facilities,
-                  matched client-side the same way the backend does at
-                  referral time. */}
+              {/* Location + nearest facility context — province/district
+                  from the mines table via MineSitePicker's selection;
+                  nearest hospital/clinic from GET /api/facilities, matched
+                  client-side the same way the backend does at referral
+                  time. */}
               {plannerMine && (
                 <View style={s.locationCard}>
                   <View style={s.locationRow}>
@@ -450,14 +435,31 @@ export default function HomeScreen({ navigation }) {
                 </View>
               )}
 
+              {/* Was a free-text YYYY-MM-DD field — now Ant Design's
+                  DatePicker, so a mistyped date can't happen. Past dates
+                  are blocked (minDate = today). modalType="modal" matters:
+                  Ant's default renders the popup through its root Portal,
+                  which sits *under* this sheet's native Modal — the picker
+                  would open invisibly behind it. */}
               <Text style={s.modalFieldLabel}>Visit date</Text>
-              <TextInput
-                style={s.modalInput}
-                value={plannerDate}
-                onChangeText={setPlannerDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={light.textMuted}
-              />
+              <DatePicker
+                modalType="modal"
+                value={plannerDate ? new Date(`${plannerDate}T00:00:00`) : undefined}
+                minDate={new Date(new Date().setHours(0, 0, 0, 0))}
+                maxDate={new Date(Date.now() + 365 * 86400000)}
+                precision="day"
+                title="Visit date"
+                renderLabel={(type, n) => (type === 'month' ? MONTHS[n - 1].slice(0, 3) : String(n))}
+                onOk={(d) => setPlannerDate(localDateKey(d))}
+              >
+                {({ toggle }) => (
+                  <TouchableOpacity style={s.modalInput} onPress={toggle} activeOpacity={0.8}>
+                    <Text style={{ fontSize: typography.body, color: plannerDate ? light.textDark : light.textMuted }}>
+                      {plannerDate || 'Pick a date'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </DatePicker>
 
               <Text style={s.modalFieldLabel}>Expected miners</Text>
               <TextInput
@@ -478,7 +480,7 @@ export default function HomeScreen({ navigation }) {
                 activeOpacity={0.85}
               >
                 <Text style={s.modalSubmitText}>
-                  {plannerSubmitting ? 'Scheduling…' : 'Schedule Visit'}
+                  {plannerSubmitting ? 'Scheduling…' : 'Schedule visit'}
                 </Text>
               </TouchableOpacity>
 
@@ -496,292 +498,74 @@ export default function HomeScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: light.bg,
-    overflow: 'hidden',
-  },
-  blob1: {
-    position: 'absolute', top: -80, right: -80,
-    width: 220, height: 220, borderRadius: 110,
-    backgroundColor: light.accentStart, opacity: 0.14,
-  },
-  blob2: {
-    position: 'absolute', top: 160, left: -60,
-    width: 160, height: 160, borderRadius: 80,
-    backgroundColor: colours.purple, opacity: 0.12,
-  },
-  blob3: {
-    position: 'absolute', bottom: 80, right: -40,
-    width: 130, height: 130, borderRadius: 65,
-    backgroundColor: light.accentEnd, opacity: 0.14,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  brandWord: {
-    fontSize: typography.tiny,
-    fontWeight: typography.light,
-    color: light.textMuted,
-    letterSpacing: 4,
-  },
-  brandAccent: {
-    fontSize: typography.hero,
-    fontWeight: typography.black,
-    color: light.textDark,
-    lineHeight: 36,
-    letterSpacing: -1,
-  },
-  brandDot: { color: light.accentEnd, fontSize: 28 },
-  headerRight: { alignItems: 'flex-end', paddingTop: 4, gap: spacing.xs },
-  dateText: { fontSize: typography.tiny, color: light.textMuted, textAlign: 'right' },
+  root: { flex: 1, backgroundColor: ui.bg },
+  scroll: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 24, gap: 20 },
+
+  greeting: { gap: 4 },
+  dateLine: { fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 0.88, color: ui.muted },
+  hello: { fontFamily: fonts.bold, fontSize: 26, letterSpacing: -0.52, color: ui.ink },
 
   syncBanner: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    marginHorizontal: spacing.xl, marginTop: spacing.md,
-    backgroundColor: 'rgba(255,184,0,0.12)', borderRadius: radius.md,
-    borderWidth: 1, borderColor: colours.watch,
-    padding: spacing.md,
+    backgroundColor: ui.watchSoft, borderRadius: 20,
+    borderWidth: 1, borderColor: ui.watchBorder, padding: 14,
   },
-  syncBannerTitle: { fontSize: typography.caption, fontWeight: typography.bold, color: light.textDark },
-  syncBannerSub: { fontSize: typography.tiny, color: light.textMuted, marginTop: 2 },
-  syncRetryBtn: {
-    backgroundColor: colours.watch, borderRadius: radius.pill,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.xs,
-  },
-  syncRetryText: { fontSize: typography.tiny, fontWeight: typography.black, color: light.textDark },
+  syncBannerTitle: { fontFamily: fonts.bold, fontSize: 13, color: ui.ink },
+  syncBannerSub: { fontFamily: fonts.medium, fontSize: 12, color: ui.muted, marginTop: 2 },
+  syncRetryBtn: { backgroundColor: ui.watch, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
+  syncRetryText: { fontFamily: fonts.bold, fontSize: 12, color: ui.surface },
 
-  outreachBanner: {
-    marginHorizontal: spacing.xl,
-    marginTop: spacing.md,
-    backgroundColor: light.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    borderWidth: 1.5,
-    borderColor: light.accentStart,
-    borderLeftWidth: 5,
-  },
-  outreachTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  eyebrow: {
-    fontSize: typography.micro,
-    fontWeight: typography.bold,
-    color: light.accentStart,
-    letterSpacing: 2,
-  },
-  changeHint: {
-    fontSize: typography.tiny,
-    fontWeight: typography.semibold,
-    color: light.textMuted,
-  },
-  outreachName: {
-    fontSize: 30,
-    fontWeight: typography.black,
-    color: light.textDark,
-    lineHeight: 32,
-    letterSpacing: -0.5,
-  },
-  outreachTag: {
-    marginTop: spacing.md,
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(11,61,145,0.10)',
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  outreachTagText: {
-    fontSize: typography.caption,
-    color: light.accentStart,
-    fontWeight: typography.semibold,
-  },
-
-  statsRow: {
-    flexDirection: 'row',
-    marginHorizontal: spacing.xl,
-    marginTop: spacing.md,
-    gap: spacing.md,
-  },
-  statCol: { flex: 1, gap: spacing.md },
-
-  cta: { marginHorizontal: spacing.xl, marginTop: spacing.lg },
-  ctaInner: {
-    backgroundColor: light.accentStart,
-    borderRadius: radius.lg,
-    padding: spacing.xl + 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
-    borderWidth: 2,
-    borderColor: light.accentEnd,
-    zIndex: 2,
-  },
-  ctaShadow: {
-    position: 'absolute',
-    bottom: -5, right: -5, left: 5,
-    height: '100%',
-    borderRadius: radius.lg,
-    backgroundColor: light.accentEnd,
-    zIndex: 1,
-    opacity: 0.3,
-  },
-  ctaPlus: {
-    fontSize: 52, fontWeight: typography.light,
-    color: colours.white, lineHeight: 56,
-  },
-  ctaMain: {
-    fontSize: typography.title,
-    fontWeight: typography.black,
-    color: colours.white,
-    letterSpacing: -0.5,
-    lineHeight: 26,
-  },
-  ctaShona: {
-    fontSize: typography.caption,
-    color: 'rgba(255,255,255,0.7)',
-    marginTop: spacing.xs,
-    fontStyle: 'italic',
-  },
-
-  secondRow: {
-    flexDirection: 'row',
-    marginHorizontal: spacing.xl,
-    marginTop: spacing.md,
-    gap: spacing.md,
-  },
-
-  scroll: { paddingBottom: spacing.xxl },
+  statsRow: { flexDirection: 'row', gap: 12 },
 
   plannerCard: {
-    marginHorizontal: spacing.xl,
-    marginTop: spacing.lg,
-    backgroundColor: light.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1.5,
-    borderColor: colours.purple,
-    padding: spacing.lg,
+    backgroundColor: ui.surface, borderWidth: 1, borderColor: ui.border,
+    borderRadius: 24, padding: 20, gap: 16,
   },
-  plannerHead: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
+  plannerHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  plannerTitle: { fontFamily: fonts.bold, fontSize: 17, letterSpacing: -0.17, color: ui.ink },
+  viewAll: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  viewAllText: { fontFamily: fonts.semibold, fontSize: 13, color: ui.primary },
+  plannerEmpty: { fontFamily: fonts.medium, fontSize: 13, color: ui.muted },
+  scheduleBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: ui.dashedFill, borderWidth: 1.5, borderStyle: 'dashed', borderColor: ui.dashed,
+    borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13,
   },
-  plannerLink: {
-    fontSize: typography.tiny,
-    fontWeight: typography.bold,
-    color: colours.purple,
-  },
-  plannerEmpty: {
-    fontSize: typography.caption,
-    color: light.textMuted,
-    paddingVertical: spacing.sm,
-  },
-  plannerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.sm,
-    borderTopWidth: 0.5,
-    borderTopColor: light.border,
-  },
-  plannerDate: {
-    fontSize: typography.caption,
-    fontWeight: typography.bold,
-    color: light.textDark,
-  },
-  plannerProgressTrack: {
-    height: 5,
-    backgroundColor: light.border,
-    borderRadius: 999,
-    overflow: 'hidden',
-    marginTop: spacing.xs,
-  },
-  plannerProgressFill: {
-    height: '100%',
-    backgroundColor: light.accentEnd,
-    borderRadius: 999,
-  },
-  plannerMeta: {
-    fontSize: typography.tiny,
-    color: light.textMuted,
-    marginTop: spacing.xs,
-  },
-  plannerBadge: {
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-  },
-  plannerBadgeReady: { backgroundColor: 'rgba(2,195,154,0.15)' },
-  plannerBadgePending: { backgroundColor: 'rgba(255,184,0,0.15)' },
-  plannerBadgeText: {
-    fontSize: typography.micro,
-    fontWeight: typography.black,
-    textTransform: 'uppercase',
-  },
-  plannerManageText: {
-    fontSize: typography.tiny,
-    color: light.accentStart,
-    fontWeight: typography.semibold,
-    textAlign: 'center',
-  },
-  plannerScheduleBtn: {
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 0.5,
-    borderTopColor: light.border,
-    alignItems: 'center',
-  },
-  plannerScheduleText: {
-    fontSize: typography.caption,
-    color: colours.purple,
-    fontWeight: typography.bold,
-  },
+  scheduleText: { fontFamily: fonts.bold, fontSize: 14, color: ui.primary },
 
-  // ── Schedule Visit modal ──
-  // Overlay scrim stays a dark dim regardless of page theme — standard
-  // practice for a bottom sheet.
+  // ── Schedule Visit modal ── (not in the Figma frame; restyled to the
+  // new palette, layout unchanged)
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   modalSheet: {
-    backgroundColor: light.bg, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
+    backgroundColor: ui.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
     maxHeight: '88%', paddingHorizontal: spacing.xl, paddingTop: spacing.lg,
-    borderWidth: 1, borderColor: light.border, borderBottomWidth: 0,
   },
   modalHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginBottom: spacing.lg,
   },
-  modalTitle: { fontSize: typography.subtitle, fontWeight: typography.black, color: light.textDark },
-  modalClose: { fontSize: typography.body, color: light.accentStart, fontWeight: typography.semibold },
+  modalTitle: { fontFamily: fonts.bold, fontSize: 18, color: ui.ink },
+  modalClose: { fontFamily: fonts.semibold, fontSize: 14, color: ui.primary },
   modalFieldLabel: {
-    fontSize: typography.caption, color: light.textMuted, fontWeight: typography.semibold,
+    fontFamily: fonts.semibold, fontSize: 12, color: ui.muted,
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: spacing.xs, marginTop: spacing.md,
   },
   modalInput: {
-    backgroundColor: light.surface, borderRadius: radius.md, borderWidth: 1.5, borderColor: light.border,
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, fontSize: typography.body, color: light.textDark,
+    backgroundColor: ui.surface, borderRadius: radius.md, borderWidth: 1.5, borderColor: ui.border,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, fontSize: typography.body, color: ui.ink,
   },
   locationCard: {
-    backgroundColor: light.surfaceAlt, borderRadius: radius.md, borderWidth: 1, borderColor: light.border,
+    backgroundColor: ui.primarySoft, borderRadius: radius.md,
     padding: spacing.md, marginTop: spacing.md, gap: spacing.xs,
   },
   locationRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  locationLabel: { fontSize: typography.tiny, color: light.textMuted },
-  locationValue: { fontSize: typography.tiny, color: light.textDark, fontWeight: typography.semibold, flexShrink: 1, textAlign: 'right' },
-  plannerErrorText: {
-    fontSize: typography.caption, color: colours.refer, marginTop: spacing.md, textAlign: 'center',
-  },
+  locationLabel: { fontFamily: fonts.medium, fontSize: 12, color: ui.muted },
+  locationValue: { fontFamily: fonts.semibold, fontSize: 12, color: ui.ink, flexShrink: 1, textAlign: 'right' },
+  plannerErrorText: { fontFamily: fonts.medium, fontSize: 12, color: ui.refer, marginTop: spacing.md, textAlign: 'center' },
   modalSubmitBtn: {
-    backgroundColor: colours.purple, borderRadius: radius.md, paddingVertical: spacing.md,
-    alignItems: 'center', marginTop: spacing.lg, borderWidth: 1.5, borderColor: colours.purple,
+    backgroundColor: ui.primary, borderRadius: 16, paddingVertical: 15,
+    alignItems: 'center', marginTop: spacing.lg,
   },
-  modalSubmitText: { fontSize: typography.body, fontWeight: typography.black, color: colours.white },
+  modalSubmitText: { fontFamily: fonts.bold, fontSize: 15, color: ui.surface },
+  plannerManageText: { fontFamily: fonts.semibold, fontSize: 12, color: ui.primary, textAlign: 'center' },
 });
