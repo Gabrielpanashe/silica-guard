@@ -20,7 +20,7 @@ defaults:
 jobs:
   tests:
     name: Test suite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,7 +39,7 @@ jobs:
 
   migrations:
     name: Migrations forward and backward (PostgreSQL)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # §11.6 requires every schema change to be a migration "run forward and
     # backward successfully", and §11.8 requires migrations to apply cleanly to
     # an empty database. Neither was verifiable before this job: no test
@@ -97,7 +97,7 @@ jobs:
 
   clinical:
     name: Clinical specifications
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 11.8's instrument gate. Checks the shape of every instrument file
     # against clinical/instrument.schema.json plus the cross-references a
     # schema cannot express: that rules only reference questions and
@@ -118,7 +118,7 @@ jobs:
 
   content:
     name: Content strings
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 11.8's character set validator and channel budget check, over every
     # language. One character outside GSM 03.38 sends the whole message as
     # 16-bit at 70 characters per segment instead of 160, permanently
@@ -139,7 +139,7 @@ jobs:
 
   secrets:
     name: Secret scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # §11.5: "a secret committed once is a secret rotated immediately". Cheaper
     # to block the commit.
     steps:
@@ -152,7 +152,7 @@ jobs:
 
   dependencies:
     name: Dependency vulnerability scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: .
