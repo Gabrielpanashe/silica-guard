@@ -36,6 +36,7 @@ stopping at the first.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import sys
 from pathlib import Path
@@ -73,12 +74,32 @@ def _label(path: Path) -> str:
         return str(path)
 
 
+def _dates_to_strings(value):
+    """YAML parses an unquoted `2026-11-01` as a `datetime.date`; JSON Schema's
+    `format: date` describes a *string*. Normalising here rather than
+    demanding quotes in the file is the right way round: the YAML date type is
+    a feature, the schema's spelling of it is an implementation detail, and
+    the Clinical Lead should not have to know which.
+
+    Found by rehearsing the full load mechanism end to end -- it would
+    otherwise have surfaced as a confusing schema error on the first real
+    instrument submission.
+    """
+    if isinstance(value, dict):
+        return {k: _dates_to_strings(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_dates_to_strings(v) for v in value]
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    return value
+
+
 def validate_file(path: Path, schema: dict | None, verbose: bool = False) -> list[str]:
     problems: list[str] = []
     rel = _label(path)
 
     try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        doc = _dates_to_strings(yaml.safe_load(path.read_text(encoding="utf-8")))
     except yaml.YAMLError as exc:
         return [f"{rel}: not valid YAML — {exc}"]
     if not isinstance(doc, dict):
