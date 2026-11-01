@@ -304,7 +304,7 @@ def test_a_free_text_site_needs_no_curated_row(db):
 def test_the_version_one_tables_still_exist(db):
     """v2 is added alongside v1, not in place of it: the deployed routes keep
     serving the mobile app and dashboard until those clients move
-    (docs/IMPLEMENTATION_PLAN.md §5). `0010_v2_drop_v1` removes them, and not
+    (docs/IMPLEMENTATION_PLAN.md §5). The `drop_v1` migration removes them, and not
     before."""
     tables = set(inspect(db.get_bind()).get_table_names())
     assert {"miners", "screenings", "screening_answers", "referrals", "notifications"} <= tables

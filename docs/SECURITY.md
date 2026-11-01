@@ -60,7 +60,7 @@ A national register of workers' occupational health data should not be owned by 
 |---|---|---|---|
 | Lost or stolen field device | A handset lost at a mine site with queued screenings and a pre-synced roster. | Encrypted local storage, access code, minimal retention, server-side revocation, remote wipe. | Unencrypted AsyncStorage, no PIN, no protocol. |
 | Credential compromise | A reused or phished password gives access to hosting or the database. | Password manager, unique credentials, two-factor by authenticator, least privilege, no shared logins. | Personal accounts; no vault; Phase Zero. |
-| Insider or over-broad access | A dashboard account sees far more than needed; an engineer queries production out of curiosity. | Role-based access scoped to site, facility or programme; read auditing; production access restricted and logged. | Two flat roles; no read audit; production queried directly for diagnosis. |
+| Insider or over-broad access | A dashboard account sees far more than needed; an engineer queries production out of curiosity. | Role-based access scoped to site, facility or programme; read auditing; production access restricted and logged. | **Built**: seven scoped roles, deny by default, append-only read auditing that records refusals. **Still true**: the dashboard exercises only the two prototype roles until Week 22, the v1 Bearer routes check a token rather than a capability (item 1.11), and production is queried directly for diagnosis with no restriction or log on that path. |
 | Data exposure through a test or demo | A staging demo sends a real message; production data copied to a laptop. | Separate credentials per environment; synthetic data outside production; prohibition on copying production data. | One environment; one credential set. |
 | Message misdelivery | A result goes to a recycled number now held by a stranger. | Number verification, delivery-failure handling, reverification of dormant contacts, minimal clinical detail in text. | None; ORANGE text names an X-ray and a hospital. |
 | Interception in transit | Data intercepted between device, gateway and backend. | Transport encryption everywhere, certificate validation, webhook signature verification where supported. | HTTPS on Render and Supabase; no webhook verification. |
@@ -84,7 +84,7 @@ A national register of workers' occupational health data should not be owned by 
 | Backup | Automated encrypted offsite backups; restore tested before the pilot and at least once during it. A backup that has never been restored is not a backup. |
 | Build and supply chain | Pinned dependencies, vulnerability scanning, secret scanning, protected `main`, review before merge. |
 
-## Roles and permissions — Planned
+## Roles and permissions — Built, backend only
 
 | Role | Can see | Cannot see |
 |---|---|---|
@@ -97,7 +97,30 @@ A national register of workers' occupational health data should not be owned by 
 | Administrator | System configuration, instrument versions, user management. | Routine clinical browsing. Administrative access is not a licence to read records; every read audited. |
 | The person screened | Their own record and referral status. | Anyone else's. |
 
-**Today**: two roles, `hospital` and `cimas`, from environment-variable credentials (`backend/routers/auth.py`), gating only whether the dashboard's authenticated routes respond at all.
+**Built, as of 1 November 2026** — `users` and `audit_log` (migration `0010`), `backend/services/authz.py`, `backend/services/audit.py`, `backend/routers/admin.py`. Seven of the eight rows above are roles with capabilities and a scope; the eighth, **the person screened**, has no login — a worker reaches their own record through USSD and the card in their pocket, so their access is bounded by the participant code rather than by a role.
+
+**A role plus a scope, never a role alone.** "Facility user: can see referrals directed to their facility" is not a role, it is a role *and* a facility; a village health worker covers a handful of workings, not one and not all. Creating a scoped role with no scope is **refused**, because it passes every capability check and is bounded by nothing. The scoped-query helpers narrow to **nothing** when the scope is missing, never to everything — that is the whole reason they exist instead of an inline condition.
+
+**Deny by default.** A capability a role does not list is refused, including one that does not exist, so a new capability is invisible to every role until somebody grants it deliberately.
+
+**Administrative access is not a licence to read records.** The administrator role holds `admin.manage`, `person.merge` and `aggregate.read` — and deliberately **not** `person.read` or `screening.read`. An administrator who needs a worker's record has to be given a clinical role as well, which is a decision somebody makes rather than a capability that arrives with the job. A test asserts it, as do twenty-one other negative tests drawn from the "cannot see" column above.
+
+**Passwords are hashed** with `hashlib.scrypt` and a per-user salt. The prototype accounts compared plaintext from an environment variable. **`SECRET_KEY` no longer falls back to `"dev-secret"`** — that default meant a production instance missing the variable signed tokens with a value published in this repository, so anyone could mint an administrator token; it now raises at signing time.
+
+**The prototype accounts are self-disarming.** `hospital` and `cimas` authenticate only while the `users` table is empty. The moment a real user exists they stop working, and a token issued to one stops working with them. That is deliberately not a feature flag: a flag nobody turns off is how a prototype credential reaches production.
+
+**The first administrator is created by `backend/scripts/create_admin.py`**, which needs database access. The prototype accounts do not hold `admin.manage`, so they cannot create one — and the two alternatives were both worse: widening them defeats the point of retiring them, and letting the route run unauthenticated while the table is empty opens a window in which whoever reaches a fresh instance first owns the system.
+
+### The audit log
+
+Append-only: there is no update and no delete anywhere in `services/audit.py`, and a test asserts that by inspecting the module, because a log that can be edited afterwards answers nothing. Enforced in the service layer rather than by a trigger — triggers are PostgreSQL-only and invisible to the SQLite unit suite (§16.2).
+
+- **A refused access writes a row.** These are the rows that matter: a role boundary nobody can show being enforced is a boundary nobody can show exists. `GET /api/v2/audit/refusals` lists them.
+- **"Who has read my record?" is answerable.** `GET /api/v2/audit/persons/{id}`, and reading the trail is itself audited — an audit log nobody's reads are recorded in is a log that can be mined quietly.
+- **No personal data in a log line**, checked rather than trusted: a forbidden-key list rejects a name, a number, an answer or a password in `details`. A failed-login row records neither the address tried nor the password.
+- **An audit write cannot fail a clinical write.** `record()` joins the caller's transaction so a screening is never lost because a log row would not fit; a refusal commits on its own session, because a refused request has no transaction to join and is never allowed to turn a clean `403` into a `500`.
+
+**Planned**: the dashboard exercises only the prototype roles until the Week 22 rebuild, so the negative tests are what protect the boundary in the meantime (`docs/IMPLEMENTATION_PLAN.md` §12 item 13). The v1 Bearer routes still use the plain token dependency rather than a capability, and move across with the adapter (item 1.11). Rate limiting and lockout on the login and the public lookup remain Phase Three.
 
 ## De-identification and analysis — Planned
 

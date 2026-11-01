@@ -395,3 +395,70 @@ class ReferralOut2(BaseModel):
     outcome_recorded_at: Optional[str] = None
     outcome_recorded_by: Optional[str] = None
     contributing_reasons: Optional[Dict[str, object]] = None
+
+
+# ──────────────────────────────────────────── users, roles, audit (§16.3)
+
+
+class RoleOut(BaseModel):
+    """A role, its capabilities, and §16.3's own "cannot see" column.
+
+    `cannot` is served rather than kept only in the document, because it is
+    the sentence a negative test is written from and the sentence a reviewer
+    needs in order to check the boundary without reading the code.
+    """
+
+    code: str
+    label: str
+    capabilities: List[str]
+    scope_field: Optional[str] = None
+    cannot: str
+    #: True for the two prototype accounts, which may not be given to a new
+    #: user and are deleted with the v1 adapter.
+    prototype: bool = False
+
+
+class UserCreateIn(BaseModel):
+    """`site_ids`, `facility_id`, `district` and `programme_id` are the scope.
+    A scoped role with no scope is **refused**: it passes every capability
+    check and is bounded by nothing, which is worse than no account."""
+
+    email: str
+    password: str = Field(..., min_length=8)
+    role: str
+    name: Optional[str] = None
+    facility_id: Optional[int] = None
+    site_ids: Optional[List[int]] = None
+    district: Optional[str] = None
+    programme_id: Optional[int] = None
+
+
+class UserOut(BaseModel):
+    user_id: int
+    email: str
+    role: str
+    name: Optional[str] = None
+    scope: Dict[str, object] = Field(default_factory=dict)
+    active: bool = True
+    created_at: Optional[str] = None
+    last_login_at: Optional[str] = None
+
+
+class AuditEntryOut(BaseModel):
+    """One audit row. Carries no personal data by construction — `details`
+    holds codes, counts and ids, never a name, a number or an answer."""
+
+    entry_id: int
+    actor_email: Optional[str] = None
+    actor_role: Optional[str] = None
+    action: str
+    object_type: Optional[str] = None
+    object_id: Optional[str] = None
+    person_id: Optional[int] = None
+    at: Optional[str] = None
+    request_id: Optional[str] = None
+    #: False for a refused access. **These are the rows that matter**: a role
+    #: boundary nobody can show being enforced is a boundary nobody can show
+    #: exists.
+    allowed: bool = True
+    details: Optional[Dict[str, object]] = None

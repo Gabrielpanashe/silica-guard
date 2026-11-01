@@ -786,7 +786,7 @@ Master Reference §10.3. **The deterministic cascade is the tier of record. No m
 
 `replayed: true` means this submission matched an existing `client_session_uuid`. **Nothing was written.** The response is the stored result of the first session, read from the rows rather than re-classified — because the instrument may have been superseded between the submission and the retry, and a worker must be told what he was told.
 
-`messages` says what *would* be sent and whether the reviewed words exist. **There is no fallback sentence**: §8.4 means a worker reads reviewed words or nothing, and a placeholder shipped "for now" is how unreviewed text reaches people. `not_sent_reason` is non-null until item 1.6b (the words) and migration `0010` (a notifications row that can name a person rather than a v1 miner).
+`messages` says what *would* be sent and whether the reviewed words exist. **There is no fallback sentence**: §8.4 means a worker reads reviewed words or nothing, and a placeholder shipped "for now" is how unreviewed text reaches people. `not_sent_reason` is non-null until item 1.6b (the words) and the `drop_v1` migration (which rebuilds `notifications` so a row can name a person rather than a v1 miner).
 
 **Status codes, and what a mobile offline queue should do with each**
 
@@ -823,6 +823,68 @@ An outcome beginning `attended` sets `attended_at` if the confirm step was skipp
 
 
 
+### Roles, users and the audit trail — LIVE
+
+Master Reference §16.3, §16.6.
+
+**`GET /api/v2/roles`** — no auth
+
+Every role, its capabilities, its scope field, and §16.3's own **"cannot see"** column. Unauthenticated because it describes the model rather than any data: a reviewer or an ethics committee reading what a role is refused should not need an account.
+
+```json
+[{"code": "national_stakeholder", "label": "National stakeholder",
+  "capabilities": ["aggregate.read"], "scope_field": null,
+  "cannot": "Any identified record.", "prototype": false}]
+```
+
+Seven roles have logins. §16.3's table has eight rows; the eighth is **the person screened**, who has no account — a worker reaches their own record through USSD and the card in their pocket, so their access is bounded by the participant code rather than by a role. `prototype: true` marks `hospital` and `cimas`, which exist only for the transition and are refused to any new user.
+
+**`POST /api/v2/users`** — Bearer, `admin.manage`
+
+```json
+{"email": "nurse@example.org", "password": "…", "role": "facility_user", "facility_id": 3}
+```
+
+A **scoped role with no scope is a `400`**: it passes every capability check and is bounded by nothing, which is worse than no account at all. `site_ids` (a list) for a village health worker, `facility_id` for a facility user, `district` for a coordinator, `programme_id` for a sponsor.
+
+**`GET /api/v2/users`** — Bearer, `admin.manage`.
+**`DELETE /api/v2/users/{id}`** — Bearer, `admin.manage`. **Deactivates, never deletes**: an audit row names a user id, and a deleted user would let somebody erase their own trail by removing their account. An administrator cannot deactivate themselves — with one administrator that would lock the system out of user management.
+
+**`GET /api/v2/audit/persons/{person_id}`** — Bearer, `person.read`
+
+Every access to one person's record. "Who has read my record?" is a question a worker is entitled to an answer to, and §16.3's audit exists so the answer is not "we cannot tell". **Reading the trail is itself audited** — an audit log nobody's reads are recorded in is a log that can be mined quietly.
+
+**Not available to an administrator**, deliberately: §16.3's "administrative access is not a licence to read records". An administrator who needs a record has to be given a clinical role as well, which is a decision somebody makes rather than a capability that arrives with the job.
+
+**`GET /api/v2/audit/refusals`** — Bearer, `admin.manage`
+
+Every refused access, newest first. **These are the rows that matter**: a role boundary nobody can show being enforced is a boundary nobody can show exists.
+
+```json
+[{"entry_id": 91, "actor_email": "r@example.org", "actor_role": "researcher",
+  "action": "admin.user_create", "object_type": "capability",
+  "object_id": "admin.manage", "person_id": null,
+  "at": "2026-11-01T18:42:02", "request_id": "a1b2c3d4e5f60718",
+  "allowed": false, "details": {"role": "researcher", "capability": "admin.manage"}}]
+```
+
+`details` carries codes, counts and ids and **never a name, a number, an answer or a password** — checked by a forbidden-key list rather than trusted, because the log must not become a second copy of the register. A failed-login row records neither the address tried nor the password.
+
+### Changes to existing auth routes
+
+**`GET /api/auth/me` gained fields** (additive; `email` and `role` unchanged): `scope`, `capabilities`, `cannot` and `prototype_account`. A client renders the boundary from the server's definition rather than from a copy.
+
+**`POST /api/auth/login` now authenticates against the `users` table** with `scrypt`-hashed passwords. The two environment-variable accounts still work, but **only while the `users` table is empty** — the moment a real user exists they stop, and a token issued to one stops with them. That is not a feature flag: a flag nobody turns off is how a prototype credential reaches production.
+
+Both successful and failed logins are audited. §15.4 already records that this surface has no rate limiting or lockout; credential stuffing against it is at least visible now.
+
+**`SECRET_KEY` has no fallback.** It previously defaulted to `"dev-secret"` — a value published in this repository, which meant anyone could mint an administrator token against a misconfigured instance. A missing key is now a `503` at signing time.
+
+**The first administrator is created by `backend/scripts/create_admin.py`**, which needs database access. The prototype accounts do not hold `admin.manage`, so they cannot create one, and both alternatives were worse: widening them defeats the point of retiring them, and an unauthenticated user-creation route while the table is empty opens a window in which whoever reaches a fresh instance first owns the system.
+
+Clients pass `X-Request-Id` to correlate the audit rows one request writes, which is what makes a mobile synchronisation traceable from the handset's own log.
+
+
 ---
 
 ## Summary table
@@ -830,8 +892,8 @@ An outcome beginning `attended` sets `attended_at` if the confirm step was skipp
 | Route | Method | Status |
 |---|---|---|
 | `/api/health` | GET | LIVE |
-| `/api/auth/login` | POST | LIVE (roles will change) |
-| `/api/auth/me` | GET | LIVE (dev helper) |
+| `/api/auth/login` | POST | LIVE (hashed passwords, `users` table; prototype accounts self-disarm) |
+| `/api/auth/me` | GET | LIVE (gained scope, capabilities, cannot, prototype_account) |
 | `/api/workers` | POST | LIVE |
 | `/api/workers/{phone}` | GET | LIVE |
 | `/api/mines` | GET, POST | LIVE |
@@ -862,3 +924,8 @@ An outcome beginning `attended` sets `attended_at` if the confirm step was skipp
 | `/api/v2/referrals/{referral_code}` | GET | LIVE (facility-facing, with contributing reasons) |
 | `/api/v2/referrals/{referral_code}/close` | POST | LIVE (structured outcome — the labelled dataset) |
 | `/api/v2/referrals/outcomes/vocabulary` | GET | LIVE (the five permitted outcomes) |
+| `/api/v2/roles` | GET | LIVE (the roles and §16.3's "cannot see" column) |
+| `/api/v2/users` | POST, GET | LIVE (Bearer, `admin.manage`) |
+| `/api/v2/users/{id}` | DELETE | LIVE (Bearer — deactivates, never deletes) |
+| `/api/v2/audit/persons/{id}` | GET | LIVE (Bearer, `person.read` — not an administrator) |
+| `/api/v2/audit/refusals` | GET | LIVE (Bearer, `admin.manage`) |

@@ -118,7 +118,9 @@ Ten routers, one auth boundary that is deliberate but not guessable from the pat
 | `auth.py` | `POST /api/auth/login`, `GET /api/auth/me` | login open, `/me` Bearer |
 | `main.py` | `GET /api/health`, `GET /ussd-simulator` | none |
 
-The unauthenticated set is deliberate: the VHW app never logs in, so the screening path and the hospital lookup page work without a token. The role model that replaces the two flat `hospital`/`cimas` accounts is in `docs/SECURITY.md`.
+The unauthenticated set is deliberate: the VHW app never logs in, so the screening path and the hospital lookup page work without a token.
+
+**The `/api/v2` surface is larger than this table and documented in `docs/API_CONTRACT.md`'s v2 section** — content, identity, consent, screening, referrals, roles, users and the audit trail. `docs/SECURITY.md` holds the role model, which is now built: seven scoped roles, deny by default, and an append-only audit log. **The two flat `hospital`/`cimas` accounts stop working the moment a real user exists**, and the first one is created by `backend/scripts/create_admin.py`.
 
 ## Deployment
 

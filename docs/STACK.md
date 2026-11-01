@@ -142,6 +142,7 @@ pytest tests/test_screening.py::test_name -v              # one test
 ./venv/Scripts/python.exe -m alembic upgrade head         # apply migrations to whatever DATABASE_URL names
 ./venv/Scripts/python.exe -m alembic revision --autogenerate -m "..."   # after editing db_models.py; read it before committing
 ./venv/Scripts/python.exe scripts/seed_demo_data.py       # reproducible synthetic dataset, no model key needed
+./venv/Scripts/python.exe scripts/create_admin.py you@example.org   # the first administrator; RETIRES the two prototype accounts
 ./venv/Scripts/python.exe scripts/ussd_simulator.py       # USSD flow in the terminal
 ./venv/Scripts/python.exe scripts/throughput_model.py     # deck-only queueing model (simpy, matplotlib); output gitignored
 ```

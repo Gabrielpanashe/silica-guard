@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from database import database_reachable, init_db
 from routers import (
+    admin,
     auth,
     consents,
     content,
@@ -147,6 +148,9 @@ app.include_router(consents.router)
 # pilot produce a labelled dataset (§10.4). Deterministic from its first
 # commit — no model sits between a set of answers and a tier.
 app.include_router(screenings_v2.router)
+# Users, roles and the audit trail (§16.3, §16.6). Creating the first user
+# is what retires the two prototype environment-variable accounts.
+app.include_router(admin.router)
 
 
 @app.get("/api/health")

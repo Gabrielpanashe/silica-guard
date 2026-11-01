@@ -45,7 +45,7 @@ What is NOT here, and why:
   no patient-facing string has been approved yet (item 1.6b, the Clinical
   Lead's), and `notifications.worker_id` is NOT NULL against the v1 `miners`
   table, so a message to a `Person` cannot even be logged until that table is
-  rebuilt (§12 item 15, migration `0010`). The outcome therefore reports which
+  rebuilt (§12 item 15, the `drop_v1` migration). The outcome therefore reports which
   message codes *would* be sent and records that nothing was, with the reason.
   §10.3 requires a messaging failure to be recorded rather than lost, and "no
   approved text exists" is a recorded reason rather than a silent skip.
@@ -179,7 +179,7 @@ class Outcome:
     longitudinal_linked: bool = False
     referrals: tuple[ReferralPlan, ...] = ()
     messages: tuple[MessagePlan, ...] = ()
-    #: Why nothing was sent. Empty once item 1.6b and `0010` land.
+    #: Why nothing was sent. Empty once item 1.6b and `drop_v1` land.
     not_sent_reason: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
@@ -508,7 +508,7 @@ def screen(db: Session, request: ScreeningRequest) -> Outcome:
         messages=tuple(messages),
         not_sent_reason=not_sent
         or "no message was sent: the v2 pipeline does not send yet (item 1.6b "
-        "for the words, migration 0010 for a notifications row that can name "
+        "for the words, the drop_v1 migration for a notifications row that can name "
         "a person)",
         started_at=_iso(session.started_at),
         completed_at=_iso(session.completed_at),
