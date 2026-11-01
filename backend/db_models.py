@@ -275,14 +275,38 @@ class Person(Base):
     #: collision here is a clinical safety event rather than an annoyance
     #: (docs/IMPLEMENTATION_PLAN.md §12 item 4).
     participant_code = Column(String, unique=True, index=True)
-    #: Salted hash only, never a recoverable form (§16.2). Voluntary.
+    #: Keyed hash only, never a recoverable form (§16.2). Voluntary, and the
+    #: one field §8.2 allows a deterministic match on.
     national_id_hash = Column(String, index=True)
+    #: The name, in the same two-column form as a contact number and for the
+    #: same reason (§12 item 11): the hash finds an exact match without a
+    #: plaintext index, the encrypted value is what a health worker and a
+    #: referral letter actually need. Added in `0007` — `0004` omitted the
+    #: name entirely, which left §8.2's matching bundle with nothing to match
+    #: on besides a hashed identity number most workers will not have.
+    name_hmac = Column(String, index=True)
+    name_encrypted = Column(Text)
     #: Banded rather than a birth date: enough for stratified analysis and
     #: reference values, less identifying.
     age_band = Column(String)
     sex = Column(String)
     #: Preferred language for every patient-facing string sent to them.
     language = Column(String, default="en", server_default=text("'en'"))
+    #: §8.2 part four, the anonymous USSD case. A caller who supplies no
+    #: participant code gets a person flagged unverified, for a health worker
+    #: to resolve at the next contact. The alternative — attaching the
+    #: screening to whoever the telephone number was last seen with, which is
+    #: what `ussd_handler._find_or_create_miner` does today — "would corrupt
+    #: the longitudinal dataset faster than anything else in the system".
+    provisional = Column(Integer, default=0, server_default=text("0"))
+    #: Why it is provisional, in a closed vocabulary rather than free text, so
+    #: the review queue can be worked by category. The vocabulary is
+    #: `identity.PROVISIONAL_REASONS` and is enforced there with a test rather
+    #: than by a CHECK constraint: SQLite cannot add one by ALTER, and a
+    #: constraint only PostgreSQL can apply is the SQLite/PostgreSQL
+    #: divergence §16.2 warns about — the same reasoning that keeps instrument
+    #: immutability in the service layer rather than in a trigger.
+    provisional_reason = Column(String)
     #: Set when this record loses a merge. The losing record is kept rather
     #: than deleted so that every merge is reversible from the first day
     #: (§8.2).

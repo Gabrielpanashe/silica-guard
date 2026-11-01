@@ -131,6 +131,56 @@ No real screening takes place until every item is true and the list has been sig
 
 Signed: ______________________ Date: ____________
 
+## Identifier storage and key handling — Built, with one gap named
+
+> Implements the "Storage at rest" and "Key management" rows above, and `docs/IMPLEMENTATION_PLAN.md` §12 item 11. Code: `backend/services/crypto.py`.
+
+### Two columns for one value
+
+Every direct identifier is stored twice: a **keyed hash** for equality lookup and an **encrypted value** for use.
+
+| Value | Hash column | Encrypted column | Why both |
+|---|---|---|---|
+| Telephone number | `contacts.number_hmac` (indexed) | `contacts.number_encrypted` | A number must be *found* — the USSD webhook arrives with a caller number — and also *sent to*. |
+| Name | `persons.name_hmac` (indexed) | `persons.name_encrypted` | Exact-match candidate lookup without a plaintext index; a health worker and a referral letter need the name back. |
+| National identity number | `persons.national_id_hash` (indexed) | **none** | §16.2: stored only as a hash. It is used for matching and never displayed, so there is nothing to recover. |
+
+An encrypted column cannot be indexed for equality and a hash cannot be reversed, so one alone cannot do both jobs.
+
+### Three decisions worth stating plainly
+
+**A keyed hash, not a per-row salt.** The textbook answer for storing an identifier is a random salt per row, and it is the wrong answer here: a per-row salt makes two records holding the same national identity number hash differently, which destroys the one deterministic match §8.2 relies on. The key *is* the salt, it is the same for every row, and it lives in the platform secret store rather than in the database. This protects against disclosure of the database; it does **not** protect against disclosure of the database and the key together. That is the trade-off, and it is accepted rather than assumed.
+
+**Domain separation.** Every digest is computed over `purpose + ":" + value`, with `purpose` from a closed set. Without it, a number typed into the national-identity field would produce the same digest as the same number typed into the phone field, and the system would merge two people — the clinical safety event §8.2 names.
+
+**Authenticated encryption.** Fernet (AES-128-CBC with an HMAC-SHA256 tag), so a tampered column fails to decrypt rather than returning different plaintext. That matters for a telephone number a result message is about to be sent to: silently delivering a worker's result to a different handset is a disclosure, not a glitch.
+
+### Keys
+
+| Variable | Holds | Generate |
+|---|---|---|
+| `IDENTITY_HMAC_KEY` | The HMAC key for every lookup digest | `python -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"` |
+| `CONTACT_ENCRYPTION_KEY` | The Fernet key for every recoverable value | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+
+Set on the hosting platform, never in the repository. `.env.example` carries development values that are published in a public repository and are therefore worthless as secrets; they exist so a fresh checkout runs.
+
+**There is deliberately no fallback.** A missing key raises, and the HTTP layer turns that into a retryable `503` rather than saving an unprotected record. `routers/auth.py:29` falls back to `"dev-secret"` when `SECRET_KEY` is unset; that pattern is **not** copied here, because a production instance quietly hashing national identity numbers under a guessable default produces a column that looks protected, is not, and cannot be fixed afterwards — the plaintext is gone.
+
+### Rotation — Planned, and required before the first real record
+
+**Changing either key orphans existing data.** Every hash stops matching and every encrypted value stops decrypting. There is no partial failure: the register simply stops recognising anybody.
+
+Rotation is therefore a migration, not an edit, and the procedure below must be written as a runnable script and tested on staging before any real record exists. Until that script exists, **a key exposure is an incident with no clean recovery**, which is the honest statement of where this stands.
+
+1. Set the new key alongside the old one (`IDENTITY_HMAC_KEY_NEXT`, `CONTACT_ENCRYPTION_KEY_NEXT`).
+2. Decrypt with the old key and re-encrypt with the new one, row by row, in a transaction per batch; recompute every digest with the new HMAC key in the same batch. Hashes and ciphertext must move together or a row becomes unfindable.
+3. Verify a sample end to end — a participant code lookup, a USSD caller-number lookup, and one outbound message to a test handset.
+4. Promote the new keys and remove the old ones. Record the rotation, its reason and its date.
+
+Steps 2 and 3 need the whole table, so plan it for a quiet window and expect the API to be read-only while it runs.
+
 ## Phone-number storage — documented tradeoff, expiring
 
-`miners.phone` is stored in plaintext because it is the operational identity for SMS delivery, USSD caller lookup and `GET /api/workers/{phone}`, and a one-way hash breaks all three. This was an acceptable prototype tradeoff and **ceases to be acceptable the moment real patient data exists**. The schema rebuild moves contact numbers to an encrypted `contact` table separated from clinical content (`ARCHITECTURE.md`, decisions 1 and 2), which resolves it.
+`miners.phone` is stored in plaintext because it is the operational identity for SMS delivery, USSD caller lookup and `GET /api/workers/{phone}`, and a one-way hash breaks all three. This was an acceptable prototype tradeoff and **ceases to be acceptable the moment real patient data exists**.
+
+**The replacement is built** — `contacts`, hashed and encrypted, separated from clinical content (see the section above, and `ARCHITECTURE.md` decisions 1 and 2) — **and the v1 column is still there and still in use.** `routers/ussd.py`, `GET /api/workers/{phone}` and the mobile application's `resolveMinerId()` all still read it, and `miners` is dropped by migration `0009` once the v1 adapter is deleted (`docs/IMPLEMENTATION_PLAN.md` §4). Until then both forms exist, which is the transition working as designed and not a reason to relax the expiry: **no real record before `miners` is gone.**

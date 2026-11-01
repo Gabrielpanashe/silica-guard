@@ -14,6 +14,15 @@ os.environ.setdefault("HOSPITAL_EMAIL", "hospital@silicaguard.health")
 os.environ.setdefault("HOSPITAL_PASSWORD", "hospital123")
 os.environ.setdefault("CIMAS_EMAIL", "cimas@silicaguard.health")
 os.environ.setdefault("CIMAS_PASSWORD", "cimas123")
+# Identity keys (§16.2, item 1.7). services/crypto.py deliberately has no
+# fallback — a production instance must fail loudly rather than hash national
+# identity numbers under a guessable default — so the suite supplies its own.
+# Fixed rather than random so a digest is reproducible across runs, and
+# obviously test values: the HMAC key decodes to the ASCII string
+# "silicaguard-test-hmac-key-32byte". tests/test_crypto.py covers the
+# missing-key path by clearing these explicitly.
+os.environ.setdefault("IDENTITY_HMAC_KEY", "c2lsaWNhZ3VhcmQtdGVzdC1obWFjLWtleS0zMmJ5dGU=")
+os.environ.setdefault("CONTACT_ENCRYPTION_KEY", "mT-iHjTXbSMXA7KV-kRLYpBAC6uM_CrcNwB_xCva5OQ=")
 # Plain configuration, not a "detect pytest" hack — no test should ever
 # start a background scheduler thread (would leak across the per-test
 # TestClient instances and slow the suite down for no benefit; the cascade
