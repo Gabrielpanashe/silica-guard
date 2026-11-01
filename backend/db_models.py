@@ -950,3 +950,133 @@ class InstrumentInterval(Base):
         UniqueConstraint("instrument_id", "condition_code", "tier", name="uq_instrument_interval"),
         CheckConstraint("tier IN ('GREEN','YELLOW','ORANGE','RED')", name="ck_interval_tier"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  CONTENT STORE — Master Reference v1.0 §8.4, §13.1, §13.2
+#
+#  The fourth of the five irreversible decisions. Every string a worker
+#  reads or hears is human-authored, clinically reviewed, versioned, and
+#  stored here against a message code with one row per language. There is no
+#  runtime machine translation of anything patient-facing, and no
+#  model-generated free text on any patient-facing surface.
+#
+#  The reason is not only quality. Text that does not exist until the moment
+#  it is sent cannot be clinically reviewed before it is used, cannot be
+#  shown to an ethics committee, and cannot be reproduced afterwards to
+#  explain what a worker was told. A model drafting a translation at request
+#  time fails all three. Four things follow from storing it instead: the
+#  Clinical Lead reviews the exact words that reach a person; the team can
+#  demonstrate what was said; a new language is rows rather than a code
+#  change; and the register problem disappears, because the text is
+#  AUTHORED by a speaker of the language rather than translated into it by a
+#  machine.
+#
+#  The reviewable source is `content/messages/*.yaml`, validated by
+#  `content/schema.json` and `scripts/validate_content.py`, approved on a
+#  pull request by the Clinical Lead; `services/content_store.py` writes the
+#  rows. The split mirrors the instrument tables above: the versioned unit
+#  (code, version) carries the review state, and the per-language text hangs
+#  off it.
+#
+#  Two columns are worth explaining before they look redundant.
+#  `message_texts.septets` is the GSM 03.38 cost of the string, computed at
+#  load time, because a single character outside the seven-bit alphabet
+#  drops a segment from 160 characters to 70 and permanently multiplies the
+#  cost of every send that contains it — storing the number makes the
+#  decision auditable rather than recomputed differently by each caller.
+#  `messages.placeholders` is the declared substitution contract, so a
+#  render that would leave `{name}` unresolved fails at the sender rather
+#  than arriving at a worker.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class Message(Base):
+    """One version of one patient-facing or clinician-facing string.
+
+    `status` drives the renderer: only `approved` text may be sent to a
+    person, which is what makes the filler in `content/messages/example.yaml`
+    structurally unsendable rather than merely discouraged. An approved
+    version is immutable — a consent text or a result message must be
+    reproducible for any session that referenced it (§8.4 status lifecycle).
+    """
+
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    #: Stable key, referenced by the instrument tables' `label_message_code`,
+    #: by `consent_texts.message_code`, and by the services that send.
+    code = Column(String, nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    #: Determines the character budget. See CHANNEL_BUDGET in
+    #: `services/content_format.py`, which is the single definition.
+    channel = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="draft", server_default=text("'draft'"))
+    #: What the message is for and when it is sent. Read by whoever reviews
+    #: or translates it, and the only context a translator gets.
+    purpose = Column(Text)
+    #: Declared substitution contract, comma-separated. A render that does
+    #: not supply exactly this set is refused (§8.4: a placeholder present in
+    #: English and missing in Shona sends a broken message to the people
+    #: least able to query it).
+    placeholders = Column(Text)
+    #: Raises or lowers the channel budget for this message only, with a
+    #: reason in `notes`. Stored so that an exception is visible in the data.
+    max_len_override = Column(Integer)
+    approved_by = Column(String)
+    approved_at = Column(DateTime)
+    #: §8.4's quality method: the message was read aloud to miners who were
+    #: asked to say back what it means. Three columns rather than JSON
+    #: because this is the evidence an ethics committee asks about, and
+    #: evidence that can be queried is evidence that gets checked.
+    comprehension_tested_at = Column(DateTime)
+    comprehension_participants = Column(Integer)
+    comprehension_outcome = Column(Text)
+    #: Grouping label from the file, e.g. results, consent, education.
+    area = Column(String)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    texts = relationship("MessageText", back_populates="message")
+
+    __table_args__ = (
+        UniqueConstraint("code", "version", name="uq_messages_code_version"),
+        CheckConstraint(
+            "channel IN ('sms','ussd','app','clinician')",
+            name="ck_messages_channel",
+        ),
+        CheckConstraint(
+            "status IN ('draft','review','approved','retired')",
+            name="ck_messages_status",
+        ),
+    )
+
+
+class MessageText(Base):
+    """The words, one row per language.
+
+    A new language is rows here and nothing else — which is the whole point
+    of the store (§8.4). English, Shona and Ndebele are all required before a
+    message may be approved; Ndebele is not optional in this geography, since
+    the Midlands is genuinely mixed and one of the country's only two
+    dedicated occupational health clinics is at Gwanda.
+    """
+
+    __tablename__ = "message_texts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False)
+    language = Column(String, nullable=False)
+    text_value = Column(Text, nullable=False)
+    #: GSM 03.38 cost in septets, computed at load time. A string outside the
+    #: seven-bit alphabet is rejected before it is stored, so this is the
+    #: real segment arithmetic and not an estimate.
+    septets = Column(Integer)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    message = relationship("Message", back_populates="texts")
+
+    __table_args__ = (
+        UniqueConstraint("message_id", "language", name="uq_message_texts_language"),
+        CheckConstraint("language IN ('en','sn','nd')", name="ck_message_texts_language"),
+    )

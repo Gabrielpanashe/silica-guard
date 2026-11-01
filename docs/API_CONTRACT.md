@@ -1,6 +1,8 @@
-# SilicaGuard API Contract — v1
+# SilicaGuard API Contract
 
-> **This is the v1 contract: the prototype API as it runs today.** The Phase One rebuild (`ARCHITECTURE.md` — per-condition result rows, person/contact identity, instrument versions, consent) changes the shape of most routes here; v2 of this document arrives with that schema and is versioned so the mobile application and dashboard migrate in step. Until then, this file is accurate for the deployed backend and is what both frontends build against.
+> **Two contracts live here.** Everything from Health to Dashboard below is **v1**: the prototype API as it runs today. The **v2 section** near the end holds the Phase One routes as they land, one at a time, under `/api/v2/`. The v1 routes keep serving the current mobile application and dashboard until those clients move, then become thin adapters over v2 storage and are deleted (`docs/IMPLEMENTATION_PLAN.md` §5). No v1 route survives to the pilot.
+
+> **The v1 contract.** The Phase One rebuild (`ARCHITECTURE.md` — per-condition result rows, person/contact identity, instrument versions, consent) changes the shape of most routes below. Until a route's v2 replacement lands, the v1 shape here is accurate for the deployed backend and is what both frontends build against.
 
 This is the source of truth for the backend's HTTP interface. Build the mobile app and dashboard against this document, not against reading the Python.
 
@@ -495,6 +497,54 @@ Requires `Authorization: Bearer <token>`.
 
 ---
 
+## v2 — Content store
+
+> **The first `/api/v2` route.** v2 routes land one at a time under `/api/v2/` while the v1 routes above keep serving the current mobile application and dashboard (`docs/IMPLEMENTATION_PLAN.md` §5). A v2 route never changes shape once a client depends on it; a change is a new field or a new route.
+
+### `GET /api/v2/content` — LIVE
+
+Every approved patient-facing string in one language. A client caches this and renders from the cache, so the words a worker reads are the reviewed words whether or not the handset has coverage — **offline is the normal case** (§10.1).
+
+**Query parameters**
+
+| Name | Default | Meaning |
+|---|---|---|
+| `language` | `en` | `en`, `sn` or `nd`. Anything else is `400`, not a fallback — a silent fallback would be indistinguishable from a translation having happened. |
+| `channel` | all | `sms`, `ussd`, `app` or `clinician`. The gateway and the handset need different subsets and neither needs the other's. |
+| `since` | — | ISO-8601 timestamp. Returns only messages created after it. Approved versions are immutable and a change is a new row, so this is a sound watermark for an incremental refresh. |
+
+**Response**
+
+```json
+{
+  "language": "sn",
+  "count": 2,
+  "generated_at": "2026-11-01T14:52:11+00:00",
+  "messages": [
+    {
+      "code": "result.green.sms",
+      "version": 1,
+      "channel": "sms",
+      "language": "sn",
+      "text": "…",
+      "placeholders": ["name"]
+    }
+  ]
+}
+```
+
+- `language` at the top echoes the request. **`language` on a row is the language actually served**, which may be `en` where that message has not been authored in the requested language yet. The gap is reported rather than filled: there is no machine translation anywhere in this system (§8.4), so a client can see that an authoring gap exists.
+- `placeholders` is the substitution contract. The client substitutes offline and must supply exactly this set; a message rendered with a placeholder left unresolved reaches a worker as literal braces.
+- `count: 0` with an empty `messages` is the **correct** response until the Clinical Lead approves content version one, not an error. Only `approved` messages are ever served, so draft and review text cannot reach a handset.
+
+**Auth: none.** Same deliberate precedent as the screening path — the mobile application never logs in, and this response contains nothing about any person.
+
+**There is no write route, and will not be one.** `POST`, `PUT`, `PATCH` and `DELETE` all return `405`. Content enters through a migration generated from `content/`, on a pull request the Clinical Lead approves (§11.4); an HTTP endpoint that could add a patient-facing string would be a way around that approval.
+
+**Not served here:** the strings in `content/EXCEPTIONS.md`, which by definition cannot come from the store. There are three, each reviewed.
+
+---
+
 ## Summary table
 
 | Route | Method | Status |
@@ -516,3 +566,4 @@ Requires `Authorization: Bearer <token>`.
 | `/api/outreach` | POST, GET | LIVE |
 | `/api/dashboard/today` | GET | LIVE (unauthenticated, VHW Home-screen numbers) |
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |
+| `/api/v2/content` | GET | LIVE (first v2 route — approved patient-facing strings, read-only) |

@@ -14,7 +14,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from database import database_reachable, init_db
-from routers import auth, dashboard, education, facilities, mines, outreach, referral_lookup, screening, ussd, workers
+from routers import (
+    auth,
+    content,
+    dashboard,
+    education,
+    facilities,
+    mines,
+    outreach,
+    referral_lookup,
+    screening,
+    ussd,
+    workers,
+)
 from services.db_keepalive import run_scheduled_keepalive
 from services.outreach import run_scheduled_outreach
 from services.referral_cascade import run_scheduled_cascade
@@ -117,6 +129,9 @@ app.include_router(mines.router)
 app.include_router(facilities.router)
 app.include_router(referral_lookup.router)
 app.include_router(education.router)
+# First /api/v2 route (§8.4) — the content store, read-only. See
+# routers/content.py for why it is unauthenticated and has no write side.
+app.include_router(content.router)
 
 
 @app.get("/api/health")

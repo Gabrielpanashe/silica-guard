@@ -72,6 +72,23 @@ cd backend
 
 CI runs the same script on every pull request that touches `content/`.
 
+## From a file to a worker's handset
+
+**Built** as of 1 November 2026, except the one step that is Gabriel's.
+
+1. A message is authored here and validated by `scripts/validate_content.py`, which CI runs on every pull request.
+2. Gabriel approves the pull request. **Nothing else in the chain can happen without this**, by construction rather than by convention.
+3. A generated data migration calls `services/content_store.py::load()`, which re-checks the character set, the budget in every language, the placeholder contract and the presence of all three languages before a row exists. The loader and the CI gate import the same arithmetic, so they cannot disagree.
+4. `GET /api/v2/content?language=` serves the approved strings. A client caches them and renders from the cache, because offline is the normal case (§10.1).
+5. A sender calls `content_store.render()`, which substitutes placeholders and returns the string with the version and language it actually came from, so what a person was told is recordable.
+
+Two properties are worth knowing before you work on this:
+
+- **`render()` serves `approved` messages only.** Everything in `messages/example.yaml` is `draft`, so the filler in it is unsendable in every environment — there is no flag, environment variable or test fixture that makes it sendable. The same mechanism means the five services that still hold hardcoded strings cannot be rewired to the store until the English in it is approved.
+- **An approved message is immutable, and a change is a new version.** `load()` refuses to overwrite one. A consent text or a result message must be reproducible for any session that referenced it.
+
+An **empty store is the correct state** until version one is approved: `GET /api/v2/content` returns `count: 0`, and the v1 services keep sending the strings they send today. `content/EXCEPTIONS.md` lists the three strings that cannot come from the store at all.
+
 ## Forward hook
 
 Because content is stored as codes with per-language variants, adding an audio file reference per code and language later is a single column. Voice and interactive voice response remain out of scope, but literacy is a real constraint in this population, so the door is left on its hinges even though it stays shut (§8.4).

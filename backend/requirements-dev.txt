@@ -7,8 +7,16 @@ simpy
 matplotlib
 
 # clinical/ and content/ validators (scripts/validate_instrument.py,
-# scripts/validate_content.py) and their tests. Dev-only for now: when the
-# Phase One loader migrations read these files at `alembic upgrade` time,
-# pyyaml moves to requirements.txt because migrations run in production.
+# scripts/validate_content.py) and their tests. Dev-only, and kept that way
+# deliberately: tests/test_content_runtime_rule.py fails the build if any
+# module a router can reach imports one of these, because the production
+# instance does not have them and the boot would die with
+# ModuleNotFoundError. That is why the GSM-7 arithmetic the content store
+# needs lives in services/content_format.py, which has no dependencies,
+# rather than in the validator script where it started.
+#
+# pyyaml moves to requirements.txt when the first loader data migration
+# lands (item 1.6b / 1.4), because migrations DO run in production — and the
+# test above permits that, since a migration is not reachable from a router.
 pyyaml
 jsonschema
