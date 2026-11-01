@@ -56,7 +56,15 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db_models import Contact, Person, PersonMatchQueue, PersonMerge, ScreeningSession
+from db_models import (
+    ConsentRecord,
+    Contact,
+    ExposureProfile,
+    Person,
+    PersonMatchQueue,
+    PersonMerge,
+    ScreeningSession,
+)
 from services import crypto
 
 #: Same alphabet as the referral codes (`services/referrals.py`): no 0/O or
@@ -113,6 +121,25 @@ QUEUE_THRESHOLD = 0.50
 #: roughly one or two characters' difference in a short name, which is the
 #: common case: a transcription slip, not a different person.
 NAME_SIMILARITY = 0.85
+
+#: Everything that belongs to a person and therefore follows them through a
+#: merge. Enumerated in one place rather than inlined in `merge()`, because
+#: the failure mode of forgetting one is silent: the rows stay pointing at the
+#: losing record, every read goes to the winner, and the data is simply gone
+#: from view. `ConsentRecord` and `ExposureProfile` were both missing from the
+#: first version of `merge()` -- consent in particular, which would have meant
+#: a worker's recorded decisions vanishing because a clerk joined two records.
+#:
+#: Deliberately NOT here: `person_merges` (the audit of the merge itself, which
+#: must keep naming the original two records) and `person_match_queue` (handled
+#: separately, because a queued pair is resolved by the merge rather than
+#: carried over).
+MERGE_FOLLOWS = (
+    (Contact, "person_id"),
+    (ScreeningSession, "person_id"),
+    (ConsentRecord, "person_id"),
+    (ExposureProfile, "person_id"),
+)
 
 #: A merge chain should be one hop. The guard exists because a cycle created
 #: by two merges in opposite directions would otherwise spin forever, and an
@@ -616,9 +643,16 @@ def merge(
     """Apply a merge a human decided on.
 
     The losing record is kept and flagged, never deleted, so the merge is
-    reversible from the first day (§8.2) with both histories intact. Contacts
-    move to the winner because a number is an attribute; sessions move because
-    they are the clinical history the merge exists to join.
+    reversible from the first day (§8.2) with both histories intact.
+    Everything in MERGE_FOLLOWS moves to the winner: contacts because a number
+    is an attribute, sessions because they are the clinical history the merge
+    exists to join, **consent records because a worker's decision about his
+    own data must not be lost when a clerk joins two records**, and exposure
+    profiles because a work history accumulates across sectors.
+
+    Where both records hold a decision on the same permission, the more recent
+    one stands -- `consent._standing()` takes the latest, which is the right
+    answer: it is the same person's later decision.
     """
     if winner_person_id == loser_person_id:
         raise IdentityError("a person cannot be merged into themselves")
@@ -638,14 +672,11 @@ def merge(
             "those two records already resolve to the same person"
         )
 
-    for contact in db.scalars(
-        select(Contact).where(Contact.person_id == loser.id)
-    ).all():
-        contact.person_id = winner.id
-    for session in db.scalars(
-        select(ScreeningSession).where(ScreeningSession.person_id == loser.id)
-    ).all():
-        session.person_id = winner.id
+    for model, column in MERGE_FOLLOWS:
+        for row in db.scalars(
+            select(model).where(getattr(model, column) == loser.id)
+        ).all():
+            setattr(row, column, winner.id)
 
     # The winner inherits anything it was missing, and overwrites nothing: a
     # merge must not be able to change a value somebody already recorded.

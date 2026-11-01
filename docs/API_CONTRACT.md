@@ -629,6 +629,94 @@ Reverses a merge, keeping both the merge and the reversal in the audit. **Contac
 
 **Today any dashboard login can merge two people.** There are two flat accounts; a merge is a clinical safety event and belongs to one named role. Item 1.13 scopes it.
 
+### Consent — `/api/v2/consents` — LIVE
+
+Master Reference §8.5, §14.2. **Absence is never consent**: every response names all six permissions, and one nobody recorded reads `false`. A client never has to decide what a missing key means.
+
+**`GET /api/v2/consents/permissions`** — no auth
+
+The six permissions and what each covers, so a consent screen renders from the server's definition rather than a copy in the client. A copy drifts, and a consent screen that drifts asks for agreement to something other than what is recorded.
+
+```json
+[{"code": "screening_and_referral", "scope": "Screening, tier assignment, referral…",
+  "required_to_screen": true, "future_phase": false}]
+```
+
+| Permission | Notes |
+|---|---|
+| `screening_and_referral` | Required to proceed. Without it there is no service. |
+| `longitudinal_record` | Separable — a worker may accept screening and decline retention. |
+| `contact_by_message` | Required for referral follow-through. Distinct from education broadcast. |
+| `education_broadcast` | Separate, with a working and permanent opt-out. |
+| `research_and_statistics` | Refusable without losing the service. |
+| `employer_disclosure` | **Future phase. Cannot be granted** — a grant is rejected `400`. A refusal may be recorded. |
+
+**`GET /api/v2/consents/texts/{code}`** — no auth
+
+The approved consent text version to show. Returns `consent_text_id`, `code`, `version`, `message_code`, `status`, `approved_by`, `approved_at` — **not the wording**. The words are a message code in the content store, so consent text goes through the same review, three languages and GSM-7 checks as every other patient-facing string (§8.4).
+
+`404` until the Clinical Lead approves one, which is why consent capture does not work before then. That is correct sequencing, not a gap: nobody is asked to agree to unreviewed wording.
+
+**`POST /api/v2/consents`** — no auth
+
+```json
+{
+  "person_id": 41,
+  "consent_text_id": 3,
+  "channel": "APP",
+  "recorded_by": "sister.moyo",
+  "decisions": {
+    "screening_and_referral": true,
+    "longitudinal_record": false,
+    "contact_by_message": true,
+    "education_broadcast": false,
+    "research_and_statistics": false
+  }
+}
+```
+
+`consent_text_id` is **required** and must name an *approved* text — §14.2 records the version displayed, and a row saying "agreed" with nothing attached is not evidence. `channel` is `APP`, `USSD` or `PAPER`.
+
+**All-or-nothing.** A half-recorded consent screen is worse than a failed one, because afterwards the missing permissions are indistinguishable from refusals. A `400` leaves nothing written.
+
+A **refusal is recorded as deliberately as a grant**: "asked and declined" is the answer an ethics committee wants, and it stops the same question being asked at every visit.
+
+Response (also returned by withdraw and by the per-person read):
+
+```json
+{
+  "person_id": 41,
+  "participant_code": "8NBNFM",
+  "standing": {"screening_and_referral": true, "longitudinal_record": false, "...": false},
+  "may_screen": true,
+  "may_keep_longitudinal_record": false,
+  "history": [
+    {"record_id": 7, "permission": "screening_and_referral", "granted": true,
+     "consent_text_code": "CORE", "consent_text_version": 1, "channel": "APP",
+     "recorded_at": "2026-11-01T14:52:11", "recorded_by": "sister.moyo", "withdrawn_at": null}
+  ]
+}
+```
+
+`may_keep_longitudinal_record: false` is the one place the layering changes what a caller does: the session is recorded with **no `previous_session_id`** and no deterioration comparison. The screening still happens and the result is still real; it simply has no history attached.
+
+Unauthenticated on the same precedent as the screening path — a consent screen is part of a screening, and the VHW application never logs in. Requiring a token for consent while screening itself is open would be incoherent.
+
+**`POST /api/v2/consents/withdraw`** — Bearer
+
+```json
+{"person_id": 41, "permission": "education_broadcast", "withdrawn_by": "supervisor"}
+```
+
+The original row is **kept and stamped**, never deleted: §14.3 requires the withdrawal mechanism to be demonstrable, and "granted, then withdrawn on this date" is a different story from "never granted". Withdrawing something never granted succeeds quietly — a worker opting out of what he never opted into should not get a failure.
+
+**Bearer-protected, and that is a named gap.** A worker's own withdrawal should not need a token, but an open endpoint keyed on a person id would let anyone stop anyone's referral reminders — a harm to the person it pretends to serve. The worker-facing route is the USSD and SMS opt-out, which reaches the same service function server-side through the gateway, and it lands with item 1.9. Until then withdrawal is staff-operated and §14.2's "working and permanent opt out" is unfinished.
+
+**`GET /api/v2/persons/{participant_code}/consents`** — Bearer
+
+Everything recorded for one person, by the code on their card. Follows a merge, so a decision recorded against a record that later lost a merge is still found — a worker's decision must not be lost because a clerk joined two records.
+
+
 
 ---
 
@@ -660,3 +748,8 @@ Reverses a merge, keeping both the merge and the reversal in the audit. **Contac
 | `/api/v2/persons/matches/{match_id}` | POST | LIVE (Bearer — merge or reject one pair) |
 | `/api/v2/persons/merges` | POST | LIVE (Bearer — apply a merge, reversibly) |
 | `/api/v2/persons/merges/{merge_id}` | DELETE | LIVE (Bearer — reverse one) |
+| `/api/v2/consents/permissions` | GET | LIVE (the six permissions, for rendering a consent screen) |
+| `/api/v2/consents/texts/{code}` | GET | LIVE (the approved consent text version; 404 until one exists) |
+| `/api/v2/consents` | POST | LIVE (unauthenticated; all-or-nothing, names the text version shown) |
+| `/api/v2/consents/withdraw` | POST | LIVE (Bearer — the worker-facing opt-out is 1.9) |
+| `/api/v2/persons/{participant_code}/consents` | GET | LIVE (Bearer — standing position plus full history) |

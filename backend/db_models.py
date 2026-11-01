@@ -35,6 +35,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -235,7 +236,7 @@ class KeepAlivePing(Base):
 #  Added alongside the version one tables, not in place of them. Both sets
 #  exist during the transition: the v1 routes keep serving the mobile app and
 #  dashboard from `miners`/`screenings` until those clients move to v2, and
-#  `0008_v2_drop_v1` removes the old tables once the adapter is deleted
+#  `0010_v2_drop_v1` removes the old tables once the adapter is deleted
 #  (docs/IMPLEMENTATION_PLAN.md §3, §5).
 #
 #  The rule that holds all of it together, worth writing on the wall: the
@@ -563,13 +564,27 @@ class ConsentText(Base):
     __tablename__ = "consent_texts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String, nullable=False)
+    code = Column(String, nullable=False, index=True)
     version = Column(Integer, nullable=False, default=1, server_default=text("1"))
     message_code = Column(String, nullable=False)
     status = Column(String, default="draft", server_default=text("'draft'"))
     approved_by = Column(String)
     approved_at = Column(DateTime)
     created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    __table_args__ = (
+        # Added in `0008`. A consent record names the text version the person
+        # was shown, so two rows claiming to be the same version make every
+        # record referencing it ambiguous -- which is the one thing a consent
+        # record must never be.
+        #
+        # A unique INDEX rather than a UniqueConstraint, because this one
+        # arrives by ALTER on an existing table and SQLite cannot add a
+        # constraint that way -- it can create a unique index. The guarantee
+        # is identical on both engines; the DDL that gets there is not. Same
+        # reasoning as `persons.provisional_reason` having no CHECK (§16.2).
+        Index("uq_consent_texts_code_version", "code", "version", unique=True),
+    )
 
 
 class ConsentRecord(Base):

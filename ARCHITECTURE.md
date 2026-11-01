@@ -131,7 +131,13 @@ No `instrument_version` or `ruleset_version` column exists anywhere.
 
 Consent cannot be applied retrospectively. The consent model is a schema decision and must exist before the first real record. It is layered and recorded as data — screening and referral; longitudinal storage; contact by message; education broadcast; research and national statistics; and, separately and later, employer disclosure. The full permission table, the USSD keypress mechanism and the employer boundary are in `docs/SECURITY.md`.
 
-**Current code**: no consent table, no consent step on either channel, no opt-out on the education broadcast, no programme concept, phone numbers in plaintext, identifiers and clinical rows in the same tables, two flat login roles, no read audit.
+**Built, as of 1 November 2026** — the mechanism, not the wording. `consent_texts` and `consent_records`, `backend/services/consent.py` and `backend/routers/consents.py`. The six permissions are a closed set; **absence is never consent**, so a permission nobody recorded reads as not granted with no default and no inheritance from a related permission or a programme; a record must name the *approved* consent text version the person was shown, because a row saying "agreed" with nothing attached is not evidence; and a withdrawal is recorded rather than deleted, so "granted, then withdrawn" stays distinguishable from "never granted". `employer_disclosure` cannot be granted at all — the §14.4 boundary exists in code before any commercial pressure exists to blur it.
+
+The layering changes what the code does in one concrete place: a worker may accept screening and decline retention, and a declined retention means a session recorded with **no `previous_session_id`** and no deterioration comparison. The screening still happens and the result is still real; it simply has no history attached.
+
+**Planned**: the consent *wording* (the Clinical Lead's, and consent capture is blocked until a text is approved — correct sequencing, not a gap); the USSD keypress consent screen and the worker-facing USSD/SMS opt-out (item 1.9, so withdrawal is staff-operated today); and wiring the gate into the v1 education broadcast, which needs the `miners`→`persons` mapping from the adapter (item 1.11).
+
+**Still true today**: neither channel asks for consent, and `POST /api/education/broadcast` still sends without it. Phone numbers remain in plaintext in the v1 `miners` table until `0009` drops it. Two flat login roles and no read audit (item 1.13).
 
 ## The classification decision
 

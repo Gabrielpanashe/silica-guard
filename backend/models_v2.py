@@ -8,7 +8,7 @@ change affects -- `docs/API_CONTRACT.md` is versioned the same way.
 The v1 file is deleted with the adapter, not merged into this one.
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -166,3 +166,90 @@ class MergeOut(BaseModel):
     merged_at: Optional[str] = None
     reversed_by: Optional[str] = None
     reversed_at: Optional[str] = None
+
+
+# ────────────────────────────────────────────────────────────── consent (§14.2)
+
+
+class ConsentDecisionsIn(BaseModel):
+    """A whole consent screen in one request.
+
+    `decisions` maps permission code to the worker's answer. All six may
+    appear; any that do not are simply unrecorded, and an unrecorded
+    permission reads as **not granted** — absence is never consent (§14.2).
+
+    `consent_text_id` is required and names the version of the wording the
+    person was shown. A record saying "agreed" with nothing attached is not
+    evidence, which is what §14.2 means by recording the version displayed.
+    """
+
+    person_id: int
+    decisions: Dict[str, bool]
+    consent_text_id: int
+    #: APP, USSD or PAPER. On USSD this is a short statement in spoken
+    #: register followed by an explicit keypress.
+    channel: str = "APP"
+    session_id: Optional[int] = None
+    recorded_by: Optional[str] = None
+
+
+class ConsentRecordOut(BaseModel):
+    """One decision, as recorded. Carries the consent text version because
+    that is the part an ethics committee asks about."""
+
+    record_id: int
+    permission: str
+    granted: bool
+    consent_text_code: Optional[str] = None
+    consent_text_version: Optional[int] = None
+    channel: Optional[str] = None
+    recorded_at: Optional[str] = None
+    recorded_by: Optional[str] = None
+    withdrawn_at: Optional[str] = None
+
+
+class ConsentSummaryOut(BaseModel):
+    """The standing position on all six permissions plus the full history.
+
+    `standing` always has six keys, including the ones nobody asked about,
+    which read `false`. A client must never have to decide what a missing key
+    means.
+    """
+
+    person_id: int
+    participant_code: Optional[str] = None
+    standing: Dict[str, bool]
+    may_screen: bool
+    may_keep_longitudinal_record: bool
+    history: List[ConsentRecordOut] = Field(default_factory=list)
+
+
+class ConsentWithdrawIn(BaseModel):
+    person_id: int
+    permission: str
+    withdrawn_by: str
+
+
+class ConsentTextOut(BaseModel):
+    """A consent text version. The wording itself is not here — it is
+    `message_code` in the content store, so consent text goes through the same
+    review, the same three languages and the same GSM-7 checks as every other
+    patient-facing string (§8.4)."""
+
+    consent_text_id: int
+    code: str
+    version: int
+    message_code: str
+    status: str
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+
+
+class PermissionOut(BaseModel):
+    """What a permission is for, so a consent screen can be rendered from the
+    server's own definition rather than from a copy in the client."""
+
+    code: str
+    scope: str
+    required_to_screen: bool
+    future_phase: bool

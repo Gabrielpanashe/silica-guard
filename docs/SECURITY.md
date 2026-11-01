@@ -11,7 +11,7 @@ The standard applied: the system holds sensitive health data about a vulnerable 
 - **Medical device classification** with the Medicines Control Authority of Zimbabwe requires a formal determination. The system is designed to sit outside device classification; obtaining the determination is a pre-pilot checklist item. **It is never described as settled.**
 - **Ministry of Health and Child Care clearance** at national and district level before any deployment.
 
-## Consent design — Planned, a schema decision that must exist before the first real record
+## Consent design — Built, except the worker-facing opt-out
 
 Consent is layered, recorded as data, and separated into distinct permissions rather than bundled.
 
@@ -26,7 +26,19 @@ Consent is layered, recorded as data, and separated into distinct permissions ra
 
 For USSD, consent is a short statement in spoken register followed by an explicit keypress, recorded with a timestamp and the version of the consent text displayed. Consent text is versioned content like every other patient-facing string.
 
-**Today**: no consent table, no consent step on either channel, education broadcast has no consent or opt-out.
+**Built, as of 1 November 2026.** `consent_texts` and `consent_records` (migration `0004`, uniqueness in `0008`), `backend/services/consent.py`, `backend/routers/consents.py`. Three properties are enforced in code and tested:
+
+- **Absence is never consent.** A permission nobody recorded reads as not granted. No default, no inheritance from a related permission, and no grant implied by a programme — an employer-funded cohort does not consent on a worker's behalf.
+- **A record must name the wording.** `consent_text_id` is required and must name an *approved* text, because a row saying "agreed" with nothing attached is not evidence. The wording itself is a message code in the content store, so consent text goes through the same review, the same three languages and the same GSM-7 checks as every other patient-facing string.
+- **A withdrawal is recorded, never a deletion.** The original row is kept and stamped, so "granted, then withdrawn on this date" stays distinguishable from "never granted".
+
+`employer_disclosure` **cannot be granted at all** — `record()` refuses it, so the boundary exists in code before any commercial pressure exists to blur it. A refusal may still be recorded, because a refusal is a real answer. `may_disclose_to_employer()` is written as a real per-person lookup rather than a hardcoded `False`, so the day a formal-sector module exists the check is already in the code path.
+
+**Consent capture does not work until the Clinical Lead approves a consent text.** That is correct sequencing rather than a gap: nobody is asked to agree to unreviewed wording, and `GET /api/v2/consents/texts/{code}` returns `404` until one is approved.
+
+**Planned — the worker-facing opt-out, and the two channels.** `POST /api/v2/consents/withdraw` requires a token, so withdrawal is staff-operated today. A worker's own withdrawal should not need one, but an open endpoint keyed on a person id would let anyone stop anyone's referral reminders — a harm to the person it pretends to serve. The worker-facing route is the USSD and SMS opt-out, reaching the same service function server-side through the gateway, and it lands with item 1.9 alongside the USSD consent keypress screen. Until then §14.2's "working and permanent opt out" is not finished.
+
+**Still true today**: neither channel asks for consent yet, and the v1 education broadcast (`POST /api/education/broadcast`) still sends without it. The gate exists — `consent.may_broadcast()` — and cannot be wired until the v1 `miners` rows map to `persons`, which is the adapter (item 1.11). The broadcast route is Bearer-protected, so only the team can fire it, which bounds the exposure without excusing it.
 
 ## The employer boundary — the most consequential governance rule
 

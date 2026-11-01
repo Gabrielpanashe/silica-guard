@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from database import database_reachable, init_db
 from routers import (
     auth,
+    consents,
     content,
     dashboard,
     education,
@@ -137,6 +138,10 @@ app.include_router(content.router)
 # application; everything returning or changing a direct identifier needs a
 # token. routers/persons.py documents both, and the gap each leaves.
 app.include_router(persons.router)
+# Consent (§8.5, §14.2) — recording is unauthenticated for the VHW
+# application's consent screen; withdrawal needs a token until the USSD
+# opt-out exists. routers/consents.py explains both.
+app.include_router(consents.router)
 
 
 @app.get("/api/health")
