@@ -253,3 +253,145 @@ class PermissionOut(BaseModel):
     scope: str
     required_to_screen: bool
     future_phase: bool
+
+
+# ────────────────────────────────────────────────────────── screening (§10.3)
+
+
+class ScreeningSubmitIn(BaseModel):
+    """One screening, as a channel submits it.
+
+    `client_session_uuid` is **required**: it is generated on the device when
+    the session starts and replayed on retry, and it is the only thing that
+    makes a duplicate submission safe (§10.3). A channel that cannot produce
+    one is a channel that will create duplicates — which is what the v1 path
+    did, eighteen times for one miner during a model-flakiness window.
+
+    `answers` maps question code to the recorded value. An explicit unknown or
+    refused option belongs here too; the engine derives `unknown` from the
+    instrument rather than from absence (§12.2 item 10), because an unanswered
+    red-flag question must never read as a negative.
+    """
+
+    person_id: int
+    client_session_uuid: str = Field(..., min_length=8)
+    answers: Dict[str, str] = Field(..., min_length=1)
+    channel: str = "APP"
+    screened_by: Optional[str] = None
+    site_id: Optional[int] = None
+    site_text: Optional[str] = None
+    programme_id: Optional[int] = None
+    outreach_visit_id: Optional[int] = None
+    instrument_code: Optional[str] = None
+    started_at: Optional[str] = None
+    #: The device ran the rules engine locally with no connectivity. Not a
+    #: different result — the same engine produced it — but recorded.
+    offline: bool = False
+
+
+class ConditionResultOut(BaseModel):
+    """**One row per condition assessed.** The single most important shape in
+    the v2 API: a session produces a list, not a tier, which is what makes
+    adding tuberculosis rows rather than a migration of patient records.
+
+    Carries the provenance §10.1 requires — which instrument version, which
+    ruleset, by what method, and whether a safety override fired.
+    """
+
+    condition: str
+    tier: str
+    score: int
+    method: str
+    instrument_code: str
+    instrument_version: int
+    #: The tier before deterioration escalation and overrides, so the cascade
+    #: is auditable step by step rather than only at its end.
+    scored_tier: str
+    tier_rule_label: Optional[str] = None
+    override_fired: bool = False
+    override_rule_codes: List[str] = Field(default_factory=list)
+    deterioration_compared: bool = False
+    deterioration_changed: bool = False
+    deterioration_summary: Optional[str] = None
+
+
+class MessagePlanOut(BaseModel):
+    """What would be sent, and whether the reviewed words exist yet.
+
+    There is deliberately no fallback sentence. §8.4: a worker reads reviewed
+    words or nothing — a placeholder shipped "for now" is how unreviewed text
+    reaches people.
+    """
+
+    code: str
+    available: bool
+    language: Optional[str] = None
+    text: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class ReferralPlanOut(BaseModel):
+    referral_code: str
+    condition: str
+    tier: str
+    facility: Optional[str] = None
+    deadline: Optional[str] = None
+
+
+class ScreeningOutcomeOut(BaseModel):
+    """The result returned to the channel — identical online or offline,
+    because the same deterministic engine produced it in both cases."""
+
+    session_id: int
+    person_id: int
+    participant_code: Optional[str] = None
+    #: The highest tier across conditions: what drives the referral. A worker
+    #: at RED for one condition is at RED, whatever the others say.
+    primary_tier: str
+    results: List[ConditionResultOut]
+    instrument_code: str
+    instrument_version: int
+    #: True when this submission matched an existing `client_session_uuid`.
+    #: **Nothing was written.** A retry is safe.
+    replayed: bool = False
+    #: False when longitudinal consent was absent, so no previous session was
+    #: linked and no deterioration comparison was possible (§14.2). The
+    #: screening still happened and the result is still real.
+    longitudinal_linked: bool = False
+    referrals: List[ReferralPlanOut] = Field(default_factory=list)
+    messages: List[MessagePlanOut] = Field(default_factory=list)
+    #: Why nothing was sent. Non-null until item 1.6b and migration `0010`.
+    not_sent_reason: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class ReferralCloseIn(BaseModel):
+    """§10.4: closing a referral captures the radiological or clinical
+    **outcome**, not merely that the person attended.
+
+    Without it the pilot produces an operational result and no labelled
+    dataset; with it every completed referral is a training example nobody
+    else in the country holds. The vocabulary is closed because free text is
+    not a label.
+    """
+
+    outcome: str
+    recorded_by: str
+    notes: Optional[str] = None
+
+
+class ReferralOut2(BaseModel):
+    referral_code: str
+    condition_code: Optional[str] = None
+    person_id: Optional[int] = None
+    result_id: Optional[int] = None
+    facility: Optional[str] = None
+    deadline: Optional[str] = None
+    status: str
+    attended_at: Optional[str] = None
+    outcome: Optional[str] = None
+    outcome_notes: Optional[str] = None
+    outcome_recorded_at: Optional[str] = None
+    outcome_recorded_by: Optional[str] = None
+    contributing_reasons: Optional[Dict[str, object]] = None

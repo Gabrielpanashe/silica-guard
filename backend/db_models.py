@@ -112,9 +112,24 @@ class ScreeningAnswer(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     screening_id = Column(Integer, ForeignKey("screenings.id"))
+    #: The v2 owner, added in `0009`. `0004` was supposed to add this and did
+    #: not, which is why the v2 pipeline could not persist an answer until
+    #: now. Plain Integer rather than a ForeignKey for the same reason as
+    #: `referrals.result_id`: it arrives by ALTER and SQLite has no ALTER for
+    #: constraints, so a database-level key would exist on PostgreSQL only
+    #: (§16.2). Exactly one of `screening_id` and `session_id` is set.
+    session_id = Column(Integer, index=True)
     question_code = Column(String)
+    #: **Never written by the v2 pipeline.** The wording of a question is a
+    #: patient-facing string and lives in the content store against a message
+    #: code (§8.4); copying it into a clinical row is a second, unreviewed
+    #: copy of text a worker read. Kept only for the v1 rows already holding
+    #: it, and dropped when `0010` rebuilds the table.
     question_text = Column(String)
     answer_value = Column(String)
+    #: v1 only. v2 scores per condition in `services/rules_engine.py`, so one
+    #: score per answer cannot express it — that is the silicosis-shaped
+    #: defect §8.1 names, in a different table.
     answer_score = Column(Integer)
 
     screening = relationship("Screening", back_populates="answers")
@@ -138,6 +153,42 @@ class Referral(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     screening_id = Column(Integer, ForeignKey("screenings.id"))
     miner_id = Column(Integer, ForeignKey("miners.id"))
+    # ── v2 keys, added in `0009` ──────────────────────────────────────────
+    #: **The referral is keyed to a RESULT, not a session** (§10.4, item
+    #: 1.10). A session produces one result per condition, and a referral is
+    #: always for a particular condition at a particular tier -- a worker
+    #: referred for silicosis and later also flagged for tuberculosis needs
+    #: two referrals with two deadlines, not one row whose meaning depends on
+    #: which result you read it against.
+    #: Plain Integer, not a ForeignKey, and that is forced rather than
+    #: chosen: this column arrives by ALTER and SQLite has no ALTER for
+    #: constraints at all, so a database-level foreign key here would exist
+    #: on PostgreSQL and not on SQLite -- exactly the divergence §16.2
+    #: warns about, and it would also make the autogenerate drift check
+    #: disagree with itself between engines. Integrity is enforced in
+    #: `services/referrals_v2.py`, which refuses to create a referral for a
+    #: result it cannot read, with a test. `0010` rebuilds this table when
+    #: the v1 columns go, and the real foreign key arrives then.
+    result_id = Column(Integer, index=True)
+    #: Denormalised from the result's session so the cascade and the hospital
+    #: lookup do not have to join through two tables on every tick. The
+    #: result is the authority if they ever disagree.
+    person_id = Column(Integer, index=True)
+    #: Which condition this referral is for. A value, never a column name.
+    condition_code = Column(String)
+    #: §10.4's addition that the Section 9 roadmap depends on: closing a
+    #: referral captures the radiological or clinical OUTCOME, not merely
+    #: that the person attended. Without it the pilot produces an
+    #: operational result and no labelled dataset; with it every completed
+    #: referral is a training example nobody else in the country holds.
+    outcome = Column(String)
+    outcome_notes = Column(Text)
+    outcome_recorded_at = Column(DateTime)
+    outcome_recorded_by = Column(String)
+    #: Why this referral was raised, as the fired rule codes and the tier
+    #: that drove it -- so a facility reading the pre-alert knows what to
+    #: look for, and so an audit can reconstruct the decision.
+    contributing_reasons = Column(Text)
     hospital = Column(
         String, default="Kwekwe District Hospital", server_default=text("'Kwekwe District Hospital'")
     )
@@ -167,6 +218,18 @@ class Referral(Base):
             "status IN ('open','pre_alerted','reminded','attended','closed','escalated')",
             name="ck_referrals_status",
         ),
+    )
+
+    #: The structured outcome vocabulary (§10.4). Enforced in
+    #: `services/referrals_v2.py` rather than by a CHECK constraint, because
+    #: this column arrives by ALTER and SQLite cannot add a CHECK that way --
+    #: the same §16.2 reasoning as `persons.provisional_reason`.
+    OUTCOMES = (
+        "attended_imaging_normal",
+        "attended_imaging_abnormal",
+        "attended_no_imaging",
+        "not_attended",
+        "other",
     )
 
     miner = relationship("Miner", back_populates="referrals")

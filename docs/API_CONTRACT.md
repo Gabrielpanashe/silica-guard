@@ -716,6 +716,111 @@ The original row is **kept and stamped**, never deleted: §14.3 requires the wit
 
 Everything recorded for one person, by the code on their card. Follows a merge, so a decision recorded against a record that later lost a merge is still found — a worker's decision must not be lost because a clerk joined two records.
 
+### Screening — `POST /api/v2/screenings` — LIVE
+
+Master Reference §10.3. **The deterministic cascade is the tier of record. No model sits between a set of answers and a tier on this route, by construction and by test.**
+
+**No auth** — the village health worker's application never logs in, and a screening must work in a gold-panning area with no dashboard session. Same precedent as `POST /api/screen`.
+
+```json
+{
+  "person_id": 41,
+  "client_session_uuid": "8f3c1e2a-...",
+  "answers": {"T1": "some", "T2": "mid", "T3": "no_"},
+  "channel": "APP",
+  "screened_by": "sister.moyo",
+  "site_id": 3,
+  "site_text": "Globe & Phoenix",
+  "programme_id": null,
+  "outreach_visit_id": 7,
+  "instrument_code": "SILICA-ASM",
+  "started_at": "2026-11-01T08:00:00Z",
+  "offline": false
+}
+```
+
+`client_session_uuid` is **required** (minimum 8 characters). It is generated on the device when the session starts and replayed on retry, and it is the only thing that makes a duplicate submission safe. A channel that cannot produce one will create duplicates — which the v1 path did, eighteen times for one miner during a model-flakiness window.
+
+`answers` maps question code to the recorded value. **An explicit unknown or refused option belongs here too**: the engine derives `unknown` from the instrument rather than from absence (§12.2 item 10), because an unanswered red-flag question must never read as a negative.
+
+`instrument_code` may be omitted only when the database holds exactly one instrument. An instrument is chosen deliberately, never guessed.
+
+**Response**
+
+```json
+{
+  "session_id": 112,
+  "person_id": 41,
+  "participant_code": "8NBNFM",
+  "primary_tier": "ORANGE",
+  "results": [
+    {"condition": "silicosis", "tier": "ORANGE", "score": 14,
+     "method": "deterministic_rules",
+     "instrument_code": "SILICA-ASM", "instrument_version": 1,
+     "scored_tier": "YELLOW", "tier_rule_label": "…",
+     "override_fired": false, "override_rule_codes": [],
+     "deterioration_compared": true, "deterioration_changed": true,
+     "deterioration_summary": "Worsened since the previous screening on: …"}
+  ],
+  "instrument_code": "SILICA-ASM",
+  "instrument_version": 1,
+  "replayed": false,
+  "longitudinal_linked": true,
+  "referrals": [
+    {"referral_code": "SG-4K7Q", "condition": "silicosis", "tier": "ORANGE",
+     "facility": "Kwekwe District Hospital", "deadline": "2026-11-15T14:52:11"}
+  ],
+  "messages": [{"code": "result.orange.sms", "available": false,
+                "reason": "not in the content store yet"}],
+  "not_sent_reason": "no message was sent: the v2 pipeline does not send yet …",
+  "started_at": "2026-11-01T08:00:00",
+  "completed_at": "2026-11-01T08:04:33"
+}
+```
+
+**`results` is a list, not a tier.** This is the single most important shape change in the v2 API: a session produces one result per condition assessed, which is what makes adding tuberculosis rows rather than a migration of patient records. `primary_tier` is the highest across conditions — a worker at RED for one condition is at RED, whatever the others say.
+
+`scored_tier` is the tier *before* deterioration escalation and overrides, so the cascade is auditable step by step rather than only at its end.
+
+`longitudinal_linked: false` means the worker declined retention (§14.2), so no previous session was linked and no deterioration comparison was possible. **The screening still happened and the result is still real** — it simply has no history attached.
+
+`replayed: true` means this submission matched an existing `client_session_uuid`. **Nothing was written.** The response is the stored result of the first session, read from the rows rather than re-classified — because the instrument may have been superseded between the submission and the retry, and a worker must be told what he was told.
+
+`messages` says what *would* be sent and whether the reviewed words exist. **There is no fallback sentence**: §8.4 means a worker reads reviewed words or nothing, and a placeholder shipped "for now" is how unreviewed text reaches people. `not_sent_reason` is non-null until item 1.6b (the words) and migration `0010` (a notifications row that can name a person rather than a v1 miner).
+
+**Status codes, and what a mobile offline queue should do with each**
+
+| Code | Meaning | Retry? |
+|---|---|---|
+| `200` | Screened, or replayed. | Done. |
+| `400` | Request wrong, or **screening incomplete**. The body carries `{"message", "session_id", "missing", "answers_saved": true}`. | No — the answers are saved; complete *that* session rather than resubmitting. |
+| `403` | Consent for screening has not been recorded. | No — go back to the worker. |
+| `422` | Schema violation (missing key, empty answers). | No. |
+| `503` | Server misconfigured: identity keys absent. **Nothing was saved.** | Yes. |
+
+`400` on an incomplete screening is the one a queue must not misread. §13.1: a partially answered instrument must never produce a tier — and rule 7: the answers given are kept regardless.
+
+### `GET /api/v2/referrals/{referral_code}` — LIVE, no auth
+
+What a facility sees when staff key in the code. Unauthenticated for the same reason the v1 lookup page is — facility staff have no account — and with the same recorded weakness: no rate limiting and no lockout on a code-keyed public endpoint (§15.4, item 1.13).
+
+Returns `referral_code`, `condition_code`, `person_id`, `result_id`, `facility`, `deadline`, `status`, `attended_at`, the outcome fields, and **`contributing_reasons`** — the tier, the scored tier, the condition, whether an override fired and which rules, and the instrument version. A facility reading this knows what to look for rather than receiving a bare instruction to investigate.
+
+### `POST /api/v2/referrals/{referral_code}/close` — LIVE, no auth
+
+```json
+{"outcome": "attended_imaging_abnormal", "recorded_by": "nurse", "notes": "Upper zones."}
+```
+
+§10.4: **closing a referral captures the radiological or clinical outcome and returns it to the person's record, not merely that they attended.** Without it the pilot produces an operational result and no labelled dataset. With it, every completed referral is a training example nobody else in the country holds — which is why the vocabulary is closed and not free text. Free text is easier for the person filling it in and produces nothing a model can learn from.
+
+`GET /api/v2/referrals/outcomes/vocabulary` serves the five values, so the facility page renders from the server's definition rather than a copy that can drift out of step with what the database accepts:
+
+`attended_imaging_normal` · `attended_imaging_abnormal` · `attended_no_imaging` · `not_attended` · `other`
+
+An outcome beginning `attended` sets `attended_at` if the confirm step was skipped — the two were independently recordable in v1 and could disagree.
+
+
 
 
 ---
@@ -753,3 +858,7 @@ Everything recorded for one person, by the code on their card. Follows a merge, 
 | `/api/v2/consents` | POST | LIVE (unauthenticated; all-or-nothing, names the text version shown) |
 | `/api/v2/consents/withdraw` | POST | LIVE (Bearer — the worker-facing opt-out is 1.9) |
 | `/api/v2/persons/{participant_code}/consents` | GET | LIVE (Bearer — standing position plus full history) |
+| `/api/v2/screenings` | POST | LIVE (the §10.3 pipeline; one result per condition; idempotent) |
+| `/api/v2/referrals/{referral_code}` | GET | LIVE (facility-facing, with contributing reasons) |
+| `/api/v2/referrals/{referral_code}/close` | POST | LIVE (structured outcome — the labelled dataset) |
+| `/api/v2/referrals/outcomes/vocabulary` | GET | LIVE (the five permitted outcomes) |

@@ -188,7 +188,19 @@ The order of operations for a single screening in the rebuilt system. Each step 
 
 Failure behaviour is specified, not incidental. If messaging fails, the screening and referral stand and the message is retried with the failure recorded. If the device is offline, the full pipeline runs locally and the session is queued. A duplicate submission — mobile retry or gateway retry — is recognised by an **idempotency key** and does not create a second session. Under no circumstance is a completed screening discarded.
 
-**Built today** (`backend/routers/screening.py`): persist-answers-first, deterioration before overrides, overrides last, referral creation, template-bound advice and Shona explanation. **Not built**: steps 1–3 and 8–9 as specified, per-condition scoring, idempotency keys, identical online/offline output.
+**Built, as of 1 November 2026** — the whole pipeline except sending, on `POST /api/v2/screenings` (`backend/services/screening_v2.py`). Steps 1 to 10 run in the order above: identity resolved through any merge, consent as a hard gate, the active approved instrument, **answers committed before any scoring**, per-condition scoring, deterioration, overrides last, one result row per condition with full provenance, text selected from the content store, and a referral keyed to the *result* with a window read from the instrument.
+
+Three properties are what make it different from the v1 route, and each is tested:
+
+- **A scoring failure keeps the answers.** An incomplete instrument returns `400` with `answers_saved: true` and the session id, so the caller completes that session. `routers/screening.py` **deletes** the screening when its model call fails.
+- **A retry writes nothing.** `client_session_uuid` is checked before anything else runs; a repeat returns the first session's stored result with `replayed: true`. It reads the stored rows rather than re-classifying, because the instrument may have been superseded between the submission and the retry and a worker must be told what he was told. This is the structural fix for the 23 August incident, where eighteen duplicate rows accumulated for one miner.
+- **No model is on this path**, by construction and by an import-graph test. `docs/IMPLEMENTATION_PLAN.md` §7 step 2: the v2 route is deterministic from its first commit.
+
+**Planned — step 11's sending.** Two prerequisites are absent: no patient-facing string is approved yet (item 1.6b), and `notifications.worker_id` is `NOT NULL` against the v1 `miners` table, so a message to a `Person` cannot even be logged until that table is rebuilt (§12 item 15, migration `0010`). The outcome therefore reports which message codes *would* be sent and records that nothing was, with the reason — §10.3 requires a messaging failure to be recorded rather than lost, and "no approved text exists" is a recorded reason rather than a silent skip. There is deliberately **no fallback sentence**: a placeholder shipped "for now" is how unreviewed text reaches people.
+
+**Planned — the USSD channel.** `POST /api/ussd` still runs its own thresholds. Channel equivalence (§11.7) cannot be asserted until it calls this pipeline, which is item 1.9. The v1 `POST /api/screen` also still calls Gemini for its tier.
+
+Also built, from §10.4: **closing a referral captures the radiological or clinical outcome**, not merely attendance (`POST /api/v2/referrals/{code}/close`, a closed five-value vocabulary). Without it the pilot produces an operational result and no labelled dataset; with it every completed referral is a training example nobody else in the country holds.
 
 ## Referral lifecycle
 

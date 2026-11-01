@@ -26,6 +26,7 @@ from routers import (
     persons,
     referral_lookup,
     screening,
+    screenings_v2,
     ussd,
     workers,
 )
@@ -142,6 +143,10 @@ app.include_router(persons.router)
 # application's consent screen; withdrawal needs a token until the USSD
 # opt-out exists. routers/consents.py explains both.
 app.include_router(consents.router)
+# The v2 screening pipeline (§10.3) and the referral close that makes the
+# pilot produce a labelled dataset (§10.4). Deterministic from its first
+# commit — no model sits between a set of answers and a tier.
+app.include_router(screenings_v2.router)
 
 
 @app.get("/api/health")
