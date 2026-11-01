@@ -204,9 +204,21 @@ def test_generated_keys_are_usable(monkeypatch):
     assert len(crypto.keyed_hash("0771234567", "phone")) == 64
 
 
-def test_the_env_example_keys_are_valid(monkeypatch):
-    """A fresh checkout copies `.env.example` and must run. A placeholder that
-    is not a real Fernet key would fail at the first screening instead."""
+def test_the_env_example_commits_no_key_material():
+    """`.env.example` must name the variables and carry no values.
+
+    This started as the opposite test — that the committed development keys
+    were valid Fernet keys, so a fresh checkout would run. gitleaks flagged
+    both of them (PR #40) and it was right to: a working key in a public
+    example file is indistinguishable from a real one, both to the scanner
+    and to a reader. Allowlisting this file would have been the worst
+    exception in the repository, because `.env.example` is exactly where a
+    real secret gets pasted by accident.
+
+    So the rule inverted. A fresh checkout now gets a clean 503 from the
+    identity routes with the missing variable named, which is better
+    onboarding than a key somebody might carry into staging.
+    """
     import re
     from pathlib import Path
 
@@ -214,8 +226,27 @@ def test_the_env_example_keys_are_valid(monkeypatch):
         encoding="utf-8"
     )
     for variable in (crypto.HMAC_KEY_VAR, crypto.ENCRYPTION_KEY_VAR):
-        match = re.search(rf"^{variable}=(.+)$", text, re.MULTILINE)
-        assert match, f"{variable} is not in .env.example"
-        monkeypatch.setenv(variable, match.group(1).strip())
-    assert crypto.decrypt(crypto.encrypt("value")) == "value"
-    assert len(crypto.keyed_hash("0771234567", "phone")) == 64
+        match = re.search(rf"^{variable}=(.*)$", text, re.MULTILINE)
+        assert match, f"{variable} must still be named in .env.example"
+        assert match.group(1).strip() == "", (
+            f"{variable} has a value in .env.example. Commit nothing that "
+            "looks like key material: the secret scanner cannot tell a "
+            "development key from a real one, and neither can a reader."
+        )
+
+
+def test_the_suite_derives_its_keys_rather_than_committing_them():
+    """conftest.py builds both keys from readable ASCII for the same reason.
+    A high-entropy literal anywhere in the tree is a finding waiting to
+    happen, and a reproducible digest does not need one."""
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent / "conftest.py").read_text(encoding="utf-8")
+    assert "urlsafe_b64encode" in text
+    for variable in (crypto.HMAC_KEY_VAR, crypto.ENCRYPTION_KEY_VAR):
+        inline = re.search(rf'"{variable}",\s*"[A-Za-z0-9+/_=-]{{20,}}"', text)
+        assert inline is None, (
+            f"{variable} is set from a literal in conftest.py. Derive it from "
+            "readable ASCII instead."
+        )

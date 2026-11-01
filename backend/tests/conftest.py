@@ -1,3 +1,4 @@
+import base64
 import os
 import sys
 from pathlib import Path
@@ -17,12 +18,21 @@ os.environ.setdefault("CIMAS_PASSWORD", "cimas123")
 # Identity keys (§16.2, item 1.7). services/crypto.py deliberately has no
 # fallback — a production instance must fail loudly rather than hash national
 # identity numbers under a guessable default — so the suite supplies its own.
-# Fixed rather than random so a digest is reproducible across runs, and
-# obviously test values: the HMAC key decodes to the ASCII string
-# "silicaguard-test-hmac-key-32byte". tests/test_crypto.py covers the
-# missing-key path by clearing these explicitly.
-os.environ.setdefault("IDENTITY_HMAC_KEY", "c2lsaWNhZ3VhcmQtdGVzdC1obWFjLWtleS0zMmJ5dGU=")
-os.environ.setdefault("CONTACT_ENCRYPTION_KEY", "mT-iHjTXbSMXA7KV-kRLYpBAC6uM_CrcNwB_xCva5OQ=")
+#
+# DERIVED from readable ASCII rather than written as base64 literals. Two
+# reasons, and the second is the real one: a digest has to be reproducible
+# across runs, and a committed high-entropy string is indistinguishable from
+# a real key to the secret scanner. Both literals were flagged by gitleaks
+# when they were written out (PR #40), and the honest fix is to commit
+# nothing that looks like key material rather than to allowlist this file.
+# tests/test_crypto.py covers the missing-key path by clearing these.
+_TEST_KEY_MATERIAL = b"silicaguard-test-key-not-a-secret!!"[:32]
+os.environ.setdefault(
+    "IDENTITY_HMAC_KEY", base64.urlsafe_b64encode(_TEST_KEY_MATERIAL).decode()
+)
+os.environ.setdefault(
+    "CONTACT_ENCRYPTION_KEY", base64.urlsafe_b64encode(_TEST_KEY_MATERIAL).decode()
+)
 # Plain configuration, not a "detect pytest" hack — no test should ever
 # start a background scheduler thread (would leak across the per-test
 # TestClient instances and slow the suite down for no benefit; the cascade

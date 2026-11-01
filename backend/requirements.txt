@@ -27,4 +27,10 @@ psycopg[binary]>=3.1,<4
 # dependency breaks the day that package changes transport, and
 # tests/test_content_runtime_rule.py treats an undeclared runtime import as a
 # build failure for exactly that reason.
-cryptography>=42,<50
+# Floor is 50, not a lower version that would also work: PYSEC-2026-3552
+# (a PKCS#7 EnvelopedData Bleichenbacher oracle, introduced in 44.0.0) is
+# fixed in 50.0.0. Nothing here decrypts attacker-supplied EnvelopedData, so
+# it is not reachable from this code — but an advisory WITH a fix version gets
+# the upgrade, not a suppression. The two suppressions in ci.yml are there
+# because neither of those has a fix at all.
+cryptography>=50,<51

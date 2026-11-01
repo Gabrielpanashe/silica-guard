@@ -33,8 +33,10 @@ back to `"dev-secret"` when `SECRET_KEY` is unset; that pattern is not copied
 here. A production instance that quietly hashed national identity numbers
 under a guessable default would produce a column that looks protected, is
 not, and cannot be migrated afterwards because the plaintext is gone. Failing
-loudly on the first call is the better outcome. `.env.example` carries
-development values that are clearly marked as such.
+loudly on the first call is the better outcome. `.env.example` names both
+variables and deliberately carries no values -- a working key committed there
+is indistinguishable from a real one, both to the secret scanner and to a
+reader, so a developer generates their own.
 """
 
 from __future__ import annotations
