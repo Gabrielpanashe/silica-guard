@@ -54,9 +54,10 @@ Notes that matter clinically:
 
 - **A score band is just one predicate.** `{"score": "silicosis", "gte": 12}` is the whole of a threshold rule; nothing is lost by using the richer form.
 - **`unknown` is explicit** (§12.2 item 10). An unanswered red-flag question must never default to a negative, so "not answered" is a value the rules can test rather than a silent absence.
+- **`all` and `any` do not short-circuit.** Every child is evaluated even once the outcome is known. If they short-circuited, a malformed sibling node would go unevaluated for some workers and raise for others depending on their answers, so a broken rule would be detected intermittently — the one property this engine exists to remove. The JavaScript interpreter on the device must match this, or the channels can disagree on a broken instrument.
 - **`count` exists for symptom clusters** — "at least two of cough, fever, night sweats" — without writing out every combination.
-- **Evaluation order per condition**: safety rules first; if any matches, its `forces_tier` wins and the rule code is recorded on the result. Otherwise tier rules in descending `priority`, first match wins. Deterioration runs between scoring and safety overrides, over the questions flagged `tracked_for_trajectory`.
-- **Safety rules can raise a tier and never lower one.** The engine enforces that regardless of what a rule says; a safety rule whose `forces_tier` is below the scored tier is a validation error, not a downgrade.
+- **Evaluation order per condition**, and it is not negotiable: score the answers; take the first matching tier rule in descending `priority`; apply deterioration, which may raise the tier one level; then apply safety rules **last**. §10.3 step 7 puts overrides after every other step precisely so that no earlier step, and no model, can be the final word on a red flag.
+- **Safety rules raise a tier and never lower one.** The engine takes the higher of the scored tier and the rule's `forces_tier`, so a rule whose `forces_tier` sits below the scored tier records that it fired without changing the outcome. The rule code is recorded on the result either way, so a classification can be audited afterwards.
 
 ## The example is not an instrument
 
