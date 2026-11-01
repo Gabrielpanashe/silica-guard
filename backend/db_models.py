@@ -35,6 +35,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -111,9 +112,24 @@ class ScreeningAnswer(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     screening_id = Column(Integer, ForeignKey("screenings.id"))
+    #: The v2 owner, added in `0009`. `0004` was supposed to add this and did
+    #: not, which is why the v2 pipeline could not persist an answer until
+    #: now. Plain Integer rather than a ForeignKey for the same reason as
+    #: `referrals.result_id`: it arrives by ALTER and SQLite has no ALTER for
+    #: constraints, so a database-level key would exist on PostgreSQL only
+    #: (§16.2). Exactly one of `screening_id` and `session_id` is set.
+    session_id = Column(Integer, index=True)
     question_code = Column(String)
+    #: **Never written by the v2 pipeline.** The wording of a question is a
+    #: patient-facing string and lives in the content store against a message
+    #: code (§8.4); copying it into a clinical row is a second, unreviewed
+    #: copy of text a worker read. Kept only for the v1 rows already holding
+    #: it, and dropped when the `drop_v1` migration rebuilds the table.
     question_text = Column(String)
     answer_value = Column(String)
+    #: v1 only. v2 scores per condition in `services/rules_engine.py`, so one
+    #: score per answer cannot express it — that is the silicosis-shaped
+    #: defect §8.1 names, in a different table.
     answer_score = Column(Integer)
 
     screening = relationship("Screening", back_populates="answers")
@@ -137,6 +153,42 @@ class Referral(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     screening_id = Column(Integer, ForeignKey("screenings.id"))
     miner_id = Column(Integer, ForeignKey("miners.id"))
+    # ── v2 keys, added in `0009` ──────────────────────────────────────────
+    #: **The referral is keyed to a RESULT, not a session** (§10.4, item
+    #: 1.10). A session produces one result per condition, and a referral is
+    #: always for a particular condition at a particular tier -- a worker
+    #: referred for silicosis and later also flagged for tuberculosis needs
+    #: two referrals with two deadlines, not one row whose meaning depends on
+    #: which result you read it against.
+    #: Plain Integer, not a ForeignKey, and that is forced rather than
+    #: chosen: this column arrives by ALTER and SQLite has no ALTER for
+    #: constraints at all, so a database-level foreign key here would exist
+    #: on PostgreSQL and not on SQLite -- exactly the divergence §16.2
+    #: warns about, and it would also make the autogenerate drift check
+    #: disagree with itself between engines. Integrity is enforced in
+    #: `services/referrals_v2.py`, which refuses to create a referral for a
+    #: result it cannot read, with a test. the `drop_v1` migration rebuilds this table when
+    #: the v1 columns go, and the real foreign key arrives then.
+    result_id = Column(Integer, index=True)
+    #: Denormalised from the result's session so the cascade and the hospital
+    #: lookup do not have to join through two tables on every tick. The
+    #: result is the authority if they ever disagree.
+    person_id = Column(Integer, index=True)
+    #: Which condition this referral is for. A value, never a column name.
+    condition_code = Column(String)
+    #: §10.4's addition that the Section 9 roadmap depends on: closing a
+    #: referral captures the radiological or clinical OUTCOME, not merely
+    #: that the person attended. Without it the pilot produces an
+    #: operational result and no labelled dataset; with it every completed
+    #: referral is a training example nobody else in the country holds.
+    outcome = Column(String)
+    outcome_notes = Column(Text)
+    outcome_recorded_at = Column(DateTime)
+    outcome_recorded_by = Column(String)
+    #: Why this referral was raised, as the fired rule codes and the tier
+    #: that drove it -- so a facility reading the pre-alert knows what to
+    #: look for, and so an audit can reconstruct the decision.
+    contributing_reasons = Column(Text)
     hospital = Column(
         String, default="Kwekwe District Hospital", server_default=text("'Kwekwe District Hospital'")
     )
@@ -166,6 +218,18 @@ class Referral(Base):
             "status IN ('open','pre_alerted','reminded','attended','closed','escalated')",
             name="ck_referrals_status",
         ),
+    )
+
+    #: The structured outcome vocabulary (§10.4). Enforced in
+    #: `services/referrals_v2.py` rather than by a CHECK constraint, because
+    #: this column arrives by ALTER and SQLite cannot add a CHECK that way --
+    #: the same §16.2 reasoning as `persons.provisional_reason`.
+    OUTCOMES = (
+        "attended_imaging_normal",
+        "attended_imaging_abnormal",
+        "attended_no_imaging",
+        "not_attended",
+        "other",
     )
 
     miner = relationship("Miner", back_populates="referrals")
@@ -235,7 +299,7 @@ class KeepAlivePing(Base):
 #  Added alongside the version one tables, not in place of them. Both sets
 #  exist during the transition: the v1 routes keep serving the mobile app and
 #  dashboard from `miners`/`screenings` until those clients move to v2, and
-#  `0008_v2_drop_v1` removes the old tables once the adapter is deleted
+#  the `drop_v1` migration removes the old tables once the adapter is deleted
 #  (docs/IMPLEMENTATION_PLAN.md §3, §5).
 #
 #  The rule that holds all of it together, worth writing on the wall: the
@@ -275,14 +339,38 @@ class Person(Base):
     #: collision here is a clinical safety event rather than an annoyance
     #: (docs/IMPLEMENTATION_PLAN.md §12 item 4).
     participant_code = Column(String, unique=True, index=True)
-    #: Salted hash only, never a recoverable form (§16.2). Voluntary.
+    #: Keyed hash only, never a recoverable form (§16.2). Voluntary, and the
+    #: one field §8.2 allows a deterministic match on.
     national_id_hash = Column(String, index=True)
+    #: The name, in the same two-column form as a contact number and for the
+    #: same reason (§12 item 11): the hash finds an exact match without a
+    #: plaintext index, the encrypted value is what a health worker and a
+    #: referral letter actually need. Added in `0007` — `0004` omitted the
+    #: name entirely, which left §8.2's matching bundle with nothing to match
+    #: on besides a hashed identity number most workers will not have.
+    name_hmac = Column(String, index=True)
+    name_encrypted = Column(Text)
     #: Banded rather than a birth date: enough for stratified analysis and
     #: reference values, less identifying.
     age_band = Column(String)
     sex = Column(String)
     #: Preferred language for every patient-facing string sent to them.
     language = Column(String, default="en", server_default=text("'en'"))
+    #: §8.2 part four, the anonymous USSD case. A caller who supplies no
+    #: participant code gets a person flagged unverified, for a health worker
+    #: to resolve at the next contact. The alternative — attaching the
+    #: screening to whoever the telephone number was last seen with, which is
+    #: what `ussd_handler._find_or_create_miner` does today — "would corrupt
+    #: the longitudinal dataset faster than anything else in the system".
+    provisional = Column(Integer, default=0, server_default=text("0"))
+    #: Why it is provisional, in a closed vocabulary rather than free text, so
+    #: the review queue can be worked by category. The vocabulary is
+    #: `identity.PROVISIONAL_REASONS` and is enforced there with a test rather
+    #: than by a CHECK constraint: SQLite cannot add one by ALTER, and a
+    #: constraint only PostgreSQL can apply is the SQLite/PostgreSQL
+    #: divergence §16.2 warns about — the same reasoning that keeps instrument
+    #: immutability in the service layer rather than in a trigger.
+    provisional_reason = Column(String)
     #: Set when this record loses a merge. The losing record is kept rather
     #: than deleted so that every merge is reversible from the first day
     #: (§8.2).
@@ -539,13 +627,27 @@ class ConsentText(Base):
     __tablename__ = "consent_texts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String, nullable=False)
+    code = Column(String, nullable=False, index=True)
     version = Column(Integer, nullable=False, default=1, server_default=text("1"))
     message_code = Column(String, nullable=False)
     status = Column(String, default="draft", server_default=text("'draft'"))
     approved_by = Column(String)
     approved_at = Column(DateTime)
     created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    __table_args__ = (
+        # Added in `0008`. A consent record names the text version the person
+        # was shown, so two rows claiming to be the same version make every
+        # record referencing it ambiguous -- which is the one thing a consent
+        # record must never be.
+        #
+        # A unique INDEX rather than a UniqueConstraint, because this one
+        # arrives by ALTER on an existing table and SQLite cannot add a
+        # constraint that way -- it can create a unique index. The guarantee
+        # is identical on both engines; the DDL that gets there is not. Same
+        # reasoning as `persons.provisional_reason` having no CHECK (§16.2).
+        Index("uq_consent_texts_code_version", "code", "version", unique=True),
+    )
 
 
 class ConsentRecord(Base):
@@ -950,3 +1052,240 @@ class InstrumentInterval(Base):
         UniqueConstraint("instrument_id", "condition_code", "tier", name="uq_instrument_interval"),
         CheckConstraint("tier IN ('GREEN','YELLOW','ORANGE','RED')", name="ck_interval_tier"),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  CONTENT STORE — Master Reference v1.0 §8.4, §13.1, §13.2
+#
+#  The fourth of the five irreversible decisions. Every string a worker
+#  reads or hears is human-authored, clinically reviewed, versioned, and
+#  stored here against a message code with one row per language. There is no
+#  runtime machine translation of anything patient-facing, and no
+#  model-generated free text on any patient-facing surface.
+#
+#  The reason is not only quality. Text that does not exist until the moment
+#  it is sent cannot be clinically reviewed before it is used, cannot be
+#  shown to an ethics committee, and cannot be reproduced afterwards to
+#  explain what a worker was told. A model drafting a translation at request
+#  time fails all three. Four things follow from storing it instead: the
+#  Clinical Lead reviews the exact words that reach a person; the team can
+#  demonstrate what was said; a new language is rows rather than a code
+#  change; and the register problem disappears, because the text is
+#  AUTHORED by a speaker of the language rather than translated into it by a
+#  machine.
+#
+#  The reviewable source is `content/messages/*.yaml`, validated by
+#  `content/schema.json` and `scripts/validate_content.py`, approved on a
+#  pull request by the Clinical Lead; `services/content_store.py` writes the
+#  rows. The split mirrors the instrument tables above: the versioned unit
+#  (code, version) carries the review state, and the per-language text hangs
+#  off it.
+#
+#  Two columns are worth explaining before they look redundant.
+#  `message_texts.septets` is the GSM 03.38 cost of the string, computed at
+#  load time, because a single character outside the seven-bit alphabet
+#  drops a segment from 160 characters to 70 and permanently multiplies the
+#  cost of every send that contains it — storing the number makes the
+#  decision auditable rather than recomputed differently by each caller.
+#  `messages.placeholders` is the declared substitution contract, so a
+#  render that would leave `{name}` unresolved fails at the sender rather
+#  than arriving at a worker.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class Message(Base):
+    """One version of one patient-facing or clinician-facing string.
+
+    `status` drives the renderer: only `approved` text may be sent to a
+    person, which is what makes the filler in `content/messages/example.yaml`
+    structurally unsendable rather than merely discouraged. An approved
+    version is immutable — a consent text or a result message must be
+    reproducible for any session that referenced it (§8.4 status lifecycle).
+    """
+
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    #: Stable key, referenced by the instrument tables' `label_message_code`,
+    #: by `consent_texts.message_code`, and by the services that send.
+    code = Column(String, nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    #: Determines the character budget. See CHANNEL_BUDGET in
+    #: `services/content_format.py`, which is the single definition.
+    channel = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="draft", server_default=text("'draft'"))
+    #: What the message is for and when it is sent. Read by whoever reviews
+    #: or translates it, and the only context a translator gets.
+    purpose = Column(Text)
+    #: Declared substitution contract, comma-separated. A render that does
+    #: not supply exactly this set is refused (§8.4: a placeholder present in
+    #: English and missing in Shona sends a broken message to the people
+    #: least able to query it).
+    placeholders = Column(Text)
+    #: Raises or lowers the channel budget for this message only, with a
+    #: reason in `notes`. Stored so that an exception is visible in the data.
+    max_len_override = Column(Integer)
+    approved_by = Column(String)
+    approved_at = Column(DateTime)
+    #: §8.4's quality method: the message was read aloud to miners who were
+    #: asked to say back what it means. Three columns rather than JSON
+    #: because this is the evidence an ethics committee asks about, and
+    #: evidence that can be queried is evidence that gets checked.
+    comprehension_tested_at = Column(DateTime)
+    comprehension_participants = Column(Integer)
+    comprehension_outcome = Column(Text)
+    #: Grouping label from the file, e.g. results, consent, education.
+    area = Column(String)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    texts = relationship("MessageText", back_populates="message")
+
+    __table_args__ = (
+        UniqueConstraint("code", "version", name="uq_messages_code_version"),
+        CheckConstraint(
+            "channel IN ('sms','ussd','app','clinician')",
+            name="ck_messages_channel",
+        ),
+        CheckConstraint(
+            "status IN ('draft','review','approved','retired')",
+            name="ck_messages_status",
+        ),
+    )
+
+
+class MessageText(Base):
+    """The words, one row per language.
+
+    A new language is rows here and nothing else — which is the whole point
+    of the store (§8.4). English, Shona and Ndebele are all required before a
+    message may be approved; Ndebele is not optional in this geography, since
+    the Midlands is genuinely mixed and one of the country's only two
+    dedicated occupational health clinics is at Gwanda.
+    """
+
+    __tablename__ = "message_texts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False)
+    language = Column(String, nullable=False)
+    text_value = Column(Text, nullable=False)
+    #: GSM 03.38 cost in septets, computed at load time. A string outside the
+    #: seven-bit alphabet is rejected before it is stored, so this is the
+    #: real segment arithmetic and not an estimate.
+    septets = Column(Integer)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    message = relationship("Message", back_populates="texts")
+
+    __table_args__ = (
+        UniqueConstraint("message_id", "language", name="uq_message_texts_language"),
+        CheckConstraint("language IN ('en','sn','nd')", name="ck_message_texts_language"),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  USERS, ROLES AND THE AUDIT LOG — Master Reference v1.0 §16.3, §16.6
+#
+#  Two flat accounts from environment variables is the whole access model
+#  today (`routers/auth.py`), and it gates only whether an authenticated
+#  route answers at all. §16.3 names eight roles, each with an explicit
+#  "cannot see" column, and §16.6 puts this in Phase One — before the first
+#  real record, because retrofitting authorisation onto a system that has
+#  already been read is how a breach is discovered after the fact.
+#
+#  The audit log is the half that matters most and is the easier half to
+#  skip. "Administrative access is not a licence to read records; every read
+#  audited" (§16.3) is only true if the read actually writes a row, and a
+#  log that can be edited afterwards answers nothing. It is append-only:
+#  there is no update and no delete anywhere in `services/audit.py`, and a
+#  test asserts that. Enforcement is in the service layer rather than a
+#  database trigger for the fourth time in this schema — triggers are
+#  PostgreSQL-only and invisible to the SQLite unit suite (§16.2).
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class User(Base):
+    """A person who signs in. Replaces the two environment-variable accounts.
+
+    The role is a single string from a closed set rather than a join to a
+    permissions table. That is deliberate at this scale: eight roles with
+    fixed capabilities, defined once in `services/authz.py`, are easier to
+    reason about and to test negatively than a permission matrix nobody can
+    hold in their head — and §16.3 defines roles, not permissions.
+
+    The scope columns are what make a role answerable. "Facility user: can
+    see referrals directed to their facility" is not a role, it is a role
+    plus a facility, and without the second half the first is unenforceable.
+    """
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False, unique=True, index=True)
+    #: scrypt, with a per-user salt, from the standard library. Chosen over
+    #: bcrypt/passlib to avoid a dependency whose version handling has broken
+    #: more builds than it has protected passwords — and `hashlib.scrypt` is
+    #: a memory-hard KDF, which is the property that matters.
+    password_hash = Column(String, nullable=False)
+    #: One of `authz.ROLES`. Not a CHECK constraint: the table is created by
+    #: migration and the vocabulary belongs with the capability definitions
+    #: it drives, where a test covers it.
+    role = Column(String, nullable=False)
+    name = Column(String)
+
+    # ── scope: the half that makes a role enforceable ────────────────────
+    #: Facility user. Null for every other role.
+    facility_id = Column(Integer, ForeignKey("facilities.id"))
+    #: Village health worker. Comma-separated site ids — a worker covers a
+    #: handful of workings, not one, and not all of them.
+    site_ids = Column(Text)
+    #: District coordinator.
+    district = Column(String)
+    #: Programme sponsor. Aggregate data for their own cohort only (§14.4).
+    programme_id = Column(Integer, ForeignKey("programmes.id"))
+
+    #: Deactivated rather than deleted: an audit row names a user id, and a
+    #: deleted user makes every row referencing it unreadable.
+    active = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+    last_login_at = Column(DateTime)
+
+
+class AuditLog(Base):
+    """Append-only record of who read or changed what.
+
+    §16.3's audit row: "clinical reads and writes, consent changes, merges,
+    exports and administrative actions, retained and reviewable."
+
+    `actor_email` and `actor_role` are denormalised beside `actor_user_id` on
+    purpose. A log that becomes unreadable when a user row changes or is
+    deactivated is not a log — the row has to say who did it in terms that
+    survive the user record it refers to.
+    """
+
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor_user_id = Column(Integer, index=True)
+    actor_email = Column(String)
+    actor_role = Column(String, index=True)
+    #: Verb from `audit.ACTIONS`, e.g. `person.read`, `consent.record`,
+    #: `person.merge`. Closed so the log can be queried rather than grepped.
+    action = Column(String, nullable=False, index=True)
+    object_type = Column(String)
+    object_id = Column(String)
+    #: Which person the action concerned, where it concerned one. Indexed
+    #: because "who has read this worker's record?" is a question the worker
+    #: is entitled to an answer to.
+    person_id = Column(Integer, index=True)
+    at = Column(DateTime, default=_utcnow, server_default=_NOW, index=True)
+    #: Correlates the rows written by one HTTP request.
+    request_id = Column(String, index=True)
+    #: Whether the attempt succeeded. **A refused access is the row that
+    #: matters most**: a role boundary nobody can show being enforced is a
+    #: role boundary nobody can show exists.
+    allowed = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    #: JSON text, never a native JSON column — §16.2, the same portability
+    #: rule as the instrument predicates.
+    details = Column(Text)

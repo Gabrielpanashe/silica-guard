@@ -86,8 +86,12 @@ questions:
       in: [some, lots]
     citation: "Not applicable — synthetic test fixture."
 
-# Safety rules run first and can only raise a tier. The engine enforces that
-# regardless of what a rule claims.
+# Safety rules run LAST, after scoring and after any deterioration
+# escalation, and can only raise a tier — see §10.3 and clinical/README.md.
+# The engine enforces both regardless of what a rule claims. (This comment
+# said "first" until 1 November 2026; so did clinical/README.md and the
+# plan's §6. The order is the whole point: overrides run last so no earlier
+# step can be the final word on a red flag.)
 safety_rules:
   - code: test_red_flag
     forces_tier: RED

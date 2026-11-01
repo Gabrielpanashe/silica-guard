@@ -43,4 +43,16 @@ def test_me_with_valid_token(client):
     token = login.json()["access_token"]
     resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
-    assert resp.json() == {"email": "cimas@silicaguard.health", "role": "cimas"}
+    body = resp.json()
+    # Additive as of item 1.13: the response gained `scope`, `capabilities`,
+    # `cannot` (§16.3's own "cannot see" column) and `prototype_account`, so
+    # a client renders the boundary from the server's definition rather than
+    # from a copy. The original two fields are unchanged.
+    assert body["email"] == "cimas@silicaguard.health"
+    assert body["role"] == "cimas"
+    assert body["prototype_account"] is True, (
+        "these are the environment-variable accounts, and they stop working "
+        "the moment a real user exists"
+    )
+    assert "aggregate.read" in body["capabilities"]
+    assert body["cannot"]

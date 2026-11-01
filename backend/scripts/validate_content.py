@@ -36,6 +36,7 @@ stopping at the first.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import sys
 from pathlib import Path
@@ -46,71 +47,24 @@ REPO = Path(__file__).resolve().parent.parent.parent
 CONTENT = REPO / "content"
 SCHEMA_PATH = CONTENT / "schema.json"
 
-LANGUAGES = ("en", "sn", "nd")
-LANGUAGE_NAMES = {"en": "English", "sn": "Shona", "nd": "Ndebele"}
-
-# GSM 03.38 basic character set. A message consisting only of these encodes as
-# seven-bit septets: 160 per segment.
-GSM7_BASIC = set(
-    "@£$¥èéùìòÇ\nØø\rÅå_ÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?"
-    "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§"
-    "¿abcdefghijklmnopqrstuvwxyzäöñüà"
-    "ΔΦΓΛΩΠΨΣΘΞ"
+# Languages, channel budgets, the GSM 03.38 alphabet, the word-processor
+# lookalikes and the placeholder syntax live in services/content_format.py,
+# which has no dependencies. This script and services/content_store.py both
+# import them from there, so the CI gate and the loader cannot disagree --
+# and the store, which is request-path code, does not have to import this
+# script and drag its YAML and JSON Schema dependencies into production.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from services.content_format import (  # noqa: E402
+    CHANNEL_BUDGET,
+    GSM7_BASIC,
+    GSM7_EXTENSION,
+    LANGUAGE_NAMES,
+    LANGUAGES,
+    LOOKALIKES,
+    non_gsm7,
+    placeholders_in,
+    septets,
 )
-# Extension set: still seven-bit, but each costs TWO septets because it is sent
-# as an escape plus the character.
-GSM7_EXTENSION = set("^{}\\[~]|€")
-
-# Per-channel budget in septets. See content/README.md.
-CHANNEL_BUDGET = {
-    "sms": 160,
-    "ussd": 182,
-    "app": 480,
-    "clinician": 480,
-}
-
-# Characters people paste from word processors that look identical to an
-# allowed character but are not. Named explicitly so the error can suggest the
-# fix instead of only reporting a code point.
-LOOKALIKES = {
-    "‘": "'", "’": "'", "“": '"', "”": '"',
-    "–": "-", "—": "-", "…": "...", " ": " ",
-    "′": "'", "″": '"', "−": "-",
-}
-
-
-def septets(text: str) -> int:
-    """Length in GSM-7 septets, or -1 if the text cannot be encoded as GSM-7."""
-    total = 0
-    for ch in text:
-        if ch in GSM7_BASIC:
-            total += 1
-        elif ch in GSM7_EXTENSION:
-            total += 2
-        else:
-            return -1
-    return total
-
-
-def non_gsm7(text: str) -> list[tuple[int, str]]:
-    """(index, character) for every character outside GSM-7."""
-    return [
-        (i, ch) for i, ch in enumerate(text)
-        if ch not in GSM7_BASIC and ch not in GSM7_EXTENSION
-    ]
-
-
-def _placeholders(text: str) -> set[str]:
-    out, buf, inside = set(), [], False
-    for ch in text:
-        if ch == "{":
-            inside, buf = True, []
-        elif ch == "}" and inside:
-            out.add("".join(buf))
-            inside = False
-        elif inside:
-            buf.append(ch)
-    return out
 
 
 def _label(path: Path) -> str:
@@ -120,12 +74,32 @@ def _label(path: Path) -> str:
         return str(path)
 
 
+def _dates_to_strings(value):
+    """YAML parses an unquoted `2026-11-01` as a `datetime.date`; JSON Schema's
+    `format: date` describes a *string*. Normalising here rather than
+    demanding quotes in the file is the right way round: the YAML date type is
+    a feature, the schema's spelling of it is an implementation detail, and
+    the Clinical Lead should not have to know which.
+
+    Found by rehearsing the full load mechanism end to end -- it would
+    otherwise have surfaced as a confusing schema error on the first real
+    instrument submission.
+    """
+    if isinstance(value, dict):
+        return {k: _dates_to_strings(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_dates_to_strings(v) for v in value]
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    return value
+
+
 def validate_file(path: Path, schema: dict | None, verbose: bool = False) -> list[str]:
     problems: list[str] = []
     rel = _label(path)
 
     try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        doc = _dates_to_strings(yaml.safe_load(path.read_text(encoding="utf-8")))
     except yaml.YAMLError as exc:
         return [f"{rel}: not valid YAML — {exc}"]
     if not isinstance(doc, dict):
@@ -195,7 +169,7 @@ def validate_file(path: Path, schema: dict | None, verbose: bool = False) -> lis
             # but a message must never reach approval with a placeholder
             # present in one language and missing in another, because that
             # sends broken text to the people least able to query it.
-            used = _placeholders(text)
+            used = placeholders_in(text)
             if message.get("status") in ("review", "approved") and used != declared:
                 missing = sorted(declared - used)
                 extra = sorted(used - declared)

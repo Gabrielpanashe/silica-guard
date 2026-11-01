@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  FORMAT ILLUSTRATION. NOT CLINICAL FIXTURES.
+#
+#  `status: example`, so this file gates nothing. It exists to exercise the
+#  regression harness itself and to show the Clinical Lead what the format
+#  asks for, against the synthetic TEST-INSTRUMENT whose codes T1-T3 and
+#  conditions condition_a/condition_b mean nothing.
+#
+#  The real file is `clinical/instruments/<CODE>-v1.fixtures.yaml`, approved
+#  on the same pull request as the instrument version it tests (§11.4), and
+#  the tiers in it are the Clinical Lead's assertions rather than a test
+#  detail: "this answer profile must come out ORANGE" is a clinical statement
+#  with a person on the other end of it.
+#
+#  Every expectation below was computed by running the engine, then read back
+#  against the instrument's rules by hand. A fixture file written by running
+#  the code and recording whatever it said would assert nothing at all.
+# ─────────────────────────────────────────────────────────────────────────────
+
+instrument: TEST-INSTRUMENT
+version: 1
+status: example
+notes: >-
+  Covers every tier, both safety rules, the unknown escalation, the USSD
+  question subset, deterioration escalation, and a profile that must produce
+  NO tier. Aim for that kind of coverage rather than many similar profiles.
+
+profiles:
+  # ── the baseline ────────────────────────────────────────────────────────
+  - name: Nothing reported, lowest band on both questions
+    answers: { T1: none, T2: low }
+    expect:
+      primary_tier: GREEN
+      tiers: { condition_a: GREEN, condition_b: GREEN }
+      scores: { condition_a: 0, condition_b: 0 }
+      overrides: []
+      deterioration_changed: false
+
+  # ── a plain score band ──────────────────────────────────────────────────
+  - name: Moderate on both — the score band alone, no combination rule
+    answers: { T1: some, T2: mid, T3: no_ }
+    expect:
+      primary_tier: YELLOW
+      tiers: { condition_a: YELLOW, condition_b: YELLOW }
+      scores: { condition_a: 5, condition_b: 1 }
+      overrides: []
+
+  # ── the shape a score band cannot express ───────────────────────────────
+  - name: High on the banded question with a positive elsewhere — the combination rule
+    answers: { T1: some, T2: high, T3: yes_ }
+    expect:
+      primary_tier: ORANGE
+      tiers: { condition_a: ORANGE, condition_b: YELLOW }
+      scores: { condition_a: 8, condition_b: 1 }
+      overrides: []
+
+  # ── a safety rule, which must raise and must be recorded ────────────────
+  - name: Highest T1 answer — the red flag fires and outranks the score
+    answers: { T1: lots, T2: low, T3: no_ }
+    expect:
+      primary_tier: RED
+      tiers: { condition_a: RED, condition_b: RED }
+      # The score alone would have produced YELLOW on both. Asserting the
+      # scored tier as well as the final one is what distinguishes "the
+      # override fired" from "the score was already there".
+      scored_tiers: { condition_a: YELLOW, condition_b: YELLOW }
+      overrides: [test_red_flag]
+
+  # ── an unanswered red flag must not read as a negative (§12.2 item 10) ──
+  - name: T1 explicitly unknown — escalated rather than scored as absent
+    answers: { T1: unknown, T2: low }
+    expect:
+      primary_tier: ORANGE
+      # The escalation is scoped to condition_a, so condition_b stays at its
+      # baseline. A rule that leaked across conditions would show here.
+      tiers: { condition_a: ORANGE, condition_b: GREEN }
+      scored_tiers: { condition_a: GREEN, condition_b: GREEN }
+      scores: { condition_a: 0, condition_b: 0 }
+      overrides: [test_unknown_escalation]
+
+  # ── the channel subset is a clinical decision, not a truncation (§13.1) ─
+  - name: Same answers over USSD, where the app-only question is not asked
+    channel: ussd
+    answers: { T1: some, T2: mid }
+    expect:
+      primary_tier: YELLOW
+      tiers: { condition_a: YELLOW, condition_b: YELLOW }
+      overrides: []
+
+  # ── a partially answered instrument must produce no tier (§13.1) ────────
+  - name: App screening missing the question the branching makes applicable
+    channel: app
+    answers: { T1: some, T2: mid }
+    expect:
+      incomplete: true
+
+  # ── trajectory, which may raise one level and never outrank an override ─
+  - name: Worsened on the tracked question since the previous screening
+    answers: { T1: some, T2: low, T3: no_ }
+    previous_answers: { T1: none, T2: low }
+    expect:
+      primary_tier: ORANGE
+      # Both conditions escalate one level, because the trajectory is a
+      # property of the screening rather than of a condition.
+      tiers: { condition_a: YELLOW, condition_b: ORANGE }
+      scored_tiers: { condition_a: GREEN, condition_b: YELLOW }
+      overrides: []
+      deterioration_changed: true

@@ -1,6 +1,8 @@
-# SilicaGuard API Contract — v1
+# SilicaGuard API Contract
 
-> **This is the v1 contract: the prototype API as it runs today.** The Phase One rebuild (`ARCHITECTURE.md` — per-condition result rows, person/contact identity, instrument versions, consent) changes the shape of most routes here; v2 of this document arrives with that schema and is versioned so the mobile application and dashboard migrate in step. Until then, this file is accurate for the deployed backend and is what both frontends build against.
+> **Two contracts live here.** Everything from Health to Dashboard below is **v1**: the prototype API as it runs today. The **v2 section** near the end holds the Phase One routes as they land, one at a time, under `/api/v2/`. The v1 routes keep serving the current mobile application and dashboard until those clients move, then become thin adapters over v2 storage and are deleted (`docs/IMPLEMENTATION_PLAN.md` §5). No v1 route survives to the pilot.
+
+> **The v1 contract.** The Phase One rebuild (`ARCHITECTURE.md` — per-condition result rows, person/contact identity, instrument versions, consent) changes the shape of most routes below. Until a route's v2 replacement lands, the v1 shape here is accurate for the deployed backend and is what both frontends build against.
 
 This is the source of truth for the backend's HTTP interface. Build the mobile app and dashboard against this document, not against reading the Python.
 
@@ -495,13 +497,403 @@ Requires `Authorization: Bearer <token>`.
 
 ---
 
+## v2 — Content store
+
+> **The first `/api/v2` route.** v2 routes land one at a time under `/api/v2/` while the v1 routes above keep serving the current mobile application and dashboard (`docs/IMPLEMENTATION_PLAN.md` §5). A v2 route never changes shape once a client depends on it; a change is a new field or a new route.
+
+### `GET /api/v2/content` — LIVE
+
+Every approved patient-facing string in one language. A client caches this and renders from the cache, so the words a worker reads are the reviewed words whether or not the handset has coverage — **offline is the normal case** (§10.1).
+
+**Query parameters**
+
+| Name | Default | Meaning |
+|---|---|---|
+| `language` | `en` | `en`, `sn` or `nd`. Anything else is `400`, not a fallback — a silent fallback would be indistinguishable from a translation having happened. |
+| `channel` | all | `sms`, `ussd`, `app` or `clinician`. The gateway and the handset need different subsets and neither needs the other's. |
+| `since` | — | ISO-8601 timestamp. Returns only messages created after it. Approved versions are immutable and a change is a new row, so this is a sound watermark for an incremental refresh. |
+
+**Response**
+
+```json
+{
+  "language": "sn",
+  "count": 2,
+  "generated_at": "2026-11-01T14:52:11+00:00",
+  "messages": [
+    {
+      "code": "result.green.sms",
+      "version": 1,
+      "channel": "sms",
+      "language": "sn",
+      "text": "…",
+      "placeholders": ["name"]
+    }
+  ]
+}
+```
+
+- `language` at the top echoes the request. **`language` on a row is the language actually served**, which may be `en` where that message has not been authored in the requested language yet. The gap is reported rather than filled: there is no machine translation anywhere in this system (§8.4), so a client can see that an authoring gap exists.
+- `placeholders` is the substitution contract. The client substitutes offline and must supply exactly this set; a message rendered with a placeholder left unresolved reaches a worker as literal braces.
+- `count: 0` with an empty `messages` is the **correct** response until the Clinical Lead approves content version one, not an error. Only `approved` messages are ever served, so draft and review text cannot reach a handset.
+
+**Auth: none.** Same deliberate precedent as the screening path — the mobile application never logs in, and this response contains nothing about any person.
+
+**There is no write route, and will not be one.** `POST`, `PUT`, `PATCH` and `DELETE` all return `405`. Content enters through a migration generated from `content/`, on a pull request the Clinical Lead approves (§11.4); an HTTP endpoint that could add a patient-facing string would be a way around that approval.
+
+**Not served here:** the strings in `content/EXCEPTIONS.md`, which by definition cannot come from the store. There are three, each reviewed.
+
+### Identity — `/api/v2/persons` — LIVE
+
+Master Reference §8.2. The telephone number is **not** an identity key anywhere in this group of routes.
+
+**`POST /api/v2/persons/resolve`** — no auth
+
+Resolve what is known about a worker to a person. Always returns a person a screening can be written against: an uncertain match produces a new person plus a queue entry, never a blocked screening.
+
+```json
+{
+  "participant_code": "8NBNFM",   // the card in his pocket, if he has it
+  "national_id": "63-123456-A-00", // voluntary; stored as a keyed hash only
+  "name": "Tendai Moyo",
+  "phone": "0771234567",
+  "age_band": "30-39",
+  "sex": "male",
+  "site_id": 3,
+  "site_text": "Globe & Phoenix",
+  "language": "sn",
+  "channel": "APP"                 // APP or USSD; changes the anonymous case
+}
+```
+
+At least one of `participant_code`, `national_id`, `name` or `phone` is required — a bundle of demographics identifies nobody and is a `400`.
+
+```json
+{
+  "person_id": 41,
+  "participant_code": "8NBNFM",
+  "outcome": "created_pending_review",
+  "provisional": false,
+  "provisional_reason": null,
+  "candidates": [
+    {"person_id": 12, "participant_code": "K4R2TP", "score": 0.8,
+     "reasons": ["name similar (0.96)", "shares a contact number", "same age band", "same sex"]}
+  ],
+  "queued_match_ids": [7]
+}
+```
+
+`outcome` is one of:
+
+| Value | Meaning |
+|---|---|
+| `matched_participant_code` | He presented his card. **Applied.** |
+| `matched_national_id` | Deterministic match on the hashed identity number. **Applied.** |
+| `created` | Nothing looked like him; a clean new record. |
+| `created_pending_review` | A new record, with probable matches **queued for a human and not applied**. |
+| `created_provisional` | §8.2 part four: a USSD caller with no usable participant code. |
+
+**The response carries no name and no number.** The route is unauthenticated, on the same precedent as the screening path, so a candidate is identified by participant code and the reviewer opens each side with a token.
+
+`503` means the server's identity keys are not configured. Nothing was saved; it is retryable, and the mobile offline queue should treat it that way rather than discarding the screening.
+
+**`GET /api/v2/persons/{participant_code}`** — Bearer
+
+The person behind a card, following any merge — so a card printed before a merge still works. Returns `name` and `phone` decrypted, plus `age_band`, `sex`, `language`, `provisional`, `provisional_reason`, `has_national_id` (whether one was given, never the number), `session_count` and `merged_into_person_id`.
+
+Bearer-protected deliberately: public, this would let anyone walk a six-character code space and harvest names and telephone numbers. **The consequence is a real gap** — the VHW application has no login, so it cannot yet show "is this the right person?" at the next outreach. It needs a device credential (item 1.13), and that flow waits for it.
+
+**`GET /api/v2/persons/matches/queue?limit=50`** — Bearer
+
+Probable matches awaiting a human decision — §8.2's "never merged automatically", as a worklist. Each row carries both participant codes, the `score`, the `reasons`, the `status` and `created_at`. No name and no number: a reviewer opens each side by code.
+
+**`POST /api/v2/persons/matches/{match_id}`** — Bearer
+
+```json
+{"decision": "merge", "decided_by": "sister.moyo"}
+```
+
+`merge` applies it with the queued evidence attached, so the reason the reviewer was shown the pair becomes the reason recorded against the merge. `reject` is **recorded, not discarded**: "reviewed, and they are different people" has to survive, or the same pair is queued again at the next screening. A decided row cannot be decided twice.
+
+**`POST /api/v2/persons/merges`** — Bearer
+
+```json
+{"winner_person_id": 12, "loser_person_id": 41, "merged_by": "sister.moyo", "reason": "presented the same card"}
+```
+
+Contacts and sessions move to the winner; the winner inherits only what it was missing and **overwrites nothing**. The losing record is kept and flagged, never deleted. Merging a person into themselves, or chaining a merge onto an already-merged record, is a `400`.
+
+**`DELETE /api/v2/persons/merges/{merge_id}?reversed_by=supervisor`** — Bearer
+
+Reverses a merge, keeping both the merge and the reversal in the audit. **Contacts and sessions are not moved back** — which rows belonged to which record before the merge is not recoverable from the surviving data, so the reversal restores the two identities and a health worker reassigns the encounters.
+
+**Today any dashboard login can merge two people.** There are two flat accounts; a merge is a clinical safety event and belongs to one named role. Item 1.13 scopes it.
+
+### Consent — `/api/v2/consents` — LIVE
+
+Master Reference §8.5, §14.2. **Absence is never consent**: every response names all six permissions, and one nobody recorded reads `false`. A client never has to decide what a missing key means.
+
+**`GET /api/v2/consents/permissions`** — no auth
+
+The six permissions and what each covers, so a consent screen renders from the server's definition rather than a copy in the client. A copy drifts, and a consent screen that drifts asks for agreement to something other than what is recorded.
+
+```json
+[{"code": "screening_and_referral", "scope": "Screening, tier assignment, referral…",
+  "required_to_screen": true, "future_phase": false}]
+```
+
+| Permission | Notes |
+|---|---|
+| `screening_and_referral` | Required to proceed. Without it there is no service. |
+| `longitudinal_record` | Separable — a worker may accept screening and decline retention. |
+| `contact_by_message` | Required for referral follow-through. Distinct from education broadcast. |
+| `education_broadcast` | Separate, with a working and permanent opt-out. |
+| `research_and_statistics` | Refusable without losing the service. |
+| `employer_disclosure` | **Future phase. Cannot be granted** — a grant is rejected `400`. A refusal may be recorded. |
+
+**`GET /api/v2/consents/texts/{code}`** — no auth
+
+The approved consent text version to show. Returns `consent_text_id`, `code`, `version`, `message_code`, `status`, `approved_by`, `approved_at` — **not the wording**. The words are a message code in the content store, so consent text goes through the same review, three languages and GSM-7 checks as every other patient-facing string (§8.4).
+
+`404` until the Clinical Lead approves one, which is why consent capture does not work before then. That is correct sequencing, not a gap: nobody is asked to agree to unreviewed wording.
+
+**`POST /api/v2/consents`** — no auth
+
+```json
+{
+  "person_id": 41,
+  "consent_text_id": 3,
+  "channel": "APP",
+  "recorded_by": "sister.moyo",
+  "decisions": {
+    "screening_and_referral": true,
+    "longitudinal_record": false,
+    "contact_by_message": true,
+    "education_broadcast": false,
+    "research_and_statistics": false
+  }
+}
+```
+
+`consent_text_id` is **required** and must name an *approved* text — §14.2 records the version displayed, and a row saying "agreed" with nothing attached is not evidence. `channel` is `APP`, `USSD` or `PAPER`.
+
+**All-or-nothing.** A half-recorded consent screen is worse than a failed one, because afterwards the missing permissions are indistinguishable from refusals. A `400` leaves nothing written.
+
+A **refusal is recorded as deliberately as a grant**: "asked and declined" is the answer an ethics committee wants, and it stops the same question being asked at every visit.
+
+Response (also returned by withdraw and by the per-person read):
+
+```json
+{
+  "person_id": 41,
+  "participant_code": "8NBNFM",
+  "standing": {"screening_and_referral": true, "longitudinal_record": false, "...": false},
+  "may_screen": true,
+  "may_keep_longitudinal_record": false,
+  "history": [
+    {"record_id": 7, "permission": "screening_and_referral", "granted": true,
+     "consent_text_code": "CORE", "consent_text_version": 1, "channel": "APP",
+     "recorded_at": "2026-11-01T14:52:11", "recorded_by": "sister.moyo", "withdrawn_at": null}
+  ]
+}
+```
+
+`may_keep_longitudinal_record: false` is the one place the layering changes what a caller does: the session is recorded with **no `previous_session_id`** and no deterioration comparison. The screening still happens and the result is still real; it simply has no history attached.
+
+Unauthenticated on the same precedent as the screening path — a consent screen is part of a screening, and the VHW application never logs in. Requiring a token for consent while screening itself is open would be incoherent.
+
+**`POST /api/v2/consents/withdraw`** — Bearer
+
+```json
+{"person_id": 41, "permission": "education_broadcast", "withdrawn_by": "supervisor"}
+```
+
+The original row is **kept and stamped**, never deleted: §14.3 requires the withdrawal mechanism to be demonstrable, and "granted, then withdrawn on this date" is a different story from "never granted". Withdrawing something never granted succeeds quietly — a worker opting out of what he never opted into should not get a failure.
+
+**Bearer-protected, and that is a named gap.** A worker's own withdrawal should not need a token, but an open endpoint keyed on a person id would let anyone stop anyone's referral reminders — a harm to the person it pretends to serve. The worker-facing route is the USSD and SMS opt-out, which reaches the same service function server-side through the gateway, and it lands with item 1.9. Until then withdrawal is staff-operated and §14.2's "working and permanent opt out" is unfinished.
+
+**`GET /api/v2/persons/{participant_code}/consents`** — Bearer
+
+Everything recorded for one person, by the code on their card. Follows a merge, so a decision recorded against a record that later lost a merge is still found — a worker's decision must not be lost because a clerk joined two records.
+
+### Screening — `POST /api/v2/screenings` — LIVE
+
+Master Reference §10.3. **The deterministic cascade is the tier of record. No model sits between a set of answers and a tier on this route, by construction and by test.**
+
+**No auth** — the village health worker's application never logs in, and a screening must work in a gold-panning area with no dashboard session. Same precedent as `POST /api/screen`.
+
+```json
+{
+  "person_id": 41,
+  "client_session_uuid": "8f3c1e2a-...",
+  "answers": {"T1": "some", "T2": "mid", "T3": "no_"},
+  "channel": "APP",
+  "screened_by": "sister.moyo",
+  "site_id": 3,
+  "site_text": "Globe & Phoenix",
+  "programme_id": null,
+  "outreach_visit_id": 7,
+  "instrument_code": "SILICA-ASM",
+  "started_at": "2026-11-01T08:00:00Z",
+  "offline": false
+}
+```
+
+`client_session_uuid` is **required** (minimum 8 characters). It is generated on the device when the session starts and replayed on retry, and it is the only thing that makes a duplicate submission safe. A channel that cannot produce one will create duplicates — which the v1 path did, eighteen times for one miner during a model-flakiness window.
+
+`answers` maps question code to the recorded value. **An explicit unknown or refused option belongs here too**: the engine derives `unknown` from the instrument rather than from absence (§12.2 item 10), because an unanswered red-flag question must never read as a negative.
+
+`instrument_code` may be omitted only when the database holds exactly one instrument. An instrument is chosen deliberately, never guessed.
+
+**Response**
+
+```json
+{
+  "session_id": 112,
+  "person_id": 41,
+  "participant_code": "8NBNFM",
+  "primary_tier": "ORANGE",
+  "results": [
+    {"condition": "silicosis", "tier": "ORANGE", "score": 14,
+     "method": "deterministic_rules",
+     "instrument_code": "SILICA-ASM", "instrument_version": 1,
+     "scored_tier": "YELLOW", "tier_rule_label": "…",
+     "override_fired": false, "override_rule_codes": [],
+     "deterioration_compared": true, "deterioration_changed": true,
+     "deterioration_summary": "Worsened since the previous screening on: …"}
+  ],
+  "instrument_code": "SILICA-ASM",
+  "instrument_version": 1,
+  "replayed": false,
+  "longitudinal_linked": true,
+  "referrals": [
+    {"referral_code": "SG-4K7Q", "condition": "silicosis", "tier": "ORANGE",
+     "facility": "Kwekwe District Hospital", "deadline": "2026-11-15T14:52:11"}
+  ],
+  "messages": [{"code": "result.orange.sms", "available": false,
+                "reason": "not in the content store yet"}],
+  "not_sent_reason": "no message was sent: the v2 pipeline does not send yet …",
+  "started_at": "2026-11-01T08:00:00",
+  "completed_at": "2026-11-01T08:04:33"
+}
+```
+
+**`results` is a list, not a tier.** This is the single most important shape change in the v2 API: a session produces one result per condition assessed, which is what makes adding tuberculosis rows rather than a migration of patient records. `primary_tier` is the highest across conditions — a worker at RED for one condition is at RED, whatever the others say.
+
+`scored_tier` is the tier *before* deterioration escalation and overrides, so the cascade is auditable step by step rather than only at its end.
+
+`longitudinal_linked: false` means the worker declined retention (§14.2), so no previous session was linked and no deterioration comparison was possible. **The screening still happened and the result is still real** — it simply has no history attached.
+
+`replayed: true` means this submission matched an existing `client_session_uuid`. **Nothing was written.** The response is the stored result of the first session, read from the rows rather than re-classified — because the instrument may have been superseded between the submission and the retry, and a worker must be told what he was told.
+
+`messages` says what *would* be sent and whether the reviewed words exist. **There is no fallback sentence**: §8.4 means a worker reads reviewed words or nothing, and a placeholder shipped "for now" is how unreviewed text reaches people. `not_sent_reason` is non-null until item 1.6b (the words) and the `drop_v1` migration (which rebuilds `notifications` so a row can name a person rather than a v1 miner).
+
+**Status codes, and what a mobile offline queue should do with each**
+
+| Code | Meaning | Retry? |
+|---|---|---|
+| `200` | Screened, or replayed. | Done. |
+| `400` | Request wrong, or **screening incomplete**. The body carries `{"message", "session_id", "missing", "answers_saved": true}`. | No — the answers are saved; complete *that* session rather than resubmitting. |
+| `403` | Consent for screening has not been recorded. | No — go back to the worker. |
+| `422` | Schema violation (missing key, empty answers). | No. |
+| `503` | Server misconfigured: identity keys absent. **Nothing was saved.** | Yes. |
+
+`400` on an incomplete screening is the one a queue must not misread. §13.1: a partially answered instrument must never produce a tier — and rule 7: the answers given are kept regardless.
+
+### `GET /api/v2/referrals/{referral_code}` — LIVE, no auth
+
+What a facility sees when staff key in the code. Unauthenticated for the same reason the v1 lookup page is — facility staff have no account — and with the same recorded weakness: no rate limiting and no lockout on a code-keyed public endpoint (§15.4, item 1.13).
+
+Returns `referral_code`, `condition_code`, `person_id`, `result_id`, `facility`, `deadline`, `status`, `attended_at`, the outcome fields, and **`contributing_reasons`** — the tier, the scored tier, the condition, whether an override fired and which rules, and the instrument version. A facility reading this knows what to look for rather than receiving a bare instruction to investigate.
+
+### `POST /api/v2/referrals/{referral_code}/close` — LIVE, no auth
+
+```json
+{"outcome": "attended_imaging_abnormal", "recorded_by": "nurse", "notes": "Upper zones."}
+```
+
+§10.4: **closing a referral captures the radiological or clinical outcome and returns it to the person's record, not merely that they attended.** Without it the pilot produces an operational result and no labelled dataset. With it, every completed referral is a training example nobody else in the country holds — which is why the vocabulary is closed and not free text. Free text is easier for the person filling it in and produces nothing a model can learn from.
+
+`GET /api/v2/referrals/outcomes/vocabulary` serves the five values, so the facility page renders from the server's definition rather than a copy that can drift out of step with what the database accepts:
+
+`attended_imaging_normal` · `attended_imaging_abnormal` · `attended_no_imaging` · `not_attended` · `other`
+
+An outcome beginning `attended` sets `attended_at` if the confirm step was skipped — the two were independently recordable in v1 and could disagree.
+
+
+
+
+### Roles, users and the audit trail — LIVE
+
+Master Reference §16.3, §16.6.
+
+**`GET /api/v2/roles`** — no auth
+
+Every role, its capabilities, its scope field, and §16.3's own **"cannot see"** column. Unauthenticated because it describes the model rather than any data: a reviewer or an ethics committee reading what a role is refused should not need an account.
+
+```json
+[{"code": "national_stakeholder", "label": "National stakeholder",
+  "capabilities": ["aggregate.read"], "scope_field": null,
+  "cannot": "Any identified record.", "prototype": false}]
+```
+
+Seven roles have logins. §16.3's table has eight rows; the eighth is **the person screened**, who has no account — a worker reaches their own record through USSD and the card in their pocket, so their access is bounded by the participant code rather than by a role. `prototype: true` marks `hospital` and `cimas`, which exist only for the transition and are refused to any new user.
+
+**`POST /api/v2/users`** — Bearer, `admin.manage`
+
+```json
+{"email": "nurse@example.org", "password": "…", "role": "facility_user", "facility_id": 3}
+```
+
+A **scoped role with no scope is a `400`**: it passes every capability check and is bounded by nothing, which is worse than no account at all. `site_ids` (a list) for a village health worker, `facility_id` for a facility user, `district` for a coordinator, `programme_id` for a sponsor.
+
+**`GET /api/v2/users`** — Bearer, `admin.manage`.
+**`DELETE /api/v2/users/{id}`** — Bearer, `admin.manage`. **Deactivates, never deletes**: an audit row names a user id, and a deleted user would let somebody erase their own trail by removing their account. An administrator cannot deactivate themselves — with one administrator that would lock the system out of user management.
+
+**`GET /api/v2/audit/persons/{person_id}`** — Bearer, `person.read`
+
+Every access to one person's record. "Who has read my record?" is a question a worker is entitled to an answer to, and §16.3's audit exists so the answer is not "we cannot tell". **Reading the trail is itself audited** — an audit log nobody's reads are recorded in is a log that can be mined quietly.
+
+**Not available to an administrator**, deliberately: §16.3's "administrative access is not a licence to read records". An administrator who needs a record has to be given a clinical role as well, which is a decision somebody makes rather than a capability that arrives with the job.
+
+**`GET /api/v2/audit/refusals`** — Bearer, `admin.manage`
+
+Every refused access, newest first. **These are the rows that matter**: a role boundary nobody can show being enforced is a boundary nobody can show exists.
+
+```json
+[{"entry_id": 91, "actor_email": "r@example.org", "actor_role": "researcher",
+  "action": "admin.user_create", "object_type": "capability",
+  "object_id": "admin.manage", "person_id": null,
+  "at": "2026-11-01T18:42:02", "request_id": "a1b2c3d4e5f60718",
+  "allowed": false, "details": {"role": "researcher", "capability": "admin.manage"}}]
+```
+
+`details` carries codes, counts and ids and **never a name, a number, an answer or a password** — checked by a forbidden-key list rather than trusted, because the log must not become a second copy of the register. A failed-login row records neither the address tried nor the password.
+
+### Changes to existing auth routes
+
+**`GET /api/auth/me` gained fields** (additive; `email` and `role` unchanged): `scope`, `capabilities`, `cannot` and `prototype_account`. A client renders the boundary from the server's definition rather than from a copy.
+
+**`POST /api/auth/login` now authenticates against the `users` table** with `scrypt`-hashed passwords. The two environment-variable accounts still work, but **only while the `users` table is empty** — the moment a real user exists they stop, and a token issued to one stops with them. That is not a feature flag: a flag nobody turns off is how a prototype credential reaches production.
+
+Both successful and failed logins are audited. §15.4 already records that this surface has no rate limiting or lockout; credential stuffing against it is at least visible now.
+
+**`SECRET_KEY` has no fallback.** It previously defaulted to `"dev-secret"` — a value published in this repository, which meant anyone could mint an administrator token against a misconfigured instance. A missing key is now a `503` at signing time.
+
+**The first administrator is created by `backend/scripts/create_admin.py`**, which needs database access. The prototype accounts do not hold `admin.manage`, so they cannot create one, and both alternatives were worse: widening them defeats the point of retiring them, and an unauthenticated user-creation route while the table is empty opens a window in which whoever reaches a fresh instance first owns the system.
+
+Clients pass `X-Request-Id` to correlate the audit rows one request writes, which is what makes a mobile synchronisation traceable from the handset's own log.
+
+
+---
+
 ## Summary table
 
 | Route | Method | Status |
 |---|---|---|
 | `/api/health` | GET | LIVE |
-| `/api/auth/login` | POST | LIVE (roles will change) |
-| `/api/auth/me` | GET | LIVE (dev helper) |
+| `/api/auth/login` | POST | LIVE (hashed passwords, `users` table; prototype accounts self-disarm) |
+| `/api/auth/me` | GET | LIVE (gained scope, capabilities, cannot, prototype_account) |
 | `/api/workers` | POST | LIVE |
 | `/api/workers/{phone}` | GET | LIVE |
 | `/api/mines` | GET, POST | LIVE |
@@ -516,3 +908,24 @@ Requires `Authorization: Bearer <token>`.
 | `/api/outreach` | POST, GET | LIVE |
 | `/api/dashboard/today` | GET | LIVE (unauthenticated, VHW Home-screen numbers) |
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |
+| `/api/v2/content` | GET | LIVE (first v2 route — approved patient-facing strings, read-only) |
+| `/api/v2/persons/resolve` | POST | LIVE (unauthenticated; probable matches queued, never applied) |
+| `/api/v2/persons/{participant_code}` | GET | LIVE (Bearer — decrypts a name and a number) |
+| `/api/v2/persons/matches/queue` | GET | LIVE (Bearer — the human review worklist) |
+| `/api/v2/persons/matches/{match_id}` | POST | LIVE (Bearer — merge or reject one pair) |
+| `/api/v2/persons/merges` | POST | LIVE (Bearer — apply a merge, reversibly) |
+| `/api/v2/persons/merges/{merge_id}` | DELETE | LIVE (Bearer — reverse one) |
+| `/api/v2/consents/permissions` | GET | LIVE (the six permissions, for rendering a consent screen) |
+| `/api/v2/consents/texts/{code}` | GET | LIVE (the approved consent text version; 404 until one exists) |
+| `/api/v2/consents` | POST | LIVE (unauthenticated; all-or-nothing, names the text version shown) |
+| `/api/v2/consents/withdraw` | POST | LIVE (Bearer — the worker-facing opt-out is 1.9) |
+| `/api/v2/persons/{participant_code}/consents` | GET | LIVE (Bearer — standing position plus full history) |
+| `/api/v2/screenings` | POST | LIVE (the §10.3 pipeline; one result per condition; idempotent) |
+| `/api/v2/referrals/{referral_code}` | GET | LIVE (facility-facing, with contributing reasons) |
+| `/api/v2/referrals/{referral_code}/close` | POST | LIVE (structured outcome — the labelled dataset) |
+| `/api/v2/referrals/outcomes/vocabulary` | GET | LIVE (the five permitted outcomes) |
+| `/api/v2/roles` | GET | LIVE (the roles and §16.3's "cannot see" column) |
+| `/api/v2/users` | POST, GET | LIVE (Bearer, `admin.manage`) |
+| `/api/v2/users/{id}` | DELETE | LIVE (Bearer — deactivates, never deletes) |
+| `/api/v2/audit/persons/{id}` | GET | LIVE (Bearer, `person.read` — not an administrator) |
+| `/api/v2/audit/refusals` | GET | LIVE (Bearer, `admin.manage`) |

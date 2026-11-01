@@ -14,7 +14,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from database import database_reachable, init_db
-from routers import auth, dashboard, education, facilities, mines, outreach, referral_lookup, screening, ussd, workers
+from routers import (
+    admin,
+    auth,
+    consents,
+    content,
+    dashboard,
+    education,
+    facilities,
+    mines,
+    outreach,
+    persons,
+    referral_lookup,
+    screening,
+    screenings_v2,
+    ussd,
+    workers,
+)
 from services.db_keepalive import run_scheduled_keepalive
 from services.outreach import run_scheduled_outreach
 from services.referral_cascade import run_scheduled_cascade
@@ -117,6 +133,24 @@ app.include_router(mines.router)
 app.include_router(facilities.router)
 app.include_router(referral_lookup.router)
 app.include_router(education.router)
+# First /api/v2 route (§8.4) — the content store, read-only. See
+# routers/content.py for why it is unauthenticated and has no write side.
+app.include_router(content.router)
+# Identity resolution (§8.2) — resolve is unauthenticated for the VHW
+# application; everything returning or changing a direct identifier needs a
+# token. routers/persons.py documents both, and the gap each leaves.
+app.include_router(persons.router)
+# Consent (§8.5, §14.2) — recording is unauthenticated for the VHW
+# application's consent screen; withdrawal needs a token until the USSD
+# opt-out exists. routers/consents.py explains both.
+app.include_router(consents.router)
+# The v2 screening pipeline (§10.3) and the referral close that makes the
+# pilot produce a labelled dataset (§10.4). Deterministic from its first
+# commit — no model sits between a set of answers and a tier.
+app.include_router(screenings_v2.router)
+# Users, roles and the audit trail (§16.3, §16.6). Creating the first user
+# is what retires the two prototype environment-variable accounts.
+app.include_router(admin.router)
 
 
 @app.get("/api/health")

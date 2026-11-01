@@ -11,7 +11,7 @@ The standard applied: the system holds sensitive health data about a vulnerable 
 - **Medical device classification** with the Medicines Control Authority of Zimbabwe requires a formal determination. The system is designed to sit outside device classification; obtaining the determination is a pre-pilot checklist item. **It is never described as settled.**
 - **Ministry of Health and Child Care clearance** at national and district level before any deployment.
 
-## Consent design — Planned, a schema decision that must exist before the first real record
+## Consent design — Built, except the worker-facing opt-out
 
 Consent is layered, recorded as data, and separated into distinct permissions rather than bundled.
 
@@ -26,7 +26,19 @@ Consent is layered, recorded as data, and separated into distinct permissions ra
 
 For USSD, consent is a short statement in spoken register followed by an explicit keypress, recorded with a timestamp and the version of the consent text displayed. Consent text is versioned content like every other patient-facing string.
 
-**Today**: no consent table, no consent step on either channel, education broadcast has no consent or opt-out.
+**Built, as of 1 November 2026.** `consent_texts` and `consent_records` (migration `0004`, uniqueness in `0008`), `backend/services/consent.py`, `backend/routers/consents.py`. Three properties are enforced in code and tested:
+
+- **Absence is never consent.** A permission nobody recorded reads as not granted. No default, no inheritance from a related permission, and no grant implied by a programme — an employer-funded cohort does not consent on a worker's behalf.
+- **A record must name the wording.** `consent_text_id` is required and must name an *approved* text, because a row saying "agreed" with nothing attached is not evidence. The wording itself is a message code in the content store, so consent text goes through the same review, the same three languages and the same GSM-7 checks as every other patient-facing string.
+- **A withdrawal is recorded, never a deletion.** The original row is kept and stamped, so "granted, then withdrawn on this date" stays distinguishable from "never granted".
+
+`employer_disclosure` **cannot be granted at all** — `record()` refuses it, so the boundary exists in code before any commercial pressure exists to blur it. A refusal may still be recorded, because a refusal is a real answer. `may_disclose_to_employer()` is written as a real per-person lookup rather than a hardcoded `False`, so the day a formal-sector module exists the check is already in the code path.
+
+**Consent capture does not work until the Clinical Lead approves a consent text.** That is correct sequencing rather than a gap: nobody is asked to agree to unreviewed wording, and `GET /api/v2/consents/texts/{code}` returns `404` until one is approved.
+
+**Planned — the worker-facing opt-out, and the two channels.** `POST /api/v2/consents/withdraw` requires a token, so withdrawal is staff-operated today. A worker's own withdrawal should not need one, but an open endpoint keyed on a person id would let anyone stop anyone's referral reminders — a harm to the person it pretends to serve. The worker-facing route is the USSD and SMS opt-out, reaching the same service function server-side through the gateway, and it lands with item 1.9 alongside the USSD consent keypress screen. Until then §14.2's "working and permanent opt out" is not finished.
+
+**Still true today**: neither channel asks for consent yet, and the v1 education broadcast (`POST /api/education/broadcast`) still sends without it. The gate exists — `consent.may_broadcast()` — and cannot be wired until the v1 `miners` rows map to `persons`, which is the adapter (item 1.11). The broadcast route is Bearer-protected, so only the team can fire it, which bounds the exposure without excusing it.
 
 ## The employer boundary — the most consequential governance rule
 
@@ -48,7 +60,7 @@ A national register of workers' occupational health data should not be owned by 
 |---|---|---|---|
 | Lost or stolen field device | A handset lost at a mine site with queued screenings and a pre-synced roster. | Encrypted local storage, access code, minimal retention, server-side revocation, remote wipe. | Unencrypted AsyncStorage, no PIN, no protocol. |
 | Credential compromise | A reused or phished password gives access to hosting or the database. | Password manager, unique credentials, two-factor by authenticator, least privilege, no shared logins. | Personal accounts; no vault; Phase Zero. |
-| Insider or over-broad access | A dashboard account sees far more than needed; an engineer queries production out of curiosity. | Role-based access scoped to site, facility or programme; read auditing; production access restricted and logged. | Two flat roles; no read audit; production queried directly for diagnosis. |
+| Insider or over-broad access | A dashboard account sees far more than needed; an engineer queries production out of curiosity. | Role-based access scoped to site, facility or programme; read auditing; production access restricted and logged. | **Built**: seven scoped roles, deny by default, append-only read auditing that records refusals. **Still true**: the dashboard exercises only the two prototype roles until Week 22, the v1 Bearer routes check a token rather than a capability (item 1.11), and production is queried directly for diagnosis with no restriction or log on that path. |
 | Data exposure through a test or demo | A staging demo sends a real message; production data copied to a laptop. | Separate credentials per environment; synthetic data outside production; prohibition on copying production data. | One environment; one credential set. |
 | Message misdelivery | A result goes to a recycled number now held by a stranger. | Number verification, delivery-failure handling, reverification of dormant contacts, minimal clinical detail in text. | None; ORANGE text names an X-ray and a hospital. |
 | Interception in transit | Data intercepted between device, gateway and backend. | Transport encryption everywhere, certificate validation, webhook signature verification where supported. | HTTPS on Render and Supabase; no webhook verification. |
@@ -72,7 +84,7 @@ A national register of workers' occupational health data should not be owned by 
 | Backup | Automated encrypted offsite backups; restore tested before the pilot and at least once during it. A backup that has never been restored is not a backup. |
 | Build and supply chain | Pinned dependencies, vulnerability scanning, secret scanning, protected `main`, review before merge. |
 
-## Roles and permissions — Planned
+## Roles and permissions — Built, backend only
 
 | Role | Can see | Cannot see |
 |---|---|---|
@@ -85,7 +97,30 @@ A national register of workers' occupational health data should not be owned by 
 | Administrator | System configuration, instrument versions, user management. | Routine clinical browsing. Administrative access is not a licence to read records; every read audited. |
 | The person screened | Their own record and referral status. | Anyone else's. |
 
-**Today**: two roles, `hospital` and `cimas`, from environment-variable credentials (`backend/routers/auth.py`), gating only whether the dashboard's authenticated routes respond at all.
+**Built, as of 1 November 2026** — `users` and `audit_log` (migration `0010`), `backend/services/authz.py`, `backend/services/audit.py`, `backend/routers/admin.py`. Seven of the eight rows above are roles with capabilities and a scope; the eighth, **the person screened**, has no login — a worker reaches their own record through USSD and the card in their pocket, so their access is bounded by the participant code rather than by a role.
+
+**A role plus a scope, never a role alone.** "Facility user: can see referrals directed to their facility" is not a role, it is a role *and* a facility; a village health worker covers a handful of workings, not one and not all. Creating a scoped role with no scope is **refused**, because it passes every capability check and is bounded by nothing. The scoped-query helpers narrow to **nothing** when the scope is missing, never to everything — that is the whole reason they exist instead of an inline condition.
+
+**Deny by default.** A capability a role does not list is refused, including one that does not exist, so a new capability is invisible to every role until somebody grants it deliberately.
+
+**Administrative access is not a licence to read records.** The administrator role holds `admin.manage`, `person.merge` and `aggregate.read` — and deliberately **not** `person.read` or `screening.read`. An administrator who needs a worker's record has to be given a clinical role as well, which is a decision somebody makes rather than a capability that arrives with the job. A test asserts it, as do twenty-one other negative tests drawn from the "cannot see" column above.
+
+**Passwords are hashed** with `hashlib.scrypt` and a per-user salt. The prototype accounts compared plaintext from an environment variable. **`SECRET_KEY` no longer falls back to `"dev-secret"`** — that default meant a production instance missing the variable signed tokens with a value published in this repository, so anyone could mint an administrator token; it now raises at signing time.
+
+**The prototype accounts are self-disarming.** `hospital` and `cimas` authenticate only while the `users` table is empty. The moment a real user exists they stop working, and a token issued to one stops working with them. That is deliberately not a feature flag: a flag nobody turns off is how a prototype credential reaches production.
+
+**The first administrator is created by `backend/scripts/create_admin.py`**, which needs database access. The prototype accounts do not hold `admin.manage`, so they cannot create one — and the two alternatives were both worse: widening them defeats the point of retiring them, and letting the route run unauthenticated while the table is empty opens a window in which whoever reaches a fresh instance first owns the system.
+
+### The audit log
+
+Append-only: there is no update and no delete anywhere in `services/audit.py`, and a test asserts that by inspecting the module, because a log that can be edited afterwards answers nothing. Enforced in the service layer rather than by a trigger — triggers are PostgreSQL-only and invisible to the SQLite unit suite (§16.2).
+
+- **A refused access writes a row.** These are the rows that matter: a role boundary nobody can show being enforced is a boundary nobody can show exists. `GET /api/v2/audit/refusals` lists them.
+- **"Who has read my record?" is answerable.** `GET /api/v2/audit/persons/{id}`, and reading the trail is itself audited — an audit log nobody's reads are recorded in is a log that can be mined quietly.
+- **No personal data in a log line**, checked rather than trusted: a forbidden-key list rejects a name, a number, an answer or a password in `details`. A failed-login row records neither the address tried nor the password.
+- **An audit write cannot fail a clinical write.** `record()` joins the caller's transaction so a screening is never lost because a log row would not fit; a refusal commits on its own session, because a refused request has no transaction to join and is never allowed to turn a clean `403` into a `500`.
+
+**Planned**: the dashboard exercises only the prototype roles until the Week 22 rebuild, so the negative tests are what protect the boundary in the meantime (`docs/IMPLEMENTATION_PLAN.md` §12 item 13). The v1 Bearer routes still use the plain token dependency rather than a capability, and move across with the adapter (item 1.11). Rate limiting and lockout on the login and the public lookup remain Phase Three.
 
 ## De-identification and analysis — Planned
 
@@ -131,6 +166,56 @@ No real screening takes place until every item is true and the list has been sig
 
 Signed: ______________________ Date: ____________
 
+## Identifier storage and key handling — Built, with one gap named
+
+> Implements the "Storage at rest" and "Key management" rows above, and `docs/IMPLEMENTATION_PLAN.md` §12 item 11. Code: `backend/services/crypto.py`.
+
+### Two columns for one value
+
+Every direct identifier is stored twice: a **keyed hash** for equality lookup and an **encrypted value** for use.
+
+| Value | Hash column | Encrypted column | Why both |
+|---|---|---|---|
+| Telephone number | `contacts.number_hmac` (indexed) | `contacts.number_encrypted` | A number must be *found* — the USSD webhook arrives with a caller number — and also *sent to*. |
+| Name | `persons.name_hmac` (indexed) | `persons.name_encrypted` | Exact-match candidate lookup without a plaintext index; a health worker and a referral letter need the name back. |
+| National identity number | `persons.national_id_hash` (indexed) | **none** | §16.2: stored only as a hash. It is used for matching and never displayed, so there is nothing to recover. |
+
+An encrypted column cannot be indexed for equality and a hash cannot be reversed, so one alone cannot do both jobs.
+
+### Three decisions worth stating plainly
+
+**A keyed hash, not a per-row salt.** The textbook answer for storing an identifier is a random salt per row, and it is the wrong answer here: a per-row salt makes two records holding the same national identity number hash differently, which destroys the one deterministic match §8.2 relies on. The key *is* the salt, it is the same for every row, and it lives in the platform secret store rather than in the database. This protects against disclosure of the database; it does **not** protect against disclosure of the database and the key together. That is the trade-off, and it is accepted rather than assumed.
+
+**Domain separation.** Every digest is computed over `purpose + ":" + value`, with `purpose` from a closed set. Without it, a number typed into the national-identity field would produce the same digest as the same number typed into the phone field, and the system would merge two people — the clinical safety event §8.2 names.
+
+**Authenticated encryption.** Fernet (AES-128-CBC with an HMAC-SHA256 tag), so a tampered column fails to decrypt rather than returning different plaintext. That matters for a telephone number a result message is about to be sent to: silently delivering a worker's result to a different handset is a disclosure, not a glitch.
+
+### Keys
+
+| Variable | Holds | Generate |
+|---|---|---|
+| `IDENTITY_HMAC_KEY` | The HMAC key for every lookup digest | `python -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"` |
+| `CONTACT_ENCRYPTION_KEY` | The Fernet key for every recoverable value | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+
+Set on the hosting platform, never in the repository. **`.env.example` names both variables and carries no values**, and that is a deliberate reversal: it first shipped with working development keys so a fresh checkout would run, gitleaks flagged both, and the gate was right — a working key in a public example file is indistinguishable from a real one, to the scanner and to a reader. Allowlisting that file would have been the worst exception in the repository, because it is exactly where a real secret gets pasted by accident. A checkout without keys gets a clean `503` from `/api/v2/persons/*` naming the missing variable; every v1 route is unaffected. Two tests keep it that way, one of them asserting that the suite derives its own keys from readable ASCII rather than committing a high-entropy literal anywhere.
+
+**There is deliberately no fallback.** A missing key raises, and the HTTP layer turns that into a retryable `503` rather than saving an unprotected record. `routers/auth.py:29` falls back to `"dev-secret"` when `SECRET_KEY` is unset; that pattern is **not** copied here, because a production instance quietly hashing national identity numbers under a guessable default produces a column that looks protected, is not, and cannot be fixed afterwards — the plaintext is gone.
+
+### Rotation — Planned, and required before the first real record
+
+**Changing either key orphans existing data.** Every hash stops matching and every encrypted value stops decrypting. There is no partial failure: the register simply stops recognising anybody.
+
+Rotation is therefore a migration, not an edit, and the procedure below must be written as a runnable script and tested on staging before any real record exists. Until that script exists, **a key exposure is an incident with no clean recovery**, which is the honest statement of where this stands.
+
+1. Set the new key alongside the old one (`IDENTITY_HMAC_KEY_NEXT`, `CONTACT_ENCRYPTION_KEY_NEXT`).
+2. Decrypt with the old key and re-encrypt with the new one, row by row, in a transaction per batch; recompute every digest with the new HMAC key in the same batch. Hashes and ciphertext must move together or a row becomes unfindable.
+3. Verify a sample end to end — a participant code lookup, a USSD caller-number lookup, and one outbound message to a test handset.
+4. Promote the new keys and remove the old ones. Record the rotation, its reason and its date.
+
+Steps 2 and 3 need the whole table, so plan it for a quiet window and expect the API to be read-only while it runs.
+
 ## Phone-number storage — documented tradeoff, expiring
 
-`miners.phone` is stored in plaintext because it is the operational identity for SMS delivery, USSD caller lookup and `GET /api/workers/{phone}`, and a one-way hash breaks all three. This was an acceptable prototype tradeoff and **ceases to be acceptable the moment real patient data exists**. The schema rebuild moves contact numbers to an encrypted `contact` table separated from clinical content (`ARCHITECTURE.md`, decisions 1 and 2), which resolves it.
+`miners.phone` is stored in plaintext because it is the operational identity for SMS delivery, USSD caller lookup and `GET /api/workers/{phone}`, and a one-way hash breaks all three. This was an acceptable prototype tradeoff and **ceases to be acceptable the moment real patient data exists**.
+
+**The replacement is built** — `contacts`, hashed and encrypted, separated from clinical content (see the section above, and `ARCHITECTURE.md` decisions 1 and 2) — **and the v1 column is still there and still in use.** `routers/ussd.py`, `GET /api/workers/{phone}` and the mobile application's `resolveMinerId()` all still read it, and `miners` is dropped by migration `0009` once the v1 adapter is deleted (`docs/IMPLEMENTATION_PLAN.md` §4). Until then both forms exist, which is the transition working as designed and not a reason to relax the expiry: **no real record before `miners` is gone.**
