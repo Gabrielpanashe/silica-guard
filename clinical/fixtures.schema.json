@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://silicaguard.health/schemas/fixtures.schema.json",
+  "title": "SilicaGuard instrument regression fixtures",
+  "description": "Answer profiles with the tier each must produce, per condition. Master Reference v1.0 11.7: the instrument regression suite. Approved by the Clinical Lead on the same pull request as the instrument version it tests, because an expected tier is a clinical statement, not a test detail. The same file is consumed by the Python suite and by the device's JavaScript interpreter, which is what makes 'channels are equivalent' checkable rather than asserted.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instrument", "version", "profiles"],
+  "properties": {
+    "instrument": {
+      "description": "The instrument code these fixtures test. Must match the instrument file beside them.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9-]{2,31}$"
+    },
+    "version": {
+      "description": "The instrument version. Fixtures are version-specific: a threshold moving is a new version, and the old fixtures describe the old version's behaviour, which is exactly what makes the change visible.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "approved_by": {
+      "description": "The Clinical Lead's name. Required before these fixtures gate a release, because an expected tier is a clinical assertion.",
+      "type": "string",
+      "minLength": 2
+    },
+    "approved_at": { "type": "string", "format": "date" },
+    "status": {
+      "description": "example is a format illustration and may not gate anything; the test suite skips it for a real instrument and uses it only to exercise the harness.",
+      "enum": ["draft", "review", "approved", "example"]
+    },
+    "notes": { "type": "string" },
+    "profiles": {
+      "description": "Each profile is one screening. Aim for coverage of every tier, every safety rule, and the unknown/refused handling, rather than many similar profiles.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/profile" }
+    }
+  },
+  "$defs": {
+    "tier": { "enum": ["GREEN", "YELLOW", "ORANGE", "RED"] },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "answers", "expect"],
+      "properties": {
+        "name": {
+          "description": "What this profile represents clinically, in the Clinical Lead's words. Read aloud in review, and printed when the test fails.",
+          "type": "string",
+          "minLength": 4
+        },
+        "channel": {
+          "description": "Which channel's question subset applies. A profile that omits a question the channel does not ask is complete, not incomplete (13.1).",
+          "enum": ["app", "ussd"],
+          "default": "app"
+        },
+        "answers": {
+          "description": "Question code to recorded answer value. An explicit unknown or refused option belongs here too: an unanswered red-flag question must never read as a negative (12.2 item 10).",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" }
+        },
+        "previous_answers": {
+          "description": "The same worker's previous screening, where this profile tests deterioration. Omit for a first visit.",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "expect": {
+          "description": "What the cascade must produce. A profile asserting only the primary tier is weaker than one asserting per-condition tiers, because a two-condition instrument can reach the right primary tier for the wrong reason.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primary_tier": { "$ref": "#/$defs/tier" },
+            "tiers": {
+              "description": "Condition code to the tier that condition must reach.",
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": { "$ref": "#/$defs/tier" }
+            },
+            "scored_tiers": {
+              "description": "The tier before deterioration escalation and overrides, per condition. Asserting this as well as the final tier is what distinguishes 'the override fired' from 'the score was already there'.",
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/tier" }
+            },
+            "scores": {
+              "description": "Condition code to expected score. Optional: a score is an implementation detail of the cascade, while a tier is the clinical output.",
+              "type": "object",
+              "additionalProperties": { "type": "integer" }
+            },
+            "overrides": {
+              "description": "Safety rule codes that must fire, exactly. An empty list asserts that none do, which is a real assertion and the one most likely to catch an over-eager rule.",
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true
+            },
+            "deterioration_changed": {
+              "description": "Whether the trajectory comparison must report worsening.",
+              "type": "boolean"
+            },
+            "incomplete": {
+              "description": "True where this profile must produce NO tier because an applicable question is unanswered (13.1). Mutually exclusive with every other expectation.",
+              "const": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

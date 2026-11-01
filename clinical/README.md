@@ -11,10 +11,14 @@ An instrument version is **data, not code**. The questions, options, scores, tie
 ```
 clinical/
   instrument.schema.json          JSON Schema for an instrument file. Validated in CI.
+  fixtures.schema.json            JSON Schema for a fixtures file. Validated in CI.
   instruments/<CODE>-v<N>.yaml    One approved instrument version. Immutable once status: approved.
   instruments/<CODE>-v<N>.fixtures.yaml   Answer profiles with expected tiers. The regression suite.
-  examples/TEST-INSTRUMENT.yaml   A synthetic example for tests and for reading the format.
+  examples/TEST-INSTRUMENT.yaml           A synthetic example, for reading the format.
+  examples/TEST-INSTRUMENT.fixtures.yaml  The same, for the fixtures format.
 ```
+
+`instruments/` is **empty**, and that is the correct state until instrument version one is approved. Everything that loads it exists: the two schemas, two validators, the database tables, the loader, the migration generator and the regression harness. What is missing is the clinical content, which is the one part nobody but the Clinical Lead can supply.
 
 **`instruments/` is empty.** Instrument version one is the Clinical Lead's deliverable (§12.5) and does not exist yet. The example under `examples/` uses deliberately meaningless question codes (`T1`, `T2`, `T3`) and must never be loaded into any environment — see "The example is not an instrument" below.
 
@@ -23,7 +27,11 @@ clinical/
 1. Gabriel delivers the specification in the Appendix A format: for each question, the code, clinical label, patient-facing wording in English, Shona and Ndebele, response options with values and scores, and **a citation for every question and every threshold**. Plus the tier cascade, the red-flag override list, the re-screen interval and referral window per tier, the handling of unknown and refused answers, and a statement of what the instrument does not detect.
 2. It is transcribed into `instruments/<CODE>-v<N>.yaml` and validated against `instrument.schema.json`. CI rejects a file that does not validate.
 3. Gabriel approves the pull request. His name and the date go in the file's `approved_by` and `approved_at`.
-4. A generated data migration inserts the rows with `status: approved`. From that moment the version is **immutable** — a change is a new version, never an edit, because every screening result stores the instrument version that produced it and a result whose rules were edited afterwards is uninterpretable.
+4. **Regression fixtures** go in `instruments/<CODE>-v<N>.fixtures.yaml` on the same pull request, and Gabriel approves them too — an expected tier is a clinical assertion, not a test detail. Format: `fixtures.schema.json`; worked example: `examples/TEST-INSTRUMENT.fixtures.yaml`.
+5. `backend/scripts/gen_instrument_migration.py <file>` writes the data migration. It refuses an unapproved file, refuses one that does not validate, and refuses one with no fixtures beside it. The generated migration **reads the YAML at upgrade time rather than copying the cascade into Python**, so the reviewed source and the loaded rows cannot diverge.
+6. The migration inserts the rows with `status: approved`. From that moment the version is **immutable** — a change is a new version, never an edit, because every screening result stores the instrument version that produced it and a result whose rules were edited afterwards is uninterpretable. The generated downgrade refuses while any result references the version, for the same reason.
+
+**The regression suite switches over on its own.** `backend/tests/test_instrument_regression.py` discovers files rather than naming them: while `instruments/` is empty it runs against the synthetic example, and the moment a real instrument and its fixtures land it uses those and stops using the example. A real instrument with **no** fixtures fails the build rather than skipping — an approved instrument whose behaviour nobody has pinned is exactly what that gate exists to prevent, and a skip is how that becomes permanent.
 
 ## Patient-facing wording is not stored here
 
@@ -71,6 +79,10 @@ This is deliberate. A plausible-looking invented question set is the single most
 cd backend
 ./venv/Scripts/python.exe scripts/validate_instrument.py            # all files under clinical/
 ./venv/Scripts/python.exe scripts/validate_instrument.py ../clinical/examples/TEST-INSTRUMENT.yaml
+./venv/Scripts/python.exe scripts/validate_fixtures.py              # the regression fixtures
+./venv/Scripts/python.exe -m pytest tests/test_instrument_regression.py
 ```
 
-CI runs the same script on every pull request that touches `clinical/`.
+CI runs all of these on every pull request: the shape checks as the `clinical` job, and the fixtures plus the regression suite as the `regression` job — §11.8's seventh and last gate.
+
+An unquoted `approved_at: 2026-11-01` is fine. YAML parses it as a date and the validators normalise it before the schema sees it, because the YAML date type is a feature and the schema's spelling of it is an implementation detail you should not have to know about.

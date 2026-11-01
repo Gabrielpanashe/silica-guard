@@ -96,9 +96,9 @@ Conventions carried over: `snake_case` JSON keys; timestamps stored in UTC (the 
 |---|---|---|---|
 | Unit | Scoring, tier assignment, deterioration, overrides, facility matching, code generation, cascade decisions — pure functions with injected time. | Panashe | Built for the current code |
 | Instrument regression | A fixed set of answer profiles with expected tiers, run against every instrument version, so a clinical change that moves an unrelated tier is caught. | Panashe, expected values signed off by Gabriel | **Planned** |
-| Integration | Full screening through the API on both channels, referral creation, code lookup, attendance confirmation, consent capture. | Panashe | Built except consent |
+| Integration | Full screening through the API on both channels, referral creation, code lookup, attendance confirmation, consent capture. | Panashe | Built for v1, and for the v2 pipeline including consent; the USSD channel is still on its own thresholds (item 1.9) |
 | Channel equivalence | The same answers through both channels must produce identical tiers. Automated, because the team claims it publicly. | Panashe | **Planned** — would fail today |
-| Content validation | Every patient-facing string in every language passes the character-set check and fits its channel budget. | CI | **Planned** |
+| Content validation | Every patient-facing string in every language passes the character-set check and fits its channel budget. | CI | **Built** — and enforced again at load time, so a string entering the database is checked even when no pull request touched `content/` |
 | Device testing | Full screening on the floor handset, in airplane mode, with synchronisation afterwards. | Takudzwa | **Never yet performed** |
 | Field usability | Observed sessions with a health worker and a volunteer, timed. | All three, before the pilot | Planned |
 | Message delivery | Real messages to real handsets on each network, receipts confirmed. | Panashe | **Never yet confirmed** — sandbox acceptance only |
@@ -107,16 +107,29 @@ The pytest suite is SQLite-only by architecture: `backend/tests/conftest.py` bui
 
 ## Continuous integration gates
 
-A pull request cannot merge unless every gate passes. **None of these exists today** — there is no CI configuration in the repository. Adding them is Phase Zero security work (`docs/SECURITY.md`).
+A pull request cannot merge unless every gate passes. **Seven jobs, all built** — `.github/workflows/ci.yml`, first landed 21 October 2026 (PR #29) and completed 1 November. **Only four are required status checks on protected `main`** — Test suite, Migrations, Secret scan and Dependency vulnerability scan, as set on 21 October. Clinical specifications, Content strings and Instrument regression suite run on every pull request but **do not block a merge**, which means a pull request with a broken instrument or an over-budget string can currently merge with a red tick beside it.
 
-- Full test suite green.
-- Character-set validator on all content strings in all languages.
-- Channel budget: every USSD question, with options and navigation, fits the page limit in every language.
-- Migration check: migrations apply cleanly to an empty database and to a copy of the staging schema.
-- Secret scan.
-- Dependency vulnerability scan; high severity blocks the merge.
-- Instrument regression suite green.
-- *(Team addition, 18 September 2026)* A test asserting that no model-produced string is ever written to a patient-facing field.
+Adding them is a repository settings change and has to be **sequenced after the current stack merges**: a required check that a pull request has never run makes that pull request unmergeable, and the branches queued behind item 1.13 predate the regression job. So the order is: merge the stack, then add the three.
+
+| Job | What it gates | State |
+|---|---|---|
+| Test suite | pytest on SQLite, Python pinned to 3.12.3 to match `render.yaml`. Includes the no-model-string rule below. | Built |
+| Migrations forward and backward (PostgreSQL) | `upgrade head` on an empty PostgreSQL 16 → `downgrade base` → `upgrade head`, then an autogenerate drift check asserting `db_models.py` and `alembic/versions/` have not diverged. | Built |
+| Clinical specifications | `scripts/validate_instrument.py` over `clinical/` — shape, the closed predicate grammar, mandatory citations. | Built |
+| Content strings | `scripts/validate_content.py` — GSM 03.38 character set, channel budget **in every language**, placeholder parity, three languages before approval. | Built |
+| Instrument regression suite | `scripts/validate_fixtures.py` plus `tests/test_instrument_regression.py`: fixed answer profiles with the Clinical Lead's expected tier for each, run against every instrument version. **The gate that makes a clinical change visible.** | Built 1 November; running against the synthetic fixture until instrument version one lands |
+| Secret scan | gitleaks over the pull request's whole commit range. | Built |
+| Dependency vulnerability scan | `pip-audit --strict`; two advisories suppressed individually with written reasoning, both because no fix version exists. | Built |
+
+Two gates the master document does not list but the same reasoning requires:
+
+- **Channel equivalence** — identical answers through both channels must produce identical result rows. **Planned, and would fail today**: `POST /api/ussd` still runs its own thresholds, so there is nothing to compare the v2 route against. Item 1.9.
+- **No model-produced string on a patient-facing field** *(team addition, 18 September 2026)* — **built**, as `tests/test_content_runtime_rule.py` inside the test suite rather than its own job. It asserts on the import graph rather than on behaviour, because a behavioural test catches only the path somebody thought to exercise.
+
+Two things worth knowing about the gates themselves:
+
+- **Every gate was verified against deliberately broken input before being trusted**, including proving the drift check fails on an added probe column, the regression suite fails on a moved threshold, and the append-only audit assertion fails on an added edit path. A gate that cannot fail is worse than no gate, because it reads as coverage.
+- **The secret scan scans the whole pull-request range**, not just the tip. A secret committed once and removed later still fails, which is correct — and cost one branch a rewrite (PR #40 → #41).
 
 ## Local setup
 
