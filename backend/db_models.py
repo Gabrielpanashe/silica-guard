@@ -38,6 +38,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -634,3 +635,318 @@ class PersonMerge(Base):
     merged_at = Column(DateTime, default=_utcnow, server_default=_NOW)
     reversed_by = Column(String)
     reversed_at = Column(DateTime)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  INSTRUMENT AND RULES AS VERSIONED DATA — Master Reference v1.0 §8.3
+#
+#  The third irreversible decision. At present the questions live in a source
+#  file, the scoring lives in code, the USSD thresholds are numeric literals
+#  and the safety overrides are hardcoded — every one of them a deployment
+#  away from silently changing, and none recorded against the result it
+#  produced. That is fatal for validation: to claim any sensitivity or
+#  specificity the system must be able to say which instrument version and
+#  which ruleset produced which tier for which person.
+#
+#  These tables mirror `clinical/instrument.schema.json` one-for-one, so a
+#  reviewed YAML file maps to rows without interpretation. `services/
+#  instrument_store.py` loads a file into them and reads it back into exactly
+#  the dict shape `services/rules_engine.py` already consumes — the round
+#  trip is tested, which is what proves the tables model the format
+#  faithfully rather than approximately.
+#
+#  Two properties make this safe rather than fragile (§8.3):
+#    * An APPROVED version is immutable. A change creates a new version and
+#      never edits an approved row, because a result whose rules were edited
+#      afterwards is uninterpretable.
+#    * Every screening result stores the instrument and ruleset version that
+#      produced it — already true, on ScreeningResult above.
+#
+#  Predicates are stored as JSON text rather than a native JSON column, for
+#  the same reason every timestamp here is a plain TIMESTAMP: the schema must
+#  behave identically on SQLite (local, tests) and PostgreSQL (production),
+#  and §16.2 flags exactly this class of divergence. They are parsed on load
+#  and evaluated by the closed grammar in `services/predicates.py`; nothing
+#  is ever eval'd.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class Instrument(Base):
+    """One version of the clinical screening instrument.
+
+    `status` drives the loader: `approved` is immutable and selectable;
+    `example` is refused outright, so the synthetic format illustration in
+    `clinical/examples/` can never reach a database (§8.3, clinical/README).
+    """
+
+    __tablename__ = "instruments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, nullable=False)
+    version = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="draft", server_default=text("'draft'"))
+    approved_by = Column(String)
+    approved_at = Column(DateTime)
+    supersedes = Column(Integer)
+    #: §12.2 item 10. An unanswered red-flag question must never default to a
+    #: negative, so the treatment of unknown and refused is part of the
+    #: version rather than a convention in code.
+    unknown_score = Column(Integer, default=0, server_default=text("0"))
+    refused_score = Column(Integer, default=0, server_default=text("0"))
+    #: §13.1: a partially answered instrument must never produce a tier.
+    partial_session_may_produce_tier = Column(Integer, default=0, server_default=text("0"))
+    #: §12.5's honest statement of what the instrument does not detect,
+    #: including the asymptomatic early-disease limitation. JSON array of
+    #: strings: documentation that forms part of the ethics submission, never
+    #: queried, so it is stored whole rather than split into rows.
+    limitations = Column(Text)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    __table_args__ = (
+        UniqueConstraint("code", "version", name="uq_instruments_code_version"),
+        CheckConstraint(
+            "status IN ('draft','review','approved','retired','example')",
+            name="ck_instruments_status",
+        ),
+    )
+
+
+class InstrumentCondition(Base):
+    """Which conditions a version assesses. A row, never a column — adding
+    tuberculosis is an insert (§8.1)."""
+
+    __tablename__ = "instrument_conditions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
+    condition_code = Column(String, nullable=False)
+    ordinal = Column(Integer, default=0, server_default=text("0"))
+
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "condition_code", name="uq_instrument_condition"),
+    )
+
+
+class InstrumentBlock(Base):
+    """Identity, exposure, lifestyle, symptom core, history (§12.1). The
+    symptom core is shared across conditions; the exposure block is what
+    changes for a new sector."""
+
+    __tablename__ = "instrument_blocks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
+    code = Column(String, nullable=False)
+    title_message_code = Column(String, nullable=False)
+    ordinal = Column(Integer, default=0, server_default=text("0"))
+    notes = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "code", name="uq_instrument_block"),
+    )
+
+
+class InstrumentQuestion(Base):
+    """A question belonging to one instrument version.
+
+    The wording a worker reads is NOT here: `label_message_code` points at
+    the content store, so one review, translation and GSM-7 pipeline covers
+    every patient-facing string (§8.4). `clinical_label` is the internal
+    clinical name and is never shown to a worker.
+    """
+
+    __tablename__ = "instrument_questions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
+    code = Column(String, nullable=False)
+    block_code = Column(String, nullable=False)
+    clinical_label = Column(String, nullable=False)
+    response_type = Column(String, nullable=False)
+    label_message_code = Column(String, nullable=False)
+    ordinal = Column(Integer, default=0, server_default=text("0"))
+    #: Whether a worsening answer counts as deterioration against the
+    #: worker's previous session. The Clinical Lead's decision, recorded as
+    #: data, replacing the hardcoded set in the v1 services/deterioration.py.
+    tracked_for_trajectory = Column(Integer, default=0, server_default=text("0"))
+    #: Predicate deciding whether the question is asked at all. JSON text.
+    branching = Column(Text)
+    #: §12.1 requires a citation for every question and every threshold. The
+    #: current draft has none, and this is what an ethics committee asks for.
+    citation = Column(Text, nullable=False)
+    notes = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "code", name="uq_instrument_question"),
+        CheckConstraint(
+            "response_type IN ('single_select','multi_select','integer_banded','boolean')",
+            name="ck_question_response_type",
+        ),
+    )
+
+
+class AnswerOption(Base):
+    """A selectable answer. `is_unknown` marks the explicit unknown or
+    refused option, which is what makes the `unknown` predicate meaningful
+    rather than an inference from absence (§12.2 item 10)."""
+
+    __tablename__ = "answer_options"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    question_id = Column(Integer, ForeignKey("instrument_questions.id"), nullable=False)
+    value = Column(String, nullable=False)
+    label_message_code = Column(String, nullable=False)
+    ordinal = Column(Integer, default=0, server_default=text("0"))
+    is_unknown = Column(Integer, default=0, server_default=text("0"))
+
+    __table_args__ = (
+        UniqueConstraint("question_id", "value", name="uq_answer_option_value"),
+    )
+
+
+class AnswerBand(Base):
+    """For an `integer_banded` question: a number is recorded, a band is
+    scored. Banding rather than a free integer improves recall accuracy and
+    usability (§12.4)."""
+
+    __tablename__ = "answer_bands"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    question_id = Column(Integer, ForeignKey("instrument_questions.id"), nullable=False)
+    #: Inclusive lower bound.
+    from_value = Column(Integer, nullable=False)
+    value = Column(String, nullable=False)
+    label_message_code = Column(String, nullable=False)
+    ordinal = Column(Integer, default=0, server_default=text("0"))
+
+    __table_args__ = (
+        UniqueConstraint("question_id", "value", name="uq_answer_band_value"),
+    )
+
+
+class InstrumentChannel(Base):
+    """Which channels ask a question.
+
+    §13.1: a long instrument plus consent does not fit a 180-second USSD
+    session. The Clinical Lead defines any shorter USSD subset deliberately,
+    as data, rather than the channel truncating silently. No rows for a
+    question means every channel asks it.
+    """
+
+    __tablename__ = "instrument_channels"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    question_id = Column(Integer, ForeignKey("instrument_questions.id"), nullable=False)
+    channel = Column(String, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("question_id", "channel", name="uq_instrument_channel"),
+        CheckConstraint("channel IN ('app','ussd')", name="ck_instrument_channel"),
+    )
+
+
+class ScoringRule(Base):
+    """What one answer contributes to one condition.
+
+    Keyed by condition because the same answer can weigh differently for
+    silicosis than for tuberculosis (§8.3) — which is precisely what lets a
+    second condition be rows rather than a second score column.
+    """
+
+    __tablename__ = "scoring_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
+    question_id = Column(Integer, ForeignKey("instrument_questions.id"), nullable=False)
+    condition_code = Column(String, nullable=False)
+    answer_value = Column(String, nullable=False)
+    score = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("question_id", "condition_code", "answer_value", name="uq_scoring_rule"),
+    )
+
+
+class TierRule(Base):
+    """One branch of the tier cascade, as a predicate.
+
+    §9.2: the cascade is boolean logic over answer values, and §12.2 contains
+    rules of the form (years > 10 AND any symptoms) OR (past TB AND any
+    breathlessness) — which a (min_score, max_score) table cannot express. A
+    plain score band is one predicate, so nothing is lost. Evaluated in
+    descending priority; first match wins.
+    """
+
+    __tablename__ = "tier_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
+    condition_code = Column(String, nullable=False)
+    tier = Column(String, nullable=False)
+    priority = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    predicate = Column(Text, nullable=False)
+    label = Column(String)
+    citation = Column(Text, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("tier IN ('GREEN','YELLOW','ORANGE','RED')", name="ck_tier_rule_tier"),
+    )
+
+
+class SafetyRule(Base):
+    """A red flag. Runs LAST and may raise a tier, never lower one (§10.3
+    step 7), so that no earlier step — and no model, if one is ever
+    introduced upstream — can be the final word on it.
+
+    Owned by the Clinical Lead rather than inherited from code: §12.2 item 1
+    records that the deployed overrides and the draft tier rules currently
+    disagree, and this table is where that is resolved once, visibly.
+    """
+
+    __tablename__ = "safety_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
+    #: Recorded on every result this rule fires on, so a classification can
+    #: be audited afterwards.
+    code = Column(String, nullable=False)
+    #: Null means the rule applies to every condition.
+    condition_code = Column(String)
+    forces_tier = Column(String, nullable=False)
+    predicate = Column(Text, nullable=False)
+    label = Column(String)
+    citation = Column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "code", name="uq_safety_rule_code"),
+        CheckConstraint("forces_tier IN ('GREEN','YELLOW','ORANGE','RED')", name="ck_safety_rule_tier"),
+    )
+
+
+class InstrumentInterval(Base):
+    """Re-screen interval and referral window per condition and tier.
+
+    §12.2 items 7 and 8: the tier-three referral window is unstated in the
+    draft while the system uses 14 days, and the re-screen intervals conflict
+    between drafts. Both must be stated explicitly by the Clinical Lead
+    rather than implied by code, and this is where they are stated.
+    """
+
+    __tablename__ = "instrument_intervals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    instrument_id = Column(Integer, ForeignKey("instruments.id"), nullable=False)
+    condition_code = Column(String, nullable=False)
+    tier = Column(String, nullable=False)
+    #: Null where the interval is linked to a referral outcome rather than a
+    #: fixed period.
+    rescreen_days = Column(Integer)
+    #: Required for tiers that generate a referral.
+    referral_window_hours = Column(Integer)
+    citation = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "condition_code", "tier", name="uq_instrument_interval"),
+        CheckConstraint("tier IN ('GREEN','YELLOW','ORANGE','RED')", name="ck_interval_tier"),
+    )
