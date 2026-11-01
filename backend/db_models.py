@@ -226,3 +226,411 @@ class KeepAlivePing(Base):
 
     id = Column(Integer, primary_key=True)
     pinged_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  VERSION TWO MODEL — Master Reference v1.0 §8.1, §8.2, §8.5, §10.5
+#
+#  Added alongside the version one tables, not in place of them. Both sets
+#  exist during the transition: the v1 routes keep serving the mobile app and
+#  dashboard from `miners`/`screenings` until those clients move to v2, and
+#  `0008_v2_drop_v1` removes the old tables once the adapter is deleted
+#  (docs/IMPLEMENTATION_PLAN.md §3, §5).
+#
+#  The rule that holds all of it together, worth writing on the wall: the
+#  word silicosis may appear in this database as a VALUE. It may never appear
+#  as a column name. Follow that and the day tuberculosis is added is a day
+#  of adding rows, not of migrating patient records.
+#
+#  There is no backfill from v1. The database holds only demonstration data,
+#  so the v2 tables are cut clean and `scripts/seed_demo_data.py` is rewritten
+#  against them (§8.1: "cut the version two schema deliberately while the
+#  database still contains only demonstration data, and reseed").
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class Person(Base):
+    """The identity anchor. Renamed from `miners` because a construction
+    worker or a tobacco grader is not a miner and the same individual moves
+    between sectors (§8.1).
+
+    Holds identity only: no clinical content, no occupation, no site. Those
+    live in ExposureProfile and ScreeningSession, which is what lets analysis
+    run against a de-identified view by default (§10.1, §16.4).
+
+    Telephone number is NOT here. It is an attribute with history on
+    Contact, never an identity key (§8.2) — handsets are shared, borrowed
+    and sold, and a false merge mixes two clinical histories in a way no
+    inspection can detect afterwards.
+    """
+
+    __tablename__ = "persons"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    #: Short human-readable code, printed on a card the worker keeps. Six
+    #: characters from the referral-code alphabet: about a billion codes,
+    #: against the four-character referral format's million, because this one
+    #: addresses a register meant for more than 500,000 people and a
+    #: collision here is a clinical safety event rather than an annoyance
+    #: (docs/IMPLEMENTATION_PLAN.md §12 item 4).
+    participant_code = Column(String, unique=True, index=True)
+    #: Salted hash only, never a recoverable form (§16.2). Voluntary.
+    national_id_hash = Column(String, index=True)
+    #: Banded rather than a birth date: enough for stratified analysis and
+    #: reference values, less identifying.
+    age_band = Column(String)
+    sex = Column(String)
+    #: Preferred language for every patient-facing string sent to them.
+    language = Column(String, default="en", server_default=text("'en'"))
+    #: Set when this record loses a merge. The losing record is kept rather
+    #: than deleted so that every merge is reversible from the first day
+    #: (§8.2).
+    merged_into_id = Column(Integer, ForeignKey("persons.id"))
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    __table_args__ = (
+        CheckConstraint(
+            "sex IS NULL OR sex IN ('male','female','prefer_not_to_say')",
+            name="ck_persons_sex",
+        ),
+    )
+
+
+class Contact(Base):
+    """Telephone numbers and other contact points, with validity dates.
+
+    Many people may share a number; one person may hold several over time.
+    Never an identity key (§8.2).
+
+    Two columns for one number, deliberately: `number_hmac` is a keyed hash
+    for equality lookup (the USSD webhook arrives with a caller number and
+    must find the person), and `number_encrypted` is the recoverable form
+    needed to actually send a message. An encrypted column cannot be indexed
+    for equality, so one alone cannot do both jobs — see
+    docs/IMPLEMENTATION_PLAN.md §12 item 11. Key handling and rotation are in
+    docs/SECURITY.md.
+    """
+
+    __tablename__ = "contacts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    kind = Column(String, default="phone", server_default=text("'phone'"))
+    number_hmac = Column(String, index=True, nullable=False)
+    number_encrypted = Column(Text, nullable=False)
+    is_primary = Column(Integer, default=0, server_default=text("0"))
+    #: Verified at a screening. A long-dormant contact is re-verified before
+    #: use, and sends stop after repeated delivery failures, because a
+    #: recycled number means disclosing health data to a stranger (§13.2).
+    verified = Column(Integer, default=0, server_default=text("0"))
+    verified_at = Column(DateTime)
+    valid_from = Column(DateTime, default=_utcnow, server_default=_NOW)
+    valid_to = Column(DateTime)
+
+    person = relationship("Person")
+
+
+class Site(Base):
+    """Renamed from `mines`, and carries a sector and a type, because the
+    exposure axis grows to quarrying, construction, foundries and tobacco
+    processing (§5.2).
+
+    Deliberately NOT a hard foreign-key target from a session: informal
+    workings are informal, many are entered as free text, and forcing
+    structure that does not exist produces worse data than a curated list
+    with a free-text fallback (§15.6).
+    """
+
+    __tablename__ = "sites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    sector = Column(String, default="asm_gold", server_default=text("'asm_gold'"))
+    type = Column(String)
+    district = Column(String)
+    province = Column(String)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    #: True for the curated list offered in a dropdown; False for a name a
+    #: health worker typed in the field.
+    curated = Column(Integer, default=1, server_default=text("1"))
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+
+class Programme(Base):
+    """An employer- or insurer-funded cohort.
+
+    This table plus the one nullable reference on ScreeningSession is the
+    entire formal-sector seam (§5.3, §8.1). No formal-sector features are
+    built in phase one; the only discipline is that no code may assume a
+    session has no programme. Absent, or kind 'community', means outreach.
+
+    Employer disclosure consent lives on ConsentRecord, not here: an employer
+    never receives individual results without separate, specific, refusable
+    consent from the worker (§14.4), and that is a per-person permission, not
+    a programme setting.
+    """
+
+    __tablename__ = "programmes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    kind = Column(String, default="community", server_default=text("'community'"))
+    payer = Column(String)
+    data_owner = Column(String)
+    #: Which consent text version this programme's workers are shown.
+    consent_text_code = Column(String)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('community','employer','insurer')",
+            name="ck_programmes_kind",
+        ),
+    )
+
+
+class ExposureProfile(Base):
+    """Occupation history: what the worker does, for how long, with what
+    controls.
+
+    Separated from the screening on purpose (§8.1). This is the block that
+    changes when the system moves to a new sector, while the symptom core
+    stays the same — which is what makes a new sector a configuration change
+    rather than a rebuild (§5.2).
+    """
+
+    __tablename__ = "exposure_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    #: Recorded during a session, but kept as its own row so a work history
+    #: accumulates across sessions and across sectors.
+    session_id = Column(Integer, ForeignKey("screening_sessions.id"))
+    sector = Column(String)
+    occupation = Column(String)
+    tasks = Column(Text)
+    years_band = Column(String)
+    controls = Column(Text)
+    wet_or_dry = Column(String)
+    recorded_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    person = relationship("Person")
+
+
+class ScreeningSession(Base):
+    """The encounter. Replaces `screenings`, which carried a tier in its own
+    columns — the silicosis-shaped defect §8.1 names.
+
+    A session now produces zero or more ScreeningResult rows, one per
+    condition assessed. That single change is what makes tuberculosis a day
+    of adding rows rather than a migration of patient records.
+    """
+
+    __tablename__ = "screening_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    channel = Column(String, nullable=False)
+    screened_by = Column(String)
+    #: Curated site where known, free text otherwise (§15.6).
+    site_id = Column(Integer, ForeignKey("sites.id"))
+    site_text = Column(String)
+    #: The formal-sector seam. Null, or a 'community' programme, means outreach.
+    programme_id = Column(Integer, ForeignKey("programmes.id"))
+    #: Provenance as a natural key rather than a surrogate foreign key: §10.1
+    #: requires a result to name the instrument and rules that produced it,
+    #: and a code plus version answers that directly and survives any later
+    #: restructuring of the instrument tables. `0005_v2_instrument` may add a
+    #: foreign key alongside these if normalisation is wanted; the audit value
+    #: is in these two columns either way.
+    instrument_code = Column(String)
+    instrument_version = Column(Integer)
+    ruleset_version = Column(String)
+    #: Longitudinal link, for deterioration. Null where the worker declined
+    #: retention of a longitudinal record (§14.2) or this is a first visit.
+    previous_session_id = Column(Integer, ForeignKey("screening_sessions.id"))
+    #: Idempotency key, generated on the device when the session starts and
+    #: replayed on retry. A mobile retry or a gateway redelivery must not
+    #: create a second session (§10.3) — this is the column that makes the
+    #: duplicate-screening incident of 23 August structurally impossible.
+    client_session_uuid = Column(String, unique=True, index=True)
+    outreach_visit_id = Column(Integer, ForeignKey("outreach_visits.id"))
+    #: Screening duration is a pilot indicator and cannot be added
+    #: retrospectively (§13.3, §19.2), so the clock starts in the schema.
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    person = relationship("Person", foreign_keys=[person_id])
+    results = relationship("ScreeningResult", back_populates="session")
+
+    __table_args__ = (
+        CheckConstraint("channel IN ('APP','USSD')", name="ck_sessions_channel"),
+    )
+
+
+class ScreeningResult(Base):
+    """One row per condition assessed. **The single most important change in
+    the whole schema** (§8.1).
+
+    Carries the provenance §10.1 requires: which instrument version, which
+    ruleset, by what method, and whether a safety override fired. Nothing
+    clinical is ever produced by logic that cannot be named afterwards —
+    without this, every tier assigned before a threshold moved becomes
+    uninterpretable and no sensitivity claim can be made at all (§8.3).
+    """
+
+    __tablename__ = "screening_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Integer, ForeignKey("screening_sessions.id"), nullable=False)
+    #: A value, never a column name.
+    condition_code = Column(String, nullable=False)
+    tier = Column(String, nullable=False)
+    score = Column(Integer)
+    #: Fixed for rule-based classification; kept because the four-tier API
+    #: has always carried one and the dashboards read it.
+    confidence = Column(Float)
+    #: How the tier was reached. 'deterministic_rules' is the only value the
+    #: engine produces; the column exists so that a future method is
+    #: distinguishable in the data rather than inferred from a date.
+    method = Column(
+        String, nullable=False, default="deterministic_rules",
+        server_default=text("'deterministic_rules'"),
+    )
+    instrument_code = Column(String)
+    instrument_version = Column(Integer)
+    ruleset_version = Column(String)
+    #: Tier before deterioration and overrides, so the cascade is auditable
+    #: step by step rather than only at its end.
+    scored_tier = Column(String)
+    override_fired = Column(Integer, default=0, server_default=text("0"))
+    #: Codes of the safety rules that fired, comma-separated. Stored because
+    #: "the rule fired" and "the rule never matched" are different audit
+    #: stories.
+    override_rule_codes = Column(Text)
+    deterioration_changed = Column(Integer, default=0, server_default=text("0"))
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    session = relationship("ScreeningSession", back_populates="results")
+
+    __table_args__ = (
+        CheckConstraint("tier IN ('GREEN','YELLOW','ORANGE','RED')", name="ck_results_tier"),
+        CheckConstraint(
+            "scored_tier IS NULL OR scored_tier IN ('GREEN','YELLOW','ORANGE','RED')",
+            name="ck_results_scored_tier",
+        ),
+    )
+
+
+class ConsentText(Base):
+    """The exact wording a person was shown, versioned.
+
+    Consent cannot be applied retrospectively, and an ethics committee will
+    ask what was said (§8.5, §14.2). The words themselves live in the content
+    store, referenced by `message_code`, so one review and translation
+    pipeline covers consent text like every other patient-facing string
+    (§8.4).
+    """
+
+    __tablename__ = "consent_texts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, nullable=False)
+    version = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    message_code = Column(String, nullable=False)
+    status = Column(String, default="draft", server_default=text("'draft'"))
+    approved_by = Column(String)
+    approved_at = Column(DateTime)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+
+class ConsentRecord(Base):
+    """One row per permission per person: consent is layered and recorded as
+    data, never bundled or assumed (§14.2).
+
+    The six permissions are screening_and_referral, longitudinal_record,
+    contact_by_message, education_broadcast, research_and_statistics and
+    employer_disclosure. The last is future-phase, separate, specific and
+    refusable — building that boundary now, before any commercial pressure
+    exists, is what makes the formal-sector module defensible to a union, a
+    ministry and an ethics committee (§14.4).
+    """
+
+    __tablename__ = "consent_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    permission = Column(String, nullable=False)
+    granted = Column(Integer, nullable=False)
+    consent_text_id = Column(Integer, ForeignKey("consent_texts.id"))
+    channel = Column(String)
+    session_id = Column(Integer, ForeignKey("screening_sessions.id"))
+    recorded_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+    recorded_by = Column(String)
+    #: Set when a permission is later withdrawn. The original row is kept:
+    #: the retention and withdrawal mechanism must be demonstrable (§14.3).
+    withdrawn_at = Column(DateTime)
+
+    person = relationship("Person")
+
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('screening_and_referral','longitudinal_record',"
+            "'contact_by_message','education_broadcast','research_and_statistics',"
+            "'employer_disclosure')",
+            name="ck_consent_permission",
+        ),
+    )
+
+
+class PersonMatchQueue(Base):
+    """Probable identity matches awaiting a human decision.
+
+    Never merged automatically (§8.2). Duplicates are an annoyance that can
+    be fixed later; a false merge is a clinical safety event that mixes two
+    histories with no way to detect it by inspection. A deterministic match
+    on a hashed identity number is applied directly; everything else lands
+    here.
+    """
+
+    __tablename__ = "person_match_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    incoming_person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    candidate_person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    score = Column(Float)
+    evidence = Column(Text)
+    status = Column(String, default="pending", server_default=text("'pending'"))
+    resolved_by = Column(String)
+    resolved_at = Column(DateTime)
+    created_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','merged','rejected')",
+            name="ck_match_queue_status",
+        ),
+    )
+
+
+class PersonMerge(Base):
+    """An applied merge, and the evidence it rested on.
+
+    Reversible from the first day (§8.2): the losing person row is kept and
+    flagged via Person.merged_into_id rather than deleted, so an incorrect
+    merge can be undone with both histories intact.
+    """
+
+    __tablename__ = "person_merges"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    winner_person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    loser_person_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
+    evidence = Column(Text)
+    merged_by = Column(String)
+    merged_at = Column(DateTime, default=_utcnow, server_default=_NOW)
+    reversed_by = Column(String)
+    reversed_at = Column(DateTime)
