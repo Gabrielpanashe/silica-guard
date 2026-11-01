@@ -543,6 +543,93 @@ Every approved patient-facing string in one language. A client caches this and r
 
 **Not served here:** the strings in `content/EXCEPTIONS.md`, which by definition cannot come from the store. There are three, each reviewed.
 
+### Identity — `/api/v2/persons` — LIVE
+
+Master Reference §8.2. The telephone number is **not** an identity key anywhere in this group of routes.
+
+**`POST /api/v2/persons/resolve`** — no auth
+
+Resolve what is known about a worker to a person. Always returns a person a screening can be written against: an uncertain match produces a new person plus a queue entry, never a blocked screening.
+
+```json
+{
+  "participant_code": "8NBNFM",   // the card in his pocket, if he has it
+  "national_id": "63-123456-A-00", // voluntary; stored as a keyed hash only
+  "name": "Tendai Moyo",
+  "phone": "0771234567",
+  "age_band": "30-39",
+  "sex": "male",
+  "site_id": 3,
+  "site_text": "Globe & Phoenix",
+  "language": "sn",
+  "channel": "APP"                 // APP or USSD; changes the anonymous case
+}
+```
+
+At least one of `participant_code`, `national_id`, `name` or `phone` is required — a bundle of demographics identifies nobody and is a `400`.
+
+```json
+{
+  "person_id": 41,
+  "participant_code": "8NBNFM",
+  "outcome": "created_pending_review",
+  "provisional": false,
+  "provisional_reason": null,
+  "candidates": [
+    {"person_id": 12, "participant_code": "K4R2TP", "score": 0.8,
+     "reasons": ["name similar (0.96)", "shares a contact number", "same age band", "same sex"]}
+  ],
+  "queued_match_ids": [7]
+}
+```
+
+`outcome` is one of:
+
+| Value | Meaning |
+|---|---|
+| `matched_participant_code` | He presented his card. **Applied.** |
+| `matched_national_id` | Deterministic match on the hashed identity number. **Applied.** |
+| `created` | Nothing looked like him; a clean new record. |
+| `created_pending_review` | A new record, with probable matches **queued for a human and not applied**. |
+| `created_provisional` | §8.2 part four: a USSD caller with no usable participant code. |
+
+**The response carries no name and no number.** The route is unauthenticated, on the same precedent as the screening path, so a candidate is identified by participant code and the reviewer opens each side with a token.
+
+`503` means the server's identity keys are not configured. Nothing was saved; it is retryable, and the mobile offline queue should treat it that way rather than discarding the screening.
+
+**`GET /api/v2/persons/{participant_code}`** — Bearer
+
+The person behind a card, following any merge — so a card printed before a merge still works. Returns `name` and `phone` decrypted, plus `age_band`, `sex`, `language`, `provisional`, `provisional_reason`, `has_national_id` (whether one was given, never the number), `session_count` and `merged_into_person_id`.
+
+Bearer-protected deliberately: public, this would let anyone walk a six-character code space and harvest names and telephone numbers. **The consequence is a real gap** — the VHW application has no login, so it cannot yet show "is this the right person?" at the next outreach. It needs a device credential (item 1.13), and that flow waits for it.
+
+**`GET /api/v2/persons/matches/queue?limit=50`** — Bearer
+
+Probable matches awaiting a human decision — §8.2's "never merged automatically", as a worklist. Each row carries both participant codes, the `score`, the `reasons`, the `status` and `created_at`. No name and no number: a reviewer opens each side by code.
+
+**`POST /api/v2/persons/matches/{match_id}`** — Bearer
+
+```json
+{"decision": "merge", "decided_by": "sister.moyo"}
+```
+
+`merge` applies it with the queued evidence attached, so the reason the reviewer was shown the pair becomes the reason recorded against the merge. `reject` is **recorded, not discarded**: "reviewed, and they are different people" has to survive, or the same pair is queued again at the next screening. A decided row cannot be decided twice.
+
+**`POST /api/v2/persons/merges`** — Bearer
+
+```json
+{"winner_person_id": 12, "loser_person_id": 41, "merged_by": "sister.moyo", "reason": "presented the same card"}
+```
+
+Contacts and sessions move to the winner; the winner inherits only what it was missing and **overwrites nothing**. The losing record is kept and flagged, never deleted. Merging a person into themselves, or chaining a merge onto an already-merged record, is a `400`.
+
+**`DELETE /api/v2/persons/merges/{merge_id}?reversed_by=supervisor`** — Bearer
+
+Reverses a merge, keeping both the merge and the reversal in the audit. **Contacts and sessions are not moved back** — which rows belonged to which record before the merge is not recoverable from the surviving data, so the reversal restores the two identities and a health worker reassigns the encounters.
+
+**Today any dashboard login can merge two people.** There are two flat accounts; a merge is a clinical safety event and belongs to one named role. Item 1.13 scopes it.
+
+
 ---
 
 ## Summary table
@@ -567,3 +654,9 @@ Every approved patient-facing string in one language. A client caches this and r
 | `/api/dashboard/today` | GET | LIVE (unauthenticated, VHW Home-screen numbers) |
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |
 | `/api/v2/content` | GET | LIVE (first v2 route — approved patient-facing strings, read-only) |
+| `/api/v2/persons/resolve` | POST | LIVE (unauthenticated; probable matches queued, never applied) |
+| `/api/v2/persons/{participant_code}` | GET | LIVE (Bearer — decrypts a name and a number) |
+| `/api/v2/persons/matches/queue` | GET | LIVE (Bearer — the human review worklist) |
+| `/api/v2/persons/matches/{match_id}` | POST | LIVE (Bearer — merge or reject one pair) |
+| `/api/v2/persons/merges` | POST | LIVE (Bearer — apply a merge, reversibly) |
+| `/api/v2/persons/merges/{merge_id}` | DELETE | LIVE (Bearer — reverse one) |

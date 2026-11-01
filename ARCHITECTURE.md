@@ -75,7 +75,15 @@ The hardest problem in the system and the one most likely to quietly destroy the
 - Anonymous USSD: a supplied participant code attaches to that person; otherwise a **provisional identity flagged unverified**, resolved by a health worker at the next contact. Never silently attach a screening to whoever the number was last seen with.
 - Biometrics considered and rejected for the pilot: consent and regulatory burden, hardware, and the surveillance perception that makes miners avoid a programme.
 
-**Current code**: `miners.phone` is `UNIQUE NOT NULL` (`db_models.py:69`). `backend/services/ussd_handler.py:77-84` silently attaches or creates a miner by phone — the exact shortcut the rule forbids. `GET /api/workers/{phone}` and the mobile app's `resolveMinerId()` make the same assumption. No participant code, no review queue, no merge history.
+**Built, as of 1 November 2026.** `persons` and `contacts` (migration `0004`), the name and the provisional flag (`0007`), `backend/services/crypto.py`, `backend/services/identity.py` and `backend/routers/persons.py`. All four parts of the rule above are in code and tested: a six-character participant code; a telephone number as a `Contact` row with validity dates and no uniqueness anywhere; matching on the bundle with a deterministic hit on the hashed national identity number applied and **everything else queued for a human**; and a provisional identity for the anonymous USSD caller. Merges keep the losing record, record who, when and on what evidence, and reverse.
+
+`resolve()` always returns a person a screening can be written against. That is deliberate: an uncertain identity produces a duplicate plus a queue entry, never a blocked screening — rule 7 and §8.2 agree that a duplicate is the failure to prefer.
+
+Identifiers are stored twice, hashed for lookup and encrypted for use, because a number must be *found* (the USSD webhook arrives with a caller number) and also *sent to*. One consequence is worth knowing: a name encrypted at rest cannot be compared by edit distance, so fuzzy matching narrows the register on indexed hashes first and decrypts only that handful of rows, in memory (`docs/IMPLEMENTATION_PLAN.md` §12 item 16).
+
+**Planned, and named rather than half-done**: `backend/services/ussd_handler.py:77-84` still attaches or creates a miner by phone — the exact shortcut this rule forbids. Deleting it before the USSD route is on v2 would break the only self-screening channel there is, so it goes with item 1.9, with `identity.py` already in place for it to call. `GET /api/workers/{phone}` and the mobile application's `resolveMinerId()` keep the same assumption until the v1 adapter (1.11).
+
+**One flow is blocked, not forgotten.** The VHW application cannot yet confirm an identity at the next outreach: showing "is this the person?" needs the name, and `GET /api/v2/persons/{code}` requires a token, because public it would let anyone walk a six-character code space and harvest names and numbers. The application needs a device credential — item 1.13. Separately, any dashboard login can merge two people today, since there are only two flat accounts; a merge is a clinical safety event and belongs to one named role.
 
 ### 3. The instrument and rules as versioned data
 

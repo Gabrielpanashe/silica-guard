@@ -68,7 +68,7 @@ See `CONTRIBUTING.md`. In brief: short-lived branches, protected `main`, reviewe
 ## Configuration and secrets
 
 - All configuration is environment-based. No environment-specific values in code.
-- `backend/.env.example` lists every required variable with a description. Real values never enter the repository.
+- `backend/.env.example` lists every required variable with a description. Real values never enter the repository — and neither do working development ones for `IDENTITY_HMAC_KEY` or `CONTACT_ENCRYPTION_KEY`: a key committed to an example file is indistinguishable from a real one to the secret scanner, so those two are named with no value and you generate your own (`docs/SECURITY.md`).
 - Secrets live in the hosting platform and the vault, nowhere else.
 - **Model and gateway credentials are separate per environment**, so staging can never send a real message to a real person. A test run that sends a silicosis referral message to a real number is a data breach and a distressing event. *(Planned — one credential set today.)*
 - `render.yaml` **does not govern the live backend service** — it was created through Render's REST API and never Blueprint-synced. Environment variables are set on the service itself. Treat the file as documented intent until it is wired up as a real Blueprint.
@@ -126,6 +126,13 @@ cd backend
 python -m venv venv && ./venv/Scripts/activate           # Windows
 pip install -r requirements.txt -r requirements-dev.txt
 copy .env.example .env                                    # fill from the vault; never production values
+
+# Identity keys (§16.2): .env.example names them and carries no values, so
+# generate your own. Without them /api/v2/persons/* returns a clean 503 and
+# every v1 route still works — fine until you touch identity.
+python -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"   # IDENTITY_HMAC_KEY
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # CONTACT_ENCRYPTION_KEY
+
 uvicorn main:app --reload                                 # http://127.0.0.1:8000, Swagger at /docs
 
 pytest                                                    # full suite

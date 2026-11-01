@@ -22,6 +22,7 @@ from routers import (
     facilities,
     mines,
     outreach,
+    persons,
     referral_lookup,
     screening,
     ussd,
@@ -132,6 +133,10 @@ app.include_router(education.router)
 # First /api/v2 route (§8.4) — the content store, read-only. See
 # routers/content.py for why it is unauthenticated and has no write side.
 app.include_router(content.router)
+# Identity resolution (§8.2) — resolve is unauthenticated for the VHW
+# application; everything returning or changing a direct identifier needs a
+# token. routers/persons.py documents both, and the gap each leaves.
+app.include_router(persons.router)
 
 
 @app.get("/api/health")
