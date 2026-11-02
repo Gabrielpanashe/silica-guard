@@ -981,6 +981,8 @@ Encounters newest first, each with its **per-condition results** — a list, not
 
 Returns **no identified record** — only counts — which is why it sits behind `aggregate.read`, the capability a district coordinator, a national stakeholder and a programme sponsor all hold while none of them may read a person.
 
+**A programme sponsor sees only their own cohort** (built 2 November 2026). §16.3's rows are not equivalent: a district coordinator is refused *identified* records outside their district and may still see the national picture, while a sponsor is refused "anything outside their cohort" — the aggregate included, because §14.4 means an employer or insurer paying for screening must not be handed a picture of anybody else's workforce along with their own. Every count, the referral numbers included, is narrowed through the sessions in that programme. A national stakeholder and a researcher are deliberately **not** narrowed: the national picture is what those roles are for. Whether aggregates should also be narrowed by district is an open question for the team, not a gap in this route.
+
 **This needs a token, and v1's `GET /api/dashboard/today` does not.** That is a deliberate difference: the v2 response names conditions, and an open endpoint returning per-condition clinical counts is a disclosure once a second condition exists. The mobile Home screen therefore needs a device credential — item 1.13, the same gap `routers/persons.py` records for the identity lookup.
 
 
@@ -1009,6 +1011,8 @@ Master Reference §13.3. **Why this exists when `GET /api/outreach` works.** The
 **`incomplete_sessions`** is counted for the same reason as on the dashboard: a session that produced no result is absent from every tier count, so a visit generating many of them looks like a quiet visit rather than a usability finding.
 
 Returns **no identified record**, which is why it sits behind `aggregate.read` — the capability §16.3's district coordinator holds while being refused every person. Every read writes an audit row.
+
+**A programme sponsor is refused with a `403`**, rather than narrowed. `outreach_visits` carries no programme and its `site` is free text by deliberate design (see the Outreach section), so there is no column a cohort scope could narrow on and serving the rollup would include every other site — which §16.3's "anything outside their cohort" forbids. Deny by default, with the refusal recorded. Resolved by item 1.11, which maps `outreach_visits` onto the v2 tables. A district coordinator is served: outreach planning is what that role is for.
 
 **Read-only, deliberately.** Planning a visit and sending its announcements stay on `POST /api/outreach` and `POST /api/outreach/{id}/send-now` until the adapter (item 1.11). They write to `outreach_visits`, which v2 does not replace, and a duplicate write path is how two of them start disagreeing about one row.
 

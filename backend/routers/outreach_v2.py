@@ -36,11 +36,50 @@ from database import get_db
 from db_models import OutreachVisit, Referral, ScreeningResult, ScreeningSession
 from models_v2 import ConditionTierCountOut, OutreachVisitOut2
 from routers.auth import request_id, require
-from services import audit
+from services import audit, authz
 from services.authz import Principal
 from services.rules_engine import TIER_ORDER
 
 router = APIRouter(prefix="/api/v2", tags=["outreach"])
+
+
+def _refuse_a_cohort_role(principal: Principal, rid: str) -> None:
+    """A visit rollup cannot be narrowed to a cohort, so a cohort role is
+    refused it.
+
+    §16.3 refuses a programme sponsor "anything outside their cohort", and
+    `outreach_visits` carries no programme: the table predates the v2 schema
+    and its `site` is free text by deliberate design (`docs/API_CONTRACT.md`),
+    so there is no column a scope could narrow on. Serving the rollup anyway
+    would hand a sponsor every other site's numbers, which is the one thing
+    that row forbids, so this refuses instead — deny by default, and the
+    refusal is recorded like any other.
+
+    A district coordinator is **not** refused: §16.3 limits that role to
+    identified records outside its district, and a visit rollup names no
+    individual. Whether aggregates should also be narrowed by district is a
+    question for the team rather than a gap in this route — the role declares
+    a district scope that no aggregate route applies, and the master document
+    does not require it.
+
+    Closed by item 1.11, which maps `outreach_visits` onto the v2 tables.
+    """
+    if not authz.scoped_to_a_cohort(principal):
+        return
+    audit.record_refusal(
+        principal, "aggregate.read", object_type="outreach",
+        object_id="rollup", request_id=rid,
+        details={"role": principal.role, "reason": "visits carry no programme"},
+    )
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "An outreach visit rollup cannot be narrowed to one programme: "
+            "`outreach_visits` carries no programme, so serving it would "
+            "include every other site. §16.3 refuses this role anything "
+            "outside its cohort. Resolved by item 1.11."
+        ),
+    )
 
 
 def _rollup(db: Session, visit: OutreachVisit) -> OutreachVisitOut2:
@@ -108,6 +147,7 @@ def list_visits(
     rid: str = Depends(request_id),
 ):
     """Planned visits, soonest-scheduled last, each with its rollup."""
+    _refuse_a_cohort_role(principal, rid)
     visits = list(
         db.scalars(
             select(OutreachVisit)
@@ -130,6 +170,7 @@ def get_visit(
     principal: Principal = Depends(require("aggregate.read")),
     rid: str = Depends(request_id),
 ):
+    _refuse_a_cohort_role(principal, rid)
     visit = db.get(OutreachVisit, visit_id)
     if visit is None:
         raise HTTPException(status_code=404, detail="No such outreach visit")

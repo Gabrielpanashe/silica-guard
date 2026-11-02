@@ -38,7 +38,7 @@ from models_v2 import (
     SessionSummaryOut,
 )
 from routers.auth import request_id, require
-from services import audit, consent, identity
+from services import audit, authz, consent, identity
 from services.authz import Principal
 from services.rules_engine import TIER_ORDER
 
@@ -170,12 +170,21 @@ def dashboard(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     since = now - timedelta(days=PERIODS[period])
 
+    # §16.3: a programme sponsor is refused "anything outside their cohort",
+    # which is stronger than every other scope line in the table -- a district
+    # coordinator is refused *identified* records outside their district and
+    # may still see national aggregates, while a sponsor is refused the
+    # aggregate too. §14.4 is why: an employer or insurer paying for screening
+    # must not be handed a picture of anybody else's workforce with their own.
+    # Narrows to nothing for a sponsor with no programme, never to everything.
+    statement = authz.for_aggregate_sessions(
+        select(ScreeningSession).where(ScreeningSession.created_at >= since),
+        ScreeningSession.programme_id,
+        principal,
+    )
     sessions = list(
         db.scalars(
-            select(ScreeningSession)
-            .where(ScreeningSession.created_at >= since)
-            .order_by(ScreeningSession.created_at.desc())
-            .limit(limit)
+            statement.order_by(ScreeningSession.created_at.desc()).limit(limit)
         ).all()
     )
     session_ids = [s.id for s in sessions] or [-1]
@@ -198,9 +207,20 @@ def dashboard(
     # 2 November 2026, reported an all-time figure under a `period: "today"`
     # label.
     v2 = Referral.result_id.isnot(None)
+    # A sponsor's referral numbers must come from their cohort's sessions
+    # only, for the same reason as the counts above -- keyed through the
+    # sessions in scope, because `referrals` carries no programme of its own.
+    in_scope = (
+        [Referral.result_id.in_(
+            select(ScreeningResult.id).where(ScreeningResult.session_id.in_(session_ids))
+        )]
+        if authz.scoped_to_a_cohort(principal) else []
+    )
 
     def _count(*conditions) -> int:
-        return int(db.scalar(select(func.count(Referral.id)).where(v2, *conditions)) or 0)
+        return int(db.scalar(
+            select(func.count(Referral.id)).where(v2, *in_scope, *conditions)
+        ) or 0)
 
     referrals_raised = _count(Referral.created_at >= since)
     referrals_attended = _count(Referral.attended_at >= since)
