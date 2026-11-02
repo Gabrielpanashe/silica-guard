@@ -757,6 +757,10 @@ Master Reference §10.3. **The deterministic cascade is the tier of record. No m
 
 `instrument_code` may be omitted only when the database holds exactly one instrument. An instrument is chosen deliberately, never guessed.
 
+`channel` must be `"APP"` or `"USSD"` (case-insensitive); anything else is a **`400`, refused before the session row exists**. The channel decides which questions this screening was required to answer — §13.1 lets the Clinical Lead define a shorter USSD subset as data, because a long instrument plus consent does not fit a 180-second session — so an unrecognised channel has no defined subset and would be handed every unlimited question and none of the limited ones: a silently different instrument, scored without complaint. Nothing is lost by refusing, because nothing has been written yet and a client sends a constant. This is the one channel problem that cannot be made safe by recording it. **Added 2 November 2026**; previously an unknown value was scored.
+
+**Channel equivalence is a law, not a convention.** For a fixed set of answers the result does not depend on the channel — asserted over every answer the instrument offers in `backend/tests/test_channel_equivalence.py`, through the engine and through this route, including provenance. The subset changes which questions are asked and nothing else.
+
 **Response**
 
 ```json

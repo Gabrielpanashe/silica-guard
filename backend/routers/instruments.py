@@ -39,11 +39,12 @@ from db_models import Instrument
 from models_v2 import InstrumentOut
 from services import instrument_store
 from services.instrument_store import InstrumentLoadError
+#: One definition, in the module that uses it to decide which questions a
+#: screening was required to answer.
+from services.rules_engine import CHANNELS
 
 router = APIRouter(prefix="/api/v2", tags=["instrument"])
 
-#: Channels a question can be limited to, matching `instrument_channels`.
-CHANNELS = ("app", "ussd")
 
 
 def _channel_questions(document: dict, channel: str) -> list[str]:
