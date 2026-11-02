@@ -46,7 +46,7 @@ from models_v2 import (
     ScreeningOutcomeOut,
     ScreeningSubmitIn,
 )
-from services import crypto, referrals_v2, screening_v2
+from services import audit, crypto, referrals_v2, screening_v2
 from services.consent import ConsentMissing
 from services.identity import IdentityError
 from services.referrals_v2 import ReferralError
@@ -217,12 +217,27 @@ def get_referral(referral_code: str, db: Session = Depends(get_db)):
     override fired and which rules — so the facility knows what to look for
     rather than receiving a bare instruction to investigate.
     """
-    referral = db.scalar(
-        select(Referral).where(Referral.referral_code == referral_code.upper())
-    )
+    code = referral_code.upper()
+    referral = db.scalar(select(Referral).where(Referral.referral_code == code))
     if referral is None:
+        # Recorded as a refusal on its own session: unauthenticated, a
+        # six-character code space, and rate limiting is Phase Two, so until
+        # it exists the log is what makes a walk through that space visible.
+        # See `routers/referral_lookup.py` for the reasoning in full.
+        audit.record_refusal(
+            audit.FACILITY_LOOKUP, "referral.read", object_type="referral",
+            object_id=code, details={"reason": "unknown referral code"},
+        )
         raise HTTPException(status_code=404, detail="No referral with that code")
-    return _referral_out(referral)
+    out = _referral_out(referral)
+    audit.record(
+        db, audit.FACILITY_LOOKUP, "referral.read",
+        object_type="referral", object_id=referral.referral_code,
+        person_id=referral.person_id,
+        details={"condition": referral.condition_code, "status": referral.status},
+    )
+    db.commit()
+    return out
 
 
 @router.post("/referrals/{referral_code}/close", response_model=ReferralOut2)
@@ -251,7 +266,21 @@ def close_referral(
         )
     except ReferralError as exc:
         status = 404 if "no referral" in str(exc) else 400
+        audit.record_refusal(
+            audit.FACILITY_LOOKUP, "referral.close", object_type="referral",
+            object_id=referral_code.upper(),
+            details={"reason": "unknown code" if status == 404 else "rejected outcome"},
+        )
         raise HTTPException(status_code=status, detail=str(exc))
+    # In the same transaction as the close it records. §10.4's structured
+    # outcome is the pilot's labelled dataset, and an unauthenticated route
+    # writing into it is exactly what §16.3's audit is for.
+    audit.record(
+        db, audit.FACILITY_LOOKUP, "referral.close",
+        object_type="referral", object_id=referral.referral_code,
+        person_id=referral.person_id,
+        details={"outcome": payload.outcome, "condition": referral.condition_code},
+    )
     db.commit()
     db.refresh(referral)
     return _referral_out(referral)

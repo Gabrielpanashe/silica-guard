@@ -60,6 +60,7 @@ ACTIONS = (
     "screening.submit",
     "screening.read",
     "referral.read",
+    "referral.attend",
     "referral.close",
     "aggregate.read",
     "export.pseudonymised",
@@ -79,6 +80,33 @@ _FORBIDDEN_DETAIL_KEYS = frozenset({
 
 class AuditError(ValueError):
     """An unknown action, or personal data in a log line."""
+
+
+#: Longest `object_id` a caller may put in the log. The referral-code routes
+#: are unauthenticated and record the code that was *attempted*, which means
+#: an arbitrary string from the request path reaches this table. Codes are
+#: seven characters; anything longer is truncated rather than stored, because
+#: a log is not a place to find out how long a caller's input can be.
+MAX_OBJECT_ID = 64
+
+
+#: The caller of the four referral-code routes, which have no login: hospital
+#: staff key a code into a page (§16.6, and `routers/referral_lookup.py`).
+#:
+#: A sentinel rather than `principal=None`, because the columns would then be
+#: NULL and a NULL actor must mean one thing. Left as None it would be
+#: indistinguishable from a route that forgot to pass its principal -- and
+#: "who read this worker's record?" has to be answerable with "an
+#: unauthenticated facility caller", not with silence. There is deliberately
+#: no `users` row and no role in `authz.ROLES`: this principal holds no
+#: capability and `require()` can never produce it.
+FACILITY_LOOKUP = Principal(
+    user_id=None,
+    email="",
+    role="facility_lookup_unauthenticated",
+    scope={},
+    legacy=False,
+)
 
 
 def _utcnow() -> datetime:
@@ -134,7 +162,7 @@ def record(
         actor_role=principal.role if principal else None,
         action=action,
         object_type=object_type,
-        object_id=str(object_id) if object_id is not None else None,
+        object_id=str(object_id)[:MAX_OBJECT_ID] if object_id is not None else None,
         person_id=person_id,
         at=_utcnow(),
         request_id=request_id or new_request_id(),

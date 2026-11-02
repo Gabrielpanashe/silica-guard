@@ -380,6 +380,18 @@ Fires the hospital referral-alert email (`services/email_notifications.py`, Rese
 
 **Errors**: `404` unknown phone, or the worker has no referral on record.
 
+### Every referral-code lookup is audited — LIVE 2 November 2026
+
+Applies to all four unauthenticated referral-code routes: `GET /api/referrals/lookup/{code}`, `POST /api/referrals/lookup/{code}/confirm-attendance`, and the v2 pair `GET /api/v2/referrals/{code}` and `POST /api/v2/referrals/{code}/close`.
+
+They have no login by design — hospital staff have no dashboard account — and the v1 lookup returns a name and a mine site against a six-character code, which makes this the most exposed identified-data surface in the system. §16.3 requires every clinical read and write to be recorded, and these four were the only ones escaping it.
+
+A hit writes an `allowed=True` row. An unknown code, a repeat attendance confirmation and a rejected outcome each write `allowed=False`, so a walk through the code space appears as a run of refusals in `GET /api/v2/audit/refusals` rather than as nothing at all. The actor is recorded as `facility_lookup_unauthenticated` rather than left empty, because a NULL actor must mean one thing; that role holds no capability and `require()` can never produce it.
+
+**No response shape changes.** Two behaviours do: a read that cannot be recorded returns an error rather than being served quietly, because an unauthenticated read of an identified record that leaves no trace is what §16.3 forbids; and a log failure on the *miss* path still returns a clean `404`, so the log's state cannot be probed by watching status codes.
+
+Rate limiting and lockout are Phase Two (`docs/SECURITY.md`). This is detection without prevention, deliberately — and until they exist an unauthenticated caller can grow the audit table one row per attempt, which the rate limit is what bounds.
+
 ---
 
 ## Outreach
