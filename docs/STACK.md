@@ -178,6 +178,49 @@ pytest tests/test_screening.py::test_name -v              # one test
 
 **Test the offline flow**: airplane mode → three full screenings → reconnect → return to Home (triggers sync) → verify all three on the backend, not just in the app's UI. Nobody has run this yet.
 
+### Recovering a half-migrated database
+
+**Precondition — check this first, because the procedure is wrong for any other state.** This applies when `alembic_version` is *behind* while `Base.metadata.create_all()` has already created the newer **tables**. That is what a deploy produces when the start command does not run migrations: `create_all()` creates a missing table and can never add a missing column to a table that already exists.
+
+Confirm it before doing anything:
+
+```
+curl -s https://silicaguard-backend.onrender.com/api/health?recheck=1
+```
+
+`schema: "drifted"` with `schema_missing` naming columns on tables that already exist is this state. A missing *whole table* is a different problem and needs a plain `alembic upgrade head`.
+
+**`alembic upgrade head` on its own fails here**, and verified failing: it tries to run the migration that creates the tables `create_all()` already made, and stops at `DuplicateTable: relation "consent_texts" already exists` with nothing applied.
+
+The sequence below was rehearsed against real PostgreSQL 16 by reproducing the state exactly — migrate to `f5bebe94f599`, boot the application so `create_all()` runs, then repair — and verified by `database.missing_schema()` reporting nothing, Alembic's own autogenerate check reporting no drift, and the two broken routes answering again.
+
+```
+cd backend
+
+# 1. Tell Alembic what create_all() already built. True for every table it
+#    created from the current models, which is what migrations 0004-0008
+#    build up to. Nothing is written to the schema by a stamp.
+./venv/Scripts/python.exe -m alembic stamp 0008_consent_text_uniqueness
+
+# 2. The only migration whose work is genuinely missing: 0009 adds columns to
+#    `referrals` and `screening_answers`, which PRE-EXISTED, so create_all()
+#    left them alone. This is the step that actually repairs anything.
+./venv/Scripts/python.exe -m alembic upgrade 0009_v2_referrals
+
+# 3. 0010 creates `audit_log` and `users`, which create_all() already made.
+./venv/Scripts/python.exe -m alembic stamp head
+
+# 4. Prove it, rather than assume it.
+./venv/Scripts/python.exe -m alembic check          # expect: no new upgrade operations
+curl -s ".../api/health?recheck=1"                   # expect: schema: "ok"
+```
+
+**Why a stamp is safe in steps 1 and 3 and would not be elsewhere.** A stamp records a revision as applied without touching the schema, so it is only ever correct when the schema already matches what that revision produces. Here it does, because `create_all()` builds tables from the same models the migrations converge on — and step 4's drift check is what confirms that rather than trusting it. Stamping past a migration whose work is *not* already present would leave a database that Alembic believes is current and is not, which is strictly worse than the outage, because the next deploy would skip the repair silently.
+
+**The alternative, and why it is not the default here.** `ARCHITECTURE.md` decision 1 and §8.1 say demonstration data is reseeded, not migrated — so dropping every table, running `alembic upgrade head` on the empty database and reseeding would give a clean migration history with no stamps in it, which is a better story for the ethics submission's data-flow description. It also destroys the demonstration rows the team has been demoing against, which had grown to real use by late September. Prefer it once staging exists (Phase Zero 0.5) and the demonstration target is not also production.
+
+**Then fix the cause**, or this recurs on the next deploy that adds a column: the start command must be `python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT`, set **on the Render service** — `render.yaml` records it but governs nothing, having been created through Render's REST API and never Blueprint-synced.
+
 ## Observability and support
 
 - Error and crash monitoring on the backend with alerts to both engineers. *(Planned)*
