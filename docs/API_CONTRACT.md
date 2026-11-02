@@ -885,6 +885,90 @@ Both successful and failed logins are audited. §15.4 already records that this 
 Clients pass `X-Request-Id` to correlate the audit rows one request writes, which is what makes a mobile synchronisation traceable from the handset's own log.
 
 
+### The active instrument — `GET /api/v2/instrument/active` — LIVE, no auth
+
+Master Reference §10.1. What the mobile application fetches before an outreach visit so the handset can run the same cascade with no connectivity — **offline is the normal case** — and what unblocks the JavaScript port of `services/predicates.py` (item 1.14a).
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `channel` | `app` | `app` or `ussd`. **Annotates, does not filter** — see below. |
+| `code` | — | Required only when the database holds more than one instrument. An instrument is chosen deliberately, never guessed. |
+
+```json
+{
+  "code": "SILICA-ASM",
+  "version": 1,
+  "status": "approved",
+  "approved_by": "…",
+  "approved_at": "2026-11-01",
+  "ruleset_version": "SILICA-ASM-v1",
+  "channel": "ussd",
+  "channel_questions": ["Q1", "Q2", "Q5"],
+  "instrument": { "…the whole document…" }
+}
+```
+
+**`instrument` is the complete document, including questions this channel does not ask.** That is a safety decision, not an oversight. Removing them would be the obvious optimisation and would silently change what the rules do: a question absent from the document can never be `unknown`, so a safety rule of the form `{"unknown": "Q"}` — the §12.2 item 10 protection that stops an unanswered red flag reading as a negative — would stop firing. A transport optimisation that disarms a red-flag rule is the worst kind of bug, because nothing fails and the tier is simply wrong.
+
+So `channel_questions` names what to *render* while the rules are evaluated over the whole document, exactly as `services/rules_engine.py` does. The two interpreters are given identical input, which is the only way "channels are equivalent" can be guaranteed rather than asserted.
+
+**Branching is not resolved here.** A question whose `branching` predicate depends on an answer cannot be known before the answers exist; the device evaluates it as it goes.
+
+`instrument` is in the shape the rules engine consumes, so the device's interpreter is a *port* rather than a reimplementation.
+
+`404` when nothing is approved — the state until instrument version one lands, and correct rather than a fault. A device must never be handed a draft to screen against.
+
+**`GET /api/v2/instrument/versions`** — no auth. Every stored version with its status and approver, and **no clinical content**. Exists so "which instrument is this server serving?" is answerable without database access — the question §10.1 says every clinical output must be traceable to.
+
+### A worker's history — `GET /api/v2/persons/{participant_code}/sessions` — Bearer, `screening.read`
+
+Encounters newest first, each with its **per-condition results** — a list, not a tier. Follows a merge, so a card printed before one still finds the history the merge joined, which is the reason to perform a merge at all.
+
+```json
+{
+  "person_id": 41,
+  "participant_code": "8NBNFM",
+  "longitudinal_consent": true,
+  "session_count": 3,
+  "sessions": [
+    {"session_id": 112, "channel": "APP", "site": "Globe & Phoenix",
+     "instrument_code": "SILICA-ASM", "instrument_version": 1,
+     "started_at": "…", "completed_at": "…", "previous_session_id": 108,
+     "primary_tier": "ORANGE",
+     "results": [{"condition": "silicosis", "tier": "ORANGE", "…": "…"}],
+     "referral_codes": ["SG-4K7Q"]}
+  ]
+}
+```
+
+`longitudinal_consent: false` is why a history may be shorter than the number of encounters: without it the sessions are never linked, and a trend drawn across them would be an inference the worker refused (§14.2).
+
+**Refused to `national_stakeholder`, `researcher`, `programme_sponsor` and `administrator`** — §16.3's "cannot see" column, including "administrative access is not a licence to read records". Every read writes an audit row.
+
+### The day — `GET /api/v2/dashboard/{today|week|month}` — Bearer, `aggregate.read`
+
+**Counts per condition *and* tier, not per tier alone.** The v1 dashboard counts tiers, which works only while there is one condition: `high_risk_count` becomes ambiguous the day tuberculosis is added — high risk of *what*?
+
+```json
+{
+  "period": "today", "from_date": "…", "to_date": "…",
+  "sessions": 14, "people": 12, "incomplete_sessions": 1,
+  "by_condition_and_tier": [
+    {"condition": "silicosis", "tier": "GREEN", "count": 8},
+    {"condition": "silicosis", "tier": "ORANGE", "count": 3}
+  ],
+  "referrals_open": 3, "referrals_attended": 1,
+  "referrals_closed_with_outcome": 1, "worsened": 2
+}
+```
+
+**`incomplete_sessions` is counted rather than hidden.** A session that produced no result because an applicable question was unanswered (§13.1) is absent from every tier count, so without a separate number a channel that keeps producing them looks like a channel nobody is using.
+
+Returns **no identified record** — only counts — which is why it sits behind `aggregate.read`, the capability a district coordinator, a national stakeholder and a programme sponsor all hold while none of them may read a person.
+
+**This needs a token, and v1's `GET /api/dashboard/today` does not.** That is a deliberate difference: the v2 response names conditions, and an open endpoint returning per-condition clinical counts is a disclosure once a second condition exists. The mobile Home screen therefore needs a device credential — item 1.13, the same gap `routers/persons.py` records for the identity lookup.
+
+
 ---
 
 ## Summary table
@@ -929,3 +1013,7 @@ Clients pass `X-Request-Id` to correlate the audit rows one request writes, whic
 | `/api/v2/users/{id}` | DELETE | LIVE (Bearer — deactivates, never deletes) |
 | `/api/v2/audit/persons/{id}` | GET | LIVE (Bearer, `person.read` — not an administrator) |
 | `/api/v2/audit/refusals` | GET | LIVE (Bearer, `admin.manage`) |
+| `/api/v2/instrument/active` | GET | LIVE (the whole instrument, for a device to interpret offline) |
+| `/api/v2/instrument/versions` | GET | LIVE (provenance only, no clinical content) |
+| `/api/v2/persons/{participant_code}/sessions` | GET | LIVE (Bearer, `screening.read` — per-condition results) |
+| `/api/v2/dashboard/{today\|week\|month}` | GET | LIVE (Bearer, `aggregate.read` — counts per condition and tier) |

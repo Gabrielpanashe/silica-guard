@@ -19,9 +19,11 @@ from routers import (
     auth,
     consents,
     content,
+    dashboard_v2,
     dashboard,
     education,
     facilities,
+    instruments,
     mines,
     outreach,
     persons,
@@ -151,6 +153,11 @@ app.include_router(screenings_v2.router)
 # Users, roles and the audit trail (§16.3, §16.6). Creating the first user
 # is what retires the two prototype environment-variable accounts.
 app.include_router(admin.router)
+# The v2 read surface the clients need (§5 of the plan): the active
+# instrument for a device to interpret offline, a worker's history, and the
+# day counted per condition and tier rather than per tier alone.
+app.include_router(instruments.router)
+app.include_router(dashboard_v2.router)
 
 
 @app.get("/api/health")
