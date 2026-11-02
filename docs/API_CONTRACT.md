@@ -32,6 +32,18 @@ No auth. Liveness check — also useful for warming the free-tier Render server 
 
 ---
 
+**`schema`, additive as of 2 November 2026.** `database: up` means the database answered `SELECT 1`; it says nothing about whether the schema matches the code. Those are different failures with different fixes, and during the Phase One deploy they were indistinguishable from outside: every route touching a missing column returned 500 while this endpoint reported everything fine.
+
+```json
+{"status": "ok", "database": "up", "schema": "drifted",
+ "schema_missing": {"referrals": ["result_id", "outcome"],
+                    "screening_answers": ["session_id"]}}
+```
+
+`schema` is `ok` or `drifted`, and `schema_missing` appears only when drifted. Both are absent when `database` is `down`, because there is nothing to compare against.
+
+Served from a check run **at boot**, not recomputed per request: this endpoint is also what wakes a sleeping free-tier instance, and inspecting thirty-five tables on every call would make it slow for no benefit — drift only changes when a migration runs. **`GET /api/health?recheck=1`** forces a fresh look, which is what you want immediately after running one.
+
 ## Auth
 
 ### `POST /api/auth/login` — LIVE (roles will change)

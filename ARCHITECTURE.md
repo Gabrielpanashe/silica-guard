@@ -2,7 +2,7 @@
 
 > Derived from `docs/master/MASTER_REFERENCE.md` §8, §9 and §10 (Master Reference v1.0, September 2026). The master document and its four figures are authoritative. If code and this document disagree, one of them is wrong and the disagreement is resolved before the next release rather than left standing.
 >
-> Status markers: **Built** = in the repository today, audited 18 September 2026. **Planned** = specified here, not yet built. Where the two differ, the gap is stated with the files it touches, because the audit that produced this document exists so that nobody has to rediscover it.
+> Status markers: **Built** = in the repository today. **Planned** = specified here, not yet built. First audited 18 September 2026 against the prototype; **re-audited 1 November 2026** after Phase One's backend rebuild, so each decision below describes the code as it stands. Where the two differ, the gap is stated with the files it touches, because the audit that produced this document exists so that nobody has to rediscover it.
 
 ## Seven architectural principles
 
@@ -239,12 +239,12 @@ Two absolute rules: production data is never copied into staging or onto a devel
 
 ## What the repository looks like today
 
-The audited inventory as of 18 September 2026, for orientation. `docs/STACK.md` has the target layout.
+The audited inventory as of 18 September 2026, for orientation — **and now out of date by design**: Phase One's backend rebuild took it from nine tables, sixteen services and ten routers to thirty-five, twenty-eight and seventeen. `docs/STACK.md` has the target layout, `docs/API_CONTRACT.md` the current routes, and `docs/PROGRESS_LOG.md` what changed. Kept because the shape of the prototype is what the five decisions above were decided against.
 
 | Component | State |
 |---|---|
-| Backend | FastAPI, Python 3.12.3, ten routers, sixteen services, 189 tests passing on `main` |
-| Database | PostgreSQL via Supabase in production; SQLite locally and under pytest; nine tables; three Alembic migrations |
+| Backend | FastAPI, Python 3.12.3. **September**: ten routers, sixteen services, 189 tests, no CI. **Now**: seventeen routers, twenty-eight services, 832 tests, seven CI gates. |
+| Database | PostgreSQL via Supabase in production; SQLite locally and under pytest. **September**: nine tables, three migrations never executed by a test. **Now**: thirty-five tables, ten migrations exercised forward and backward on PostgreSQL 16 in CI with a drift check. |
 | Model | Gemini `gemini-3.1-flash-lite`, pinned; risk engine (3 attempts, 12 s timeout) and population narrative |
 | Mobile | React Native / Expo, eight screens, AsyncStorage offline queue (unencrypted), own copy of the instrument and its own scorer |
 | Dashboard | Static HTML/JS with Chart.js and Leaflet; two env-var accounts; hospital referral-code lookup page |

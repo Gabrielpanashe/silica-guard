@@ -238,6 +238,69 @@ def database_reachable() -> bool:
         return False
 
 
+def missing_schema() -> dict[str, list[str]]:
+    """Tables and columns the models declare that the database does not have.
+
+    **Why this exists.** `init_db()` below calls `Base.metadata.create_all()`,
+    which creates a missing TABLE and can never add a missing COLUMN to a
+    table that already exists. Production does not run `alembic upgrade head`
+    on deploy -- the start command is `uvicorn main:app` -- so after Phase
+    One's rebuild merged on 2 November 2026 the new tables appeared and the
+    new columns on `referrals` and `screening_answers` did not. Every
+    SQLAlchemy query selecting those models then failed, which took down the
+    hospital-facing referral lookup and the dashboard's day numbers: two live
+    v1 routes, one of them the surface that makes referral completion
+    measurable at all.
+
+    Nothing noticed. The routes returned 500 one at a time and the only
+    signal was a user hitting one. This turns that into a single legible line
+    at boot and a field on `/api/health`, so the gap is visible from outside
+    without log access -- the same reasoning as the `database: up|down` field
+    added after the 11 September outage.
+
+    It reports rather than raises. Rule 7: boot degraded, never refuse to
+    start -- a server that will not boot is harder to diagnose than one that
+    says what is wrong.
+    """
+    from sqlalchemy import inspect
+
+    try:
+        inspector = inspect(_current_engine())
+        present = set(inspector.get_table_names())
+    except Exception:
+        logger.warning("Could not inspect the schema", exc_info=True)
+        return {}
+
+    gaps: dict[str, list[str]] = {}
+    for name, table in Base.metadata.tables.items():
+        if name not in present:
+            gaps[name] = ["(whole table)"]
+            continue
+        try:
+            columns = {c["name"] for c in inspector.get_columns(name)}
+        except Exception:
+            continue
+        absent = sorted(c.name for c in table.columns if c.name not in columns)
+        if absent:
+            gaps[name] = absent
+    return gaps
+
+
+def log_schema_drift() -> dict[str, list[str]]:
+    """Called from the application lifespan. Returns the gaps it logged."""
+    gaps = missing_schema()
+    if gaps:
+        logger.error(
+            "SCHEMA DRIFT: the database is missing %d thing(s) the models "
+            "declare. Run `alembic upgrade head` against this database. "
+            "create_all() cannot add a column to an existing table, so these "
+            "will surface as 500s on every route that touches them: %s",
+            sum(len(v) for v in gaps.values()),
+            "; ".join(f"{t}: {', '.join(c)}" for t, c in sorted(gaps.items())),
+        )
+    return gaps
+
+
 def init_db(target_engine=None) -> None:
     """Defaults to the module-level `engine` — but if `DATABASE_URL` has
     been changed since that engine was built (e.g. a test monkeypatching

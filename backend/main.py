@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from database import database_reachable, init_db
+from database import database_reachable, init_db, log_schema_drift, missing_schema
 from routers import (
     admin,
     auth,
@@ -40,6 +40,13 @@ from services.referral_cascade import run_scheduled_cascade
 logger = logging.getLogger("silicaguard.main")
 
 scheduler: BackgroundScheduler | None = None
+
+#: Schema gaps found at boot, so `/api/health` can report them without
+#: inspecting thirty-five tables on every call — this endpoint is also what
+#: wakes a sleeping free-tier instance, and a slow health check is a worse
+#: problem than a stale one. Drift only changes when a migration runs, which
+#: needs a restart or a deliberate action; `?recheck=1` forces a fresh look.
+schema_gaps: dict[str, list[str]] = {}
 
 
 @asynccontextmanager
@@ -77,6 +84,18 @@ async def lifespan(app: FastAPI):
     # 2026): accept ephemeral storage for the 11 August demo rather than pay
     # for a persistent disk or migrate to Postgres this close to feature
     # freeze — see CLAUDE.md's sprint status for the full reasoning.
+    # Schema drift, reported loudly at boot. init_db()'s create_all() creates
+    # a missing TABLE and can never add a missing COLUMN to one that already
+    # exists, and production does not run `alembic upgrade head` on deploy —
+    # so on 2 November 2026 the Phase One merge gave production the new tables
+    # and none of the new columns on `referrals` and `screening_answers`,
+    # which took down the hospital referral lookup and the dashboard's day
+    # numbers with 500s and no signal. One line here, and a field on
+    # /api/health, so it is visible from outside without log access.
+    global schema_gaps
+    if db_ready:
+        schema_gaps = log_schema_drift()
+
     if os.getenv("AUTO_SEED_ON_BOOT", "false").lower() == "true":
         if not db_ready:
             logger.warning("AUTO_SEED_ON_BOOT=true but the database is unreachable — skipping seed")
@@ -161,13 +180,35 @@ app.include_router(dashboard_v2.router)
 
 
 @app.get("/api/health")
-def health():
+def health(recheck: bool = False):
     # `status` stays "ok" whenever the process is serving — that is what this
     # endpoint has always meant and what warms Render's sleeping free tier
     # before a demo. `database` is additive (11 September 2026): it separates
     # "the API is down" from "the API is up but the database is unreachable",
     # which from outside looked identical during the Supabase pause.
-    return {"status": "ok", "database": "up" if database_reachable() else "down"}
+    reachable = database_reachable()
+    body = {"status": "ok", "database": "up" if reachable else "down"}
+    # Additive, 2 November 2026. `schema` separates "the database is up" from
+    # "the database is up and matches the code", which were indistinguishable
+    # from outside during the Phase One deploy: every route touching a missing
+    # column returned 500 while /api/health reported everything fine.
+    #
+    # Served from the boot-time check rather than recomputed, because this
+    # endpoint also wakes a sleeping free-tier instance and inspecting
+    # thirty-five tables on every call would make it slow for no benefit —
+    # drift only changes when a migration runs. `?recheck=1` forces a fresh
+    # look, which is what you want after running one.
+    if reachable:
+        global schema_gaps
+        gaps = missing_schema() if recheck else schema_gaps
+        if recheck:
+            schema_gaps = gaps
+        body["schema"] = "ok" if not gaps else "drifted"
+        if gaps:
+            body["schema_missing"] = {
+                table: columns for table, columns in sorted(gaps.items())
+            }
+    return body
 
 
 # USSD web simulator (14 August 2026, master doc v6.0 Section 16.1) — a

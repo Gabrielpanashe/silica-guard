@@ -1,6 +1,6 @@
 # The National Artisanal Miners Health Register
 
-> Derived from `docs/master/MASTER_REFERENCE.md` §15 (Master Reference v1.0, September 2026). The master document wins on any conflict. Everything in this document is **Planned** — the register does not exist yet; today's database holds demonstration data only.
+> Derived from `docs/master/MASTER_REFERENCE.md` §15 (Master Reference v1.0, September 2026). The master document wins on any conflict. Everything in this document is **Planned** — the register does not exist as an institution, and today's database holds demonstration data only. **What is built is the part a register has to rest on** (1 November 2026): identity separated from clinical content, a participant code on a card, matching on a bundle with probable matches queued rather than applied, merges that are reversible from the first day, layered consent recorded as data, and an append-only audit of who read what. `ARCHITECTURE.md` decisions 1, 2 and 5 and `docs/SECURITY.md` hold the detail. None of that makes a register; all of it is what a register would be unsafe without.
 
 SilicaGuard's most valuable long-term output is not the application. It is the register. No national database of artisanal miners' occupational health exists in Zimbabwe, and its absence is why nobody can say how many miners have silicosis, where the worst-affected sites are, whether the situation is improving, or what an intervention would cost.
 

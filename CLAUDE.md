@@ -100,7 +100,7 @@ Thin routers (`backend/routers/`) delegate to services (`backend/services/`); `d
 
 ## API surface
 
-Ten routers, one auth boundary that is deliberate but not guessable from the paths. `docs/API_CONTRACT.md` holds the shapes; this is the map.
+Seventeen routers. The ten v1 routers are mapped below with their one deliberate-but-unguessable auth boundary; the seven v2 routers are in `docs/API_CONTRACT.md`'s v2 section. `docs/API_CONTRACT.md` holds the shapes; this is the map.
 
 | Router | Routes | Auth |
 |---|---|---|
@@ -127,6 +127,7 @@ The unauthenticated set is deliberate: the VHW app never logs in, so the screeni
 Backend `https://silicaguard-backend.onrender.com` (Render free tier, auto-deploys from `main`); dashboard `https://silicaguard-dashboard.onrender.com` (Render Static Site, tracking `main`); Supabase Postgres on the Session Pooler, port 5432 — not Direct (IPv6-only) and not the Transaction pooler. **There is no staging**; this one service is production and the demo target, which `ARCHITECTURE.md` lists as a Phase One correction.
 
 - **`render.yaml` does not govern the live backend service.** It was created through Render's REST API and never Blueprint-synced; editing the file does nothing. Env vars are set on the service.
+- **The start command must run migrations**, and on 2 November 2026 it did not. The Phase One merge deployed with the new tables and none of the new columns on `referrals` and `screening_answers`, because boot calls `init_db()` → `create_all()`, which creates a missing table and can never add a missing column. The hospital referral lookup and the dashboard's day numbers both returned 500 while `/api/health` said `database: up`. `render.yaml` now records `python -m alembic upgrade head && uvicorn ...`, and **because that file governs nothing, the same command has to be set on the service**. `/api/health` now reports a `schema` field so the gap is visible from outside in one request.
 - **The free tier sleeps** (30–50 s wake). The free Supabase project pauses after 7 idle days — it did so on 6 September and took the API down entirely because startup called `init_db()` unconditionally; `be/survive-db-outage` (unmerged) makes boot survive that. Paid tiers before any demonstration or pilot.
 - `AUTO_SEED_ON_BOOT` is `false` in production. Postgres is persistent.
 

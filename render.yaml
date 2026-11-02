@@ -22,7 +22,30 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # MIGRATIONS RUN BEFORE THE SERVER STARTS, as of 2 November 2026.
+    #
+    # They did not, and that broke production. The Phase One rebuild merged
+    # and this service came up with the new TABLES but none of the new
+    # COLUMNS on `referrals` and `screening_answers`, because boot calls
+    # `init_db()` -> `Base.metadata.create_all()`, which creates a missing
+    # table and can never add a missing column to one that already exists.
+    # Every query selecting those models then failed: the hospital-facing
+    # referral lookup and the dashboard's day numbers both returned 500,
+    # while /api/health reported `database: up` — which was true, and told
+    # nobody anything.
+    #
+    # `&&` rather than `;` on purpose: if the migration fails, the server
+    # must not start against a schema it cannot use. That is the one place
+    # where refusing to boot beats booting degraded, because the alternative
+    # is exactly the silent half-migrated state that caused the outage.
+    #
+    # WARNING, and the reason this is a comment as much as a change: THIS
+    # FILE DOES NOT GOVERN THE LIVE SERVICE. It was created through Render's
+    # REST API and never Blueprint-synced, so editing it changes nothing by
+    # itself — the start command has to be set on the service as well. See
+    # CLAUDE.md's deployment notes. This records the intended command so that
+    # whoever re-syncs or rebuilds the service gets it right.
+    startCommand: python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       # Pinned 16 August 2026 after a Render build silently landed on Python
       # 3.14.3 (a release barely out) with no version specified anywhere in
