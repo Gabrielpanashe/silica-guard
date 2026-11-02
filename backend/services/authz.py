@@ -406,6 +406,45 @@ def for_programme(statement, column, principal: Principal):
     return statement.where(column == programme)
 
 
+def scoped_to_a_cohort(principal: Principal) -> bool:
+    """True for a role whose own "cannot" sentence limits it to one cohort.
+
+    Only `programme_sponsor` today. §16.3 gives that role "anything outside
+    their cohort" as a refusal, which is stronger than every other scope line
+    in the table: a district coordinator is refused *identified* records
+    outside their district and may see national aggregates, while a sponsor
+    is refused the aggregate too. §14.4 is why -- an employer or insurer
+    paying for screening must not be handed a picture of anybody else's
+    workforce along with their own.
+    """
+    role = BY_CODE.get(principal.role)
+    return role is not None and role.scope_field == "programme_id"
+
+
+def for_aggregate_sessions(statement, column, principal: Principal):
+    """Narrow an aggregate over screening sessions to this principal's cohort.
+
+    `column` is `ScreeningSession.programme_id`, passed in so this module
+    stays free of a dependency on the session model.
+
+    Unscoped for every other `aggregate.read` role, deliberately: a national
+    stakeholder's whole purpose is the national picture, a researcher's is the
+    population, and an administrator holds `aggregate.read` for operational
+    reasons. The one role the master document limits to a cohort is the one
+    narrowed here.
+
+    Narrows to **nothing** for a sponsor with no programme, like every other
+    helper in this file: the failure mode of a missing scope must be an empty
+    result, never an unfiltered one.
+    """
+    if not scoped_to_a_cohort(principal):
+        return statement
+    programme = principal.scope.get("programme_id")
+    if not programme:
+        return statement.where(false())
+    return statement.where(column == programme)
+
+
 def may_read_identified(principal: Principal) -> bool:
     """§16.3: a national stakeholder, a researcher and a programme sponsor
     must never reach an identified record, whatever else they can do."""

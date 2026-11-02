@@ -26,6 +26,7 @@ from routers import (
     instruments,
     mines,
     outreach,
+    outreach_v2,
     persons,
     referral_lookup,
     screening,
@@ -177,6 +178,10 @@ app.include_router(admin.router)
 # day counted per condition and tier rather than per tier alone.
 app.include_router(instruments.router)
 app.include_router(dashboard_v2.router)
+# Outreach visits with what each produced, completing §5's v2 surface. Read
+# only: planning and announcements stay on the v1 routes until the adapter,
+# because duplicating a write path is how two of them start disagreeing.
+app.include_router(outreach_v2.router)
 
 
 @app.get("/api/health")

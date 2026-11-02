@@ -332,9 +332,41 @@ def test_the_dashboard_counts_per_condition_and_tier(client, loaded):
 def test_the_dashboard_counts_referrals_by_state(client, loaded):
     headers = _user(client, "d@example.org", "district_coordinator", district="Kwekwe")
     body = client.get("/api/v2/dashboard/today", headers=headers).json()
-    assert body["referrals_open"] >= 1
+    assert body["referrals_raised"] >= 1
+    assert body["referrals_open_now"] >= 1
     assert body["referrals_attended"] == 0
     assert body["referrals_closed_with_outcome"] == 0
+
+
+def test_referral_counts_are_scoped_to_the_period_except_the_backlog(client, loaded):
+    """**The correction this replaced.** Until 2 November 2026 all three
+    referral numbers counted every referral in the database, so
+    `/dashboard/today` reported an all-time figure under a `period: "today"`
+    label. Each is now counted by its own timestamp — and the backlog
+    deliberately is not, because a referral still open from three weeks ago
+    still needs chasing."""
+    from datetime import datetime, timedelta, timezone
+
+    from db_models import Referral
+
+    db = _session(client)
+    referrals = list(db.scalars(select(Referral)).all())
+    assert referrals, "the RED screening referred"
+    long_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=90)
+    for referral in referrals:
+        referral.created_at = long_ago
+        referral.attended_at = long_ago
+    db.commit()
+    db.close()
+
+    body = client.get("/api/v2/dashboard/today", headers=_user(
+        client, "d2@example.org", "district_coordinator", district="Kwekwe")).json()
+
+    assert body["referrals_raised"] == 0, "raised 90 days ago, not today"
+    assert body["referrals_attended"] == 0, "attended 90 days ago, not today"
+    assert body["referrals_open_now"] >= 1, (
+        "still open, so still on the worklist regardless of the period"
+    )
 
 
 def test_the_dashboard_reports_worsening(client, loaded):

@@ -38,7 +38,7 @@ from models_v2 import (
     SessionSummaryOut,
 )
 from routers.auth import request_id, require
-from services import audit, consent, identity
+from services import audit, authz, consent, identity
 from services.authz import Principal
 from services.rules_engine import TIER_ORDER
 
@@ -170,12 +170,21 @@ def dashboard(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     since = now - timedelta(days=PERIODS[period])
 
+    # §16.3: a programme sponsor is refused "anything outside their cohort",
+    # which is stronger than every other scope line in the table -- a district
+    # coordinator is refused *identified* records outside their district and
+    # may still see national aggregates, while a sponsor is refused the
+    # aggregate too. §14.4 is why: an employer or insurer paying for screening
+    # must not be handed a picture of anybody else's workforce with their own.
+    # Narrows to nothing for a sponsor with no programme, never to everything.
+    statement = authz.for_aggregate_sessions(
+        select(ScreeningSession).where(ScreeningSession.created_at >= since),
+        ScreeningSession.programme_id,
+        principal,
+    )
     sessions = list(
         db.scalars(
-            select(ScreeningSession)
-            .where(ScreeningSession.created_at >= since)
-            .order_by(ScreeningSession.created_at.desc())
-            .limit(limit)
+            statement.order_by(ScreeningSession.created_at.desc()).limit(limit)
         ).all()
     )
     session_ids = [s.id for s in sessions] or [-1]
@@ -191,10 +200,35 @@ def dashboard(
         if row.deterioration_changed:
             worsened += 1
 
-    referrals = list(
-        db.scalars(
-            select(Referral).where(Referral.result_id.isnot(None))
-        ).all()
+    # Scoped by the referral's OWN timestamps, not by the sessions in the
+    # window. A referral attended today was usually raised last week, so
+    # counting attendance by the session's date reports the wrong day -- and
+    # counting every referral in the database, which is what this did until
+    # 2 November 2026, reported an all-time figure under a `period: "today"`
+    # label.
+    v2 = Referral.result_id.isnot(None)
+    # A sponsor's referral numbers must come from their cohort's sessions
+    # only, for the same reason as the counts above -- keyed through the
+    # sessions in scope, because `referrals` carries no programme of its own.
+    in_scope = (
+        [Referral.result_id.in_(
+            select(ScreeningResult.id).where(ScreeningResult.session_id.in_(session_ids))
+        )]
+        if authz.scoped_to_a_cohort(principal) else []
+    )
+
+    def _count(*conditions) -> int:
+        return int(db.scalar(
+            select(func.count(Referral.id)).where(v2, *in_scope, *conditions)
+        ) or 0)
+
+    referrals_raised = _count(Referral.created_at >= since)
+    referrals_attended = _count(Referral.attended_at >= since)
+    referrals_closed = _count(Referral.outcome_recorded_at >= since)
+    # The exception, and it is not an oversight: an open referral from three
+    # weeks ago still needs chasing, so the backlog is the standing total.
+    referrals_open_now = _count(
+        Referral.status.in_(("open", "pre_alerted", "reminded"))
     )
 
     audit.record(
@@ -217,8 +251,9 @@ def dashboard(
                 counts.items(), key=lambda kv: (kv[0][0], TIER_ORDER.index(kv[0][1]))
             )
         ],
-        referrals_open=len([r for r in referrals if r.status in ("open", "pre_alerted", "reminded")]),
-        referrals_attended=len([r for r in referrals if r.attended_at is not None]),
-        referrals_closed_with_outcome=len([r for r in referrals if r.outcome]),
+        referrals_raised=referrals_raised,
+        referrals_attended=referrals_attended,
+        referrals_closed_with_outcome=referrals_closed,
+        referrals_open_now=referrals_open_now,
         worsened=worsened,
     )

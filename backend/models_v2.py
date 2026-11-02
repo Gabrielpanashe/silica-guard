@@ -566,8 +566,54 @@ class DashboardV2Out(BaseModel):
     #: incomplete sessions are simply absent from the counts.
     incomplete_sessions: int = 0
     by_condition_and_tier: List[ConditionTierCountOut] = Field(default_factory=list)
-    referrals_open: int = 0
+    #: Raised, attended and closed **within the period**, each by its own
+    #: timestamp -- a referral attended today was very often raised last
+    #: week, so counting it by the session's date would report the wrong day.
+    referrals_raised: int = 0
     referrals_attended: int = 0
     referrals_closed_with_outcome: int = 0
+    #: The standing backlog, deliberately **not** period-scoped: a referral
+    #: still open from three weeks ago still needs chasing, and that is the
+    #: number a coordinator acts on. Named `_now` because a field called
+    #: `referrals_open` sitting beside `period: "today"` reads as a count for
+    #: today, which it is not.
+    referrals_open_now: int = 0
     #: Sessions whose deterioration comparison reported worsening.
     worsened: int = 0
+
+
+# ──────────────────────────────────────────────── outreach visits (§13.3)
+
+
+class OutreachVisitOut2(BaseModel):
+    """One planned visit, with what it actually produced.
+
+    The v1 shape reports `screened_count` and nothing about outcomes, which
+    answers "did people turn up" and not "what did we find" — and the second
+    is the question a district coordinator asks. This rolls up the sessions
+    linked to the visit through `screening_sessions.outreach_visit_id`.
+
+    Counts per condition **and** tier, for the same reason as the dashboard:
+    a single tier count is ambiguous the day a second condition exists.
+    """
+
+    visit_id: int
+    site: str
+    scheduled_date: Optional[str] = None
+    expected_headcount: Optional[int] = None
+    health_workers: Optional[str] = None
+    #: Sessions actually linked to this visit, which is not the same as the v1
+    #: `screened_count` column — that is incremented by the screening route and
+    #: can drift if a session is later reassigned.
+    sessions: int = 0
+    people: int = 0
+    #: Sessions that produced no result because an applicable question was
+    #: unanswered (§13.1). A visit generating many is a usability finding.
+    incomplete_sessions: int = 0
+    by_condition_and_tier: List[ConditionTierCountOut] = Field(default_factory=list)
+    referrals: int = 0
+    #: What the v1 column says, kept so a drift between the two is visible
+    #: rather than hidden by whichever number a caller happens to read.
+    recorded_screened_count: Optional[int] = None
+    announcements_sent: Dict[str, bool] = Field(default_factory=dict)
+    report_generated: bool = False
