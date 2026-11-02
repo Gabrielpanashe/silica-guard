@@ -1,6 +1,6 @@
 # Technology stack and developer guide
 
-> Derived from `docs/master/MASTER_REFERENCE.md` §11 (Master Reference v1.0, September 2026). The master document wins on any conflict. This is the developer onboarding document; it absorbs the former `SKILL.md`. **Built** = true today (audited 18 September 2026); **Planned** = specified, not yet in place.
+> Derived from `docs/master/MASTER_REFERENCE.md` §11 (Master Reference v1.0, September 2026). The master document wins on any conflict. This is the developer onboarding document; it absorbs the former `SKILL.md`. **Built** = true today; **Planned** = specified, not yet in place. First audited 18 September 2026 against the prototype; **re-audited 1 November 2026** after Phase One's backend rebuild, so the markers in this file describe the code as it stands rather than as it stood in September.
 
 ## The stack
 

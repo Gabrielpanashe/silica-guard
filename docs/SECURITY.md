@@ -1,6 +1,6 @@
 # Data governance, security and ethics
 
-> Derived from `docs/master/MASTER_REFERENCE.md` §14 and §16 (Master Reference v1.0, September 2026). The master document wins on any conflict. The team is not legally qualified; the specifics must be confirmed by a lawyer and directly with the relevant authorities. **Built** = true today (audited 18 September 2026); **Planned** = specified, not yet in place.
+> Derived from `docs/master/MASTER_REFERENCE.md` §14 and §16 (Master Reference v1.0, September 2026). The master document wins on any conflict. The team is not legally qualified; the specifics must be confirmed by a lawyer and directly with the relevant authorities. **Built** = true today; **Planned** = specified, not yet in place. First audited 18 September 2026 against the prototype; **re-audited 1 November 2026** after Phase One's backend rebuild, so the markers in this file describe the code as it stands rather than as it stood in September.
 
 The standard applied: the system holds sensitive health data about a vulnerable population, and it is built as though a breach would be both a legal event and a personal catastrophe for the people in it, because it would be.
 

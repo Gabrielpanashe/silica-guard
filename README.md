@@ -46,12 +46,14 @@ Colour is never used alone. Intervals and windows are subject to clinical sign-o
 
 SilicaGuard won the Cimas Healthathon 3.0 in August 2026. What exists is a working prototype. **What does not yet exist is a system that has ever touched a real patient.**
 
+> **Re-audited 1 November 2026.** Phase One's backend rebuild landed between the Healthathon and now: the five irreversible decisions in `ARCHITECTURE.md` are all in code, and `docs/PROGRESS_LOG.md` records what changed. The clients still read the prototype routes, which is why the table below describes both.
+
 ### Built and working
 
 | Component | State |
 |---|---|
-| Backend | Python and FastAPI, ten routers, service layer separated from routing, 189 tests passing |
-| Database | PostgreSQL through a managed free tier, nine tables, Alembic migrations |
+| Backend | Python and FastAPI, service layer separated from routing. **832 tests passing** and seven CI gates as of 1 November 2026, up from 189 and none in September. |
+| Database | PostgreSQL through a managed free tier, Alembic migrations exercised forward and backward in CI. **Thirty-five tables**: the nine prototype tables plus the version-two model — people and contacts, the instrument and its rules as data, the content store, per-condition result rows, consent, users and an append-only audit log. |
 | Mobile | React Native and Expo, eight screens, offline-first with a local queue |
 | Dashboard | Static markup and vanilla script with charting and mapping: login, statistics, tier distribution, site breakdown, facility map, referral queue, outreach planner, miner directory, activity log |
 | Referral lookup | Unauthenticated code lookup and attendance confirmation, so hospital staff can close a referral without an account |
@@ -68,8 +70,8 @@ SilicaGuard won the Cimas Healthathon 3.0 in August 2026. What exists is a worki
 - No clinical sign-off on the instrument or on any patient-facing text.
 - Teach Mode as designed — illustrated in-app education cards — is not built; text-message health tips are the stand-in.
 - No validation of any kind: no sensitivity, no specificity, no radiological comparison.
-- Phone numbers stored in plaintext; hosting outside Zimbabwe; device classification not formally determined.
-- The screening produces one tier as columns, identity is keyed on phone number, and every clinical rule is hardcoded in three places — the architectural defects the current phase exists to correct (`ARCHITECTURE.md`).
+- Hosting outside Zimbabwe; device classification not formally determined. Phone numbers are stored in plaintext in the prototype `miners` table, which the clients still read; the version-two `contacts` table stores a keyed hash beside an encrypted value, and the old column goes when the clients move.
+- **The prototype path still has the three architectural defects, and the version-two path no longer does.** `POST /api/screen` still produces one tier as columns, still calls a language model for it, and `POST /api/ussd` still runs its own thresholds; identity is still keyed on phone number there. Alongside them, `POST /api/v2/screenings` runs a deterministic cascade over a versioned instrument, writes one result row per condition with its provenance, resolves identity without treating a number as a key, and refuses to screen without recorded consent. **The clients have not moved yet**, so what a worker meets today is still the prototype path — which is why this bullet stays under *Not true yet* rather than moving up the page.
 
 ## Scope decisions that are locked
 
