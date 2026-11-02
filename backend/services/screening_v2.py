@@ -70,6 +70,7 @@ from db_models import (
 )
 from services import consent, content_store, identity, instrument_store, referrals_v2
 from services.rules_engine import (
+    CHANNELS,
     ConditionResult,
     IncompleteScreeningError,
     Screening,
@@ -332,6 +333,22 @@ def screen(db: Session, request: ScreeningRequest) -> Outcome:
             "client_session_uuid is required. It is generated on the device "
             "when the session starts and replayed on retry, and it is the only "
             "thing that makes a duplicate submission safe (§10.3)."
+        )
+
+    # Refused here, before the session row exists, because this is the one
+    # channel problem that cannot be made safe by recording it: an
+    # unrecognised channel has no question subset, so completeness and
+    # branching would be evaluated against a set nobody defined, and the
+    # session would be stored attributed to a channel that does not exist.
+    # No screening is lost -- nothing has been written yet, and a device
+    # sends a constant, so a wrong value is a client bug that this makes
+    # visible at the first submission rather than in a field pilot.
+    if request.channel.lower() not in CHANNELS:
+        raise ScreeningError(
+            f"channel {request.channel!r} is not one of "
+            f"{', '.join(c.upper() for c in CHANNELS)}. An unrecognised "
+            f"channel has no defined question subset, so the screening "
+            f"cannot be scored (§13.1)."
         )
 
     # ---- 0. idempotency, before anything is read or written --------------

@@ -128,6 +128,33 @@ def _unknown_values(question: dict) -> set[str]:
     }
 
 
+#: The channels that exist, matching the `channels` enum in
+#: `clinical/instrument.schema.json`. Defined here rather than in the router
+#: because this is the module that uses it to decide which questions a
+#: screening was required to answer -- and an unrecognised channel has no
+#: defined question subset, so it cannot be equivalent to anything. Two
+#: copies of this tuple would be two answers to "does this channel ask T3?".
+CHANNELS = ("app", "ussd")
+
+
+class UnknownChannelError(ValueError):
+    """A screening named a channel the instrument has no subset for.
+
+    Refused rather than guessed. `_applies_to_channel` would otherwise give
+    an unrecognised channel every question that names no `channels` and none
+    of the limited ones -- a silently different instrument, scored without
+    complaint, which is the opposite of channel equivalence.
+    """
+
+    def __init__(self, channel: str):
+        self.channel = channel
+        super().__init__(
+            f"channel {channel!r} is not one of {', '.join(CHANNELS)}. An "
+            f"unrecognised channel has no defined question subset, so the "
+            f"screening cannot be scored."
+        )
+
+
 def _applies_to_channel(question: dict, channel: str) -> bool:
     """A question limited to a channel is simply not asked on the others.
     §13.1: a long instrument does not fit a 180-second USSD session, so the
@@ -170,6 +197,9 @@ def _build_context(instrument: dict, answers: dict[str, str], conditions: list[s
 def applicable_questions(instrument: dict, screening: Screening) -> list[str]:
     """Questions this screening was required to answer: in this channel, and
     with any branching condition satisfied by the answers given."""
+    if screening.channel not in CHANNELS:
+        raise UnknownChannelError(screening.channel)
+
     questions = _questions_by_code(instrument)
     conditions = list(instrument.get("conditions") or [])
     ctx = _build_context(instrument, screening.answers, conditions)
@@ -254,13 +284,21 @@ def classify(instrument: dict, screening: Screening) -> list[ConditionResult]:
     """Produce one result per condition the instrument assesses.
 
     Raises IncompleteScreeningError if an applicable question is unanswered
-    and the instrument forbids a tier from a partial session. Raises
+    and the instrument forbids a tier from a partial session,
+    UnknownChannelError if the channel has no defined question subset. Raises
     InstrumentError or PredicateError if the instrument itself is unusable --
     both are bugs to fix before merge, not conditions to degrade through,
     because a wrong tier is worse than no tier."""
     conditions = list(instrument.get("conditions") or [])
     if not conditions:
         raise InstrumentError("instrument declares no conditions")
+    # Before anything else: an unrecognised channel has no question subset,
+    # so completeness, branching and the whole instrument would be evaluated
+    # against a set nobody defined. Checked here as well as in
+    # `applicable_questions` because `_check_complete` returns early when the
+    # instrument permits a tier from a partial session.
+    if screening.channel not in CHANNELS:
+        raise UnknownChannelError(screening.channel)
     _check_complete(instrument, screening)
 
     ctx = _build_context(instrument, screening.answers, conditions)
