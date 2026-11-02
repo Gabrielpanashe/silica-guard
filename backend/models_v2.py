@@ -462,3 +462,112 @@ class AuditEntryOut(BaseModel):
     #: exists.
     allowed: bool = True
     details: Optional[Dict[str, object]] = None
+
+
+# ──────────────────────────────────────────── the instrument, for a device
+
+
+class InstrumentOut(BaseModel):
+    """The active instrument version, **whole**.
+
+    `instrument` is the complete document in the shape
+    `services/rules_engine.py` consumes, so the device's JavaScript
+    interpreter and the server's Python one are given identical input — which
+    is the only way "channels are equivalent" can be guaranteed rather than
+    asserted.
+
+    `channel_questions` **annotates** rather than filters: it names the
+    questions that channel asks, while the rules are still evaluated over the
+    whole document. Removing the others would be the obvious optimisation and
+    would silently disarm any safety rule of the form `{"unknown": "Q"}`,
+    because a question absent from the document can never be unknown.
+
+    Branching is not resolved here — a question whose branching depends on an
+    answer cannot be known before the answers exist.
+    """
+
+    code: str
+    version: int
+    status: str
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    #: `<CODE>-v<N>`, the value stamped on every session and result row.
+    ruleset_version: str
+    channel: str
+    channel_questions: List[str] = Field(default_factory=list)
+    instrument: Dict[str, object]
+
+
+# ─────────────────────────────────────── a person's history, and the day
+
+
+class SessionSummaryOut(BaseModel):
+    """One encounter, with its per-condition results.
+
+    A list of results rather than a tier, for the reason that runs through the
+    whole v2 model: a session assesses one or more conditions, and collapsing
+    that to a single tier is the silicosis-shaped defect §8.1 names.
+    """
+
+    session_id: int
+    channel: str
+    screened_by: Optional[str] = None
+    site: Optional[str] = None
+    instrument_code: Optional[str] = None
+    instrument_version: Optional[int] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    #: Null where the worker declined retention, so this encounter has no
+    #: history attached (§14.2).
+    previous_session_id: Optional[int] = None
+    primary_tier: Optional[str] = None
+    results: List[ConditionResultOut] = Field(default_factory=list)
+    referral_codes: List[str] = Field(default_factory=list)
+
+
+class PersonHistoryOut(BaseModel):
+    """A worker's record, newest encounter first.
+
+    `longitudinal_consent` is reported because its absence is why a history
+    may be shorter than the number of encounters: without it the sessions are
+    never linked, and a trend drawn across them would be an inference the
+    worker refused.
+    """
+
+    person_id: int
+    participant_code: Optional[str] = None
+    longitudinal_consent: bool = False
+    session_count: int = 0
+    sessions: List[SessionSummaryOut] = Field(default_factory=list)
+
+
+class ConditionTierCountOut(BaseModel):
+    condition: str
+    tier: str
+    count: int
+
+
+class DashboardV2Out(BaseModel):
+    """Counts per condition and tier, not per tier alone.
+
+    The v1 dashboard counts tiers, which only works while there is one
+    condition. Adding tuberculosis would make `high_risk_count` ambiguous —
+    high risk of what? — so v2 reports the pair.
+    """
+
+    period: str
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
+    sessions: int = 0
+    people: int = 0
+    #: Sessions that produced no result because an applicable question was
+    #: unanswered (§13.1). Reported rather than hidden: a channel that keeps
+    #: producing them has a usability problem, and it is invisible if
+    #: incomplete sessions are simply absent from the counts.
+    incomplete_sessions: int = 0
+    by_condition_and_tier: List[ConditionTierCountOut] = Field(default_factory=list)
+    referrals_open: int = 0
+    referrals_attended: int = 0
+    referrals_closed_with_outcome: int = 0
+    #: Sessions whose deterioration comparison reported worsening.
+    worsened: int = 0
