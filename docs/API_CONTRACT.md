@@ -969,16 +969,48 @@ Encounters newest first, each with its **per-condition results** — a list, not
     {"condition": "silicosis", "tier": "GREEN", "count": 8},
     {"condition": "silicosis", "tier": "ORANGE", "count": 3}
   ],
-  "referrals_open": 3, "referrals_attended": 1,
-  "referrals_closed_with_outcome": 1, "worsened": 2
+  "referrals_raised": 4, "referrals_attended": 1,
+  "referrals_closed_with_outcome": 1,
+  "referrals_open_now": 9, "worsened": 2
 }
 ```
+
+**The referral numbers are scoped by their own timestamps — and `referrals_open_now` deliberately is not.** A referral attended today was usually raised last week, so counting attendance against the period's sessions reports the wrong day; `referrals_raised`, `referrals_attended` and `referrals_closed_with_outcome` therefore count `created_at`, `attended_at` and `outcome_recorded_at` falling inside the window. The backlog is the exception: a referral still open from three weeks ago still needs chasing, which is the number a coordinator acts on, so it is the standing total and is named `_now` so it cannot be read as a count for the period. **Corrected 2 November 2026** — until then all three counted every referral in the database, which reported an all-time figure under a `period: "today"` label. No client read the field yet.
 
 **`incomplete_sessions` is counted rather than hidden.** A session that produced no result because an applicable question was unanswered (§13.1) is absent from every tier count, so without a separate number a channel that keeps producing them looks like a channel nobody is using.
 
 Returns **no identified record** — only counts — which is why it sits behind `aggregate.read`, the capability a district coordinator, a national stakeholder and a programme sponsor all hold while none of them may read a person.
 
 **This needs a token, and v1's `GET /api/dashboard/today` does not.** That is a deliberate difference: the v2 response names conditions, and an open endpoint returning per-condition clinical counts is a disclosure once a second condition exists. The mobile Home screen therefore needs a device credential — item 1.13, the same gap `routers/persons.py` records for the identity lookup.
+
+
+### An outreach visit, and what it produced — `GET /api/v2/outreach`, `GET /api/v2/outreach/{visit_id}` — Bearer, `aggregate.read`
+
+Master Reference §13.3. **Why this exists when `GET /api/outreach` works.** The v1 shape reports `screened_count` and a `tier_distribution`, which answers "did people turn up" and, for the second question, only while there is one condition. A district coordinator asks what the visit *found*. Without a v2 shape the dashboard rebuild (item 1.15) would call v1 for outreach and v2 for everything else, mixing a single-tier response with a per-condition one in the same view.
+
+```json
+{
+  "visit_id": 7, "site": "Globe & Phoenix", "scheduled_date": "2026-11-10T00:00:00",
+  "expected_headcount": 40, "health_workers": "sister.moyo",
+  "sessions": 38, "people": 36, "incomplete_sessions": 2,
+  "by_condition_and_tier": [
+    {"condition": "silicosis", "tier": "GREEN", "count": 21},
+    {"condition": "silicosis", "tier": "ORANGE", "count": 9}
+  ],
+  "referrals": 11,
+  "recorded_screened_count": 38,
+  "announcements_sent": {"three_day": true, "one_day": true},
+  "report_generated": true
+}
+```
+
+**`sessions` is counted from the sessions; `recorded_screened_count` is the stored column.** `outreach_visits.screened_count` is incremented by the screening route, which makes it a running tally rather than a fact: a session reassigned to another visit, or one that produced no result, leaves it wrong. Both numbers are reported so a divergence is **visible rather than hidden** by whichever one a caller happens to read. They should agree; when they do not, the sessions are right.
+
+**`incomplete_sessions`** is counted for the same reason as on the dashboard: a session that produced no result is absent from every tier count, so a visit generating many of them looks like a quiet visit rather than a usability finding.
+
+Returns **no identified record**, which is why it sits behind `aggregate.read` — the capability §16.3's district coordinator holds while being refused every person. Every read writes an audit row.
+
+**Read-only, deliberately.** Planning a visit and sending its announcements stay on `POST /api/outreach` and `POST /api/outreach/{id}/send-now` until the adapter (item 1.11). They write to `outreach_visits`, which v2 does not replace, and a duplicate write path is how two of them start disagreeing about one row.
 
 
 ---
@@ -1029,3 +1061,4 @@ Returns **no identified record** — only counts — which is why it sits behind
 | `/api/v2/instrument/versions` | GET | LIVE (provenance only, no clinical content) |
 | `/api/v2/persons/{participant_code}/sessions` | GET | LIVE (Bearer, `screening.read` — per-condition results) |
 | `/api/v2/dashboard/{today\|week\|month}` | GET | LIVE (Bearer, `aggregate.read` — counts per condition and tier) |
+| `/api/v2/outreach`, `/api/v2/outreach/{visit_id}` | GET | LIVE (Bearer, `aggregate.read` — a visit's rollup; planning stays on v1) |

@@ -191,10 +191,24 @@ def dashboard(
         if row.deterioration_changed:
             worsened += 1
 
-    referrals = list(
-        db.scalars(
-            select(Referral).where(Referral.result_id.isnot(None))
-        ).all()
+    # Scoped by the referral's OWN timestamps, not by the sessions in the
+    # window. A referral attended today was usually raised last week, so
+    # counting attendance by the session's date reports the wrong day -- and
+    # counting every referral in the database, which is what this did until
+    # 2 November 2026, reported an all-time figure under a `period: "today"`
+    # label.
+    v2 = Referral.result_id.isnot(None)
+
+    def _count(*conditions) -> int:
+        return int(db.scalar(select(func.count(Referral.id)).where(v2, *conditions)) or 0)
+
+    referrals_raised = _count(Referral.created_at >= since)
+    referrals_attended = _count(Referral.attended_at >= since)
+    referrals_closed = _count(Referral.outcome_recorded_at >= since)
+    # The exception, and it is not an oversight: an open referral from three
+    # weeks ago still needs chasing, so the backlog is the standing total.
+    referrals_open_now = _count(
+        Referral.status.in_(("open", "pre_alerted", "reminded"))
     )
 
     audit.record(
@@ -217,8 +231,9 @@ def dashboard(
                 counts.items(), key=lambda kv: (kv[0][0], TIER_ORDER.index(kv[0][1]))
             )
         ],
-        referrals_open=len([r for r in referrals if r.status in ("open", "pre_alerted", "reminded")]),
-        referrals_attended=len([r for r in referrals if r.attended_at is not None]),
-        referrals_closed_with_outcome=len([r for r in referrals if r.outcome]),
+        referrals_raised=referrals_raised,
+        referrals_attended=referrals_attended,
+        referrals_closed_with_outcome=referrals_closed,
+        referrals_open_now=referrals_open_now,
         worsened=worsened,
     )
