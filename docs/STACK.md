@@ -210,10 +210,18 @@ cd backend
 # 3. 0010 creates `audit_log` and `users`, which create_all() already made.
 ./venv/Scripts/python.exe -m alembic stamp head
 
-# 4. Prove it, rather than assume it.
+# 4. Prove it, rather than assume it. THIS IS A LOOP CONDITION, not a
+#    formality: if it reports operations, go back to step 1 with the
+#    earliest revision that produces them and repeat.
 ./venv/Scripts/python.exe -m alembic check          # expect: no new upgrade operations
 curl -s ".../api/health?recheck=1"                   # expect: schema: "ok"
 ```
+
+**Expect more than one pass, and never skip step 4.** The drift can be layered, because each deploy's `create_all()` froze whatever the models looked like *at that moment*. Running this against production on 2 November took two passes: the first repaired `referrals` and `screening_answers`, and `alembic check` then revealed that `persons` was missing migration `0007`'s four columns and `consent_texts` its two indexes — because those two tables had been created by an **earlier** deploy, when the models did not yet have them, and every later `create_all()` saw the tables already existed and left them alone.
+
+That is the same bug one layer deeper, from two deploys rather than one, and **nothing but the drift check would have found it**: `missing_schema()` had reported clean after the first pass for the two tables it knew about, and the routes that were visibly broken had started working. The second pass stamped back to `0006`, ran `0007` and `0008`, and stamped forward again.
+
+So the shape of the procedure is: stamp to the revision before the missing work, upgrade through it, stamp to head, check — and repeat until the check is silent.
 
 **Why a stamp is safe in steps 1 and 3 and would not be elsewhere.** A stamp records a revision as applied without touching the schema, so it is only ever correct when the schema already matches what that revision produces. Here it does, because `create_all()` builds tables from the same models the migrations converge on — and step 4's drift check is what confirms that rather than trusting it. Stamping past a migration whose work is *not* already present would leave a database that Alembic believes is current and is not, which is strictly worse than the outage, because the next deploy would skip the repair silently.
 
