@@ -45,7 +45,22 @@ services:
     # itself — the start command has to be set on the service as well. See
     # CLAUDE.md's deployment notes. This records the intended command so that
     # whoever re-syncs or rebuilds the service gets it right.
-    startCommand: python -m alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port $PORT
+    # `scripts/start.py` rather than `alembic upgrade head && uvicorn`, and
+    # the difference matters on a free tier. A wake restarts the container and
+    # re-runs this command; the free Supabase project pauses after seven idle
+    # days, twice so far. With `&&`, a wake while the database is paused means
+    # the migration fails and uvicorn never starts -- no process, no
+    # /api/health, nothing from outside to say whether the API or the database
+    # is the problem. That is the outage PR #27 was written to prevent.
+    #
+    # The script tells the two failures apart, because they want opposite
+    # responses: a database it cannot reach means serve anyway and let
+    # /api/health report it, while a migration that actually fails means
+    # refuse to start rather than serve a schema the code cannot use.
+    #
+    # Render's preDeployCommand would be the right mechanism and is not
+    # available on the free plan.
+    startCommand: python scripts/start.py
     envVars:
       # Pinned 16 August 2026 after a Render build silently landed on Python
       # 3.14.3 (a release barely out) with no version specified anywhere in
