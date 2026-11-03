@@ -380,6 +380,18 @@ Fires the hospital referral-alert email (`services/email_notifications.py`, Rese
 
 **Errors**: `404` unknown phone, or the worker has no referral on record.
 
+### Every referral-code lookup is audited — LIVE 2 November 2026
+
+Applies to all four unauthenticated referral-code routes: `GET /api/referrals/lookup/{code}`, `POST /api/referrals/lookup/{code}/confirm-attendance`, and the v2 pair `GET /api/v2/referrals/{code}` and `POST /api/v2/referrals/{code}/close`.
+
+They have no login by design — hospital staff have no dashboard account — and the v1 lookup returns a name and a mine site against a six-character code, which makes this the most exposed identified-data surface in the system. §16.3 requires every clinical read and write to be recorded, and these four were the only ones escaping it.
+
+A hit writes an `allowed=True` row. An unknown code, a repeat attendance confirmation and a rejected outcome each write `allowed=False`, so a walk through the code space appears as a run of refusals in `GET /api/v2/audit/refusals` rather than as nothing at all. The actor is recorded as `facility_lookup_unauthenticated` rather than left empty, because a NULL actor must mean one thing; that role holds no capability and `require()` can never produce it.
+
+**No response shape changes.** Two behaviours do: a read that cannot be recorded returns an error rather than being served quietly, because an unauthenticated read of an identified record that leaves no trace is what §16.3 forbids; and a log failure on the *miss* path still returns a clean `404`, so the log's state cannot be probed by watching status codes.
+
+Rate limiting and lockout are Phase Two (`docs/SECURITY.md`). This is detection without prevention, deliberately — and until they exist an unauthenticated caller can grow the audit table one row per attempt, which the rate limit is what bounds.
+
 ---
 
 ## Outreach
@@ -795,6 +807,10 @@ Master Reference §10.3. **The deterministic cascade is the tier of record. No m
 `scored_tier` is the tier *before* deterioration escalation and overrides, so the cascade is auditable step by step rather than only at its end.
 
 `longitudinal_linked: false` means the worker declined retention (§14.2), so no previous session was linked and no deterioration comparison was possible. **The screening still happened and the result is still real** — it simply has no history attached.
+
+**Every submission is audited** (built 3 November 2026; before that this route, the most important clinical write in the system, recorded nothing while `screening.submit` sat declared in the audit's action set). The row names the session, the person, the channel, the tier reached, the conditions assessed, the referrals raised and the instrument version — never an answer, a name or a number. The actor is `device_unauthenticated`, because the handset has no login and a NULL actor must mean one thing; it gains a real account at item 1.13's device credential. A **replay writes no row**, matching the clinical behaviour: a flaky network must not turn one screening into a run of entries that look like several. An **incomplete session writes an `allowed=False` row naming the missing questions**, which the dashboard's `incomplete_sessions` count cannot tell you.
+
+**A failed audit write does not fail this request**, and this is the only route where that is true. By the time the row is written the screening is committed, and §10.3's "a completed screening is never discarded" settles it: the worker gets his tier and the failure is logged at ERROR. Everywhere else — every read of an identified record — a failed audit write refuses the request, because nothing is lost by refusing and an unaudited read is what §16.3 forbids.
 
 `replayed: true` means this submission matched an existing `client_session_uuid`. **Nothing was written.** The response is the stored result of the first session, read from the rows rather than re-classified — because the instrument may have been superseded between the submission and the retry, and a worker must be told what he was told.
 
