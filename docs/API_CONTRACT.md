@@ -609,17 +609,19 @@ At least one of `participant_code`, `national_id`, `name` or `phone` is required
 
 `503` means the server's identity keys are not configured. Nothing was saved; it is retryable, and the mobile offline queue should treat it that way rather than discarding the screening.
 
-**`GET /api/v2/persons/{participant_code}`** — Bearer
+**`GET /api/v2/persons/{participant_code}`** — Bearer, `person.read`
 
 The person behind a card, following any merge — so a card printed before a merge still works. Returns `name` and `phone` decrypted, plus `age_band`, `sex`, `language`, `provisional`, `provisional_reason`, `has_national_id` (whether one was given, never the number), `session_count` and `merged_into_person_id`.
 
 Bearer-protected deliberately: public, this would let anyone walk a six-character code space and harvest names and telephone numbers. **The consequence is a real gap** — the VHW application has no login, so it cannot yet show "is this the right person?" at the next outreach. It needs a device credential (item 1.13), and that flow waits for it.
 
-**`GET /api/v2/persons/matches/queue?limit=50`** — Bearer
+**Needs `person.read`, which four roles do not hold** (built 2 November 2026; before that any authenticated account reached it). A national stakeholder is refused "any identified record", a researcher "direct identifiers and the re-identification key", a programme sponsor individual results under §14.4, and a district coordinator identified records outside their district — so all four get a `403`. A village health worker, a facility user and both prototype accounts do hold it. **Every read writes an audit row** keyed to the `person_id`, and an unknown participant code writes an `allowed=False` one, because this code space is as walkable as a referral code's.
+
+**`GET /api/v2/persons/matches/queue?limit=50`** — Bearer, `person.read`
 
 Probable matches awaiting a human decision — §8.2's "never merged automatically", as a worklist. Each row carries both participant codes, the `score`, the `reasons`, the `status` and `created_at`. No name and no number: a reviewer opens each side by code.
 
-**`POST /api/v2/persons/matches/{match_id}`** — Bearer
+**`POST /api/v2/persons/matches/{match_id}`** — Bearer, `person.merge`
 
 ```json
 {"decision": "merge", "decided_by": "sister.moyo"}
@@ -627,7 +629,7 @@ Probable matches awaiting a human decision — §8.2's "never merged automatical
 
 `merge` applies it with the queued evidence attached, so the reason the reviewer was shown the pair becomes the reason recorded against the merge. `reject` is **recorded, not discarded**: "reviewed, and they are different people" has to survive, or the same pair is queued again at the next screening. A decided row cannot be decided twice.
 
-**`POST /api/v2/persons/merges`** — Bearer
+**`POST /api/v2/persons/merges`** — Bearer, `person.merge`
 
 ```json
 {"winner_person_id": 12, "loser_person_id": 41, "merged_by": "sister.moyo", "reason": "presented the same card"}
@@ -635,11 +637,13 @@ Probable matches awaiting a human decision — §8.2's "never merged automatical
 
 Contacts and sessions move to the winner; the winner inherits only what it was missing and **overwrites nothing**. The losing record is kept and flagged, never deleted. Merging a person into themselves, or chaining a merge onto an already-merged record, is a `400`.
 
-**`DELETE /api/v2/persons/merges/{merge_id}?reversed_by=supervisor`** — Bearer
+**`DELETE /api/v2/persons/merges/{merge_id}?reversed_by=supervisor`** — Bearer, `person.merge`
 
 Reverses a merge, keeping both the merge and the reversal in the audit. **Contacts and sessions are not moved back** — which rows belonged to which record before the merge is not recoverable from the surviving data, so the reversal restores the two identities and a health worker reassigns the encounters.
 
-**Today any dashboard login can merge two people.** There are two flat accounts; a merge is a clinical safety event and belongs to one named role. Item 1.13 scopes it.
+**A merge needs `person.merge`, which the administrator role alone holds** (built 2 November 2026). A merge joins two clinical histories, and a wrong one attributes a worker's deterioration to somebody else, so `ARCHITECTURE.md` calls it a clinical safety event belonging to one named role; until this landed any authenticated login could do it. The queued-match decision needs the same capability, because applying one is the same act whatever the route is called, and a rejection is the same decision in the other direction.
+
+Each of the three writes an audit row — `person.merge`, `person.unmerge`, `person.match_decide` — on success and on refusal. **Two facts are recorded, not one**: the payload's `merged_by` names the clinician who *judged* two records to be one person, and the audit row names the *account* that submitted it. One answers "who decided this?", the other "who did it?". `GET /api/v2/audit/persons/{id}` is where both surface, and it returned an empty list before these rows existed.
 
 ### Consent — `/api/v2/consents` — LIVE
 
@@ -714,7 +718,7 @@ Response (also returned by withdraw and by the per-person read):
 
 Unauthenticated on the same precedent as the screening path — a consent screen is part of a screening, and the VHW application never logs in. Requiring a token for consent while screening itself is open would be incoherent.
 
-**`POST /api/v2/consents/withdraw`** — Bearer
+**`POST /api/v2/consents/withdraw`** — Bearer, `consent.write`
 
 ```json
 {"person_id": 41, "permission": "education_broadcast", "withdrawn_by": "supervisor"}
@@ -724,9 +728,11 @@ The original row is **kept and stamped**, never deleted: §14.3 requires the wit
 
 **Bearer-protected, and that is a named gap.** A worker's own withdrawal should not need a token, but an open endpoint keyed on a person id would let anyone stop anyone's referral reminders — a harm to the person it pretends to serve. The worker-facing route is the USSD and SMS opt-out, which reaches the same service function server-side through the gateway, and it lands with item 1.9. Until then withdrawal is staff-operated and §14.2's "working and permanent opt out" is unfinished.
 
-**`GET /api/v2/persons/{participant_code}/consents`** — Bearer
+**`GET /api/v2/persons/{participant_code}/consents`** — Bearer, `consent.read`
 
 Everything recorded for one person, by the code on their card. Follows a merge, so a decision recorded against a record that later lost a merge is still found — a worker's decision must not be lost because a clerk joined two records.
+
+**Both need a capability, not merely a token** (built 3 November 2026; before that any authenticated account reached them). §16.3 gives `consent.read` and `consent.write` to the village health worker — the person who has to know whether the worker in front of them agreed to be screened — so every other role gets a `403`. Each writes an audit row, and **a withdrawal especially**: §14.3 requires the withdrawal mechanism to be *demonstrable*, and "granted, then withdrawn on this date" is a different story from "never granted".
 
 ### Screening — `POST /api/v2/screenings` — LIVE
 
@@ -1006,16 +1012,16 @@ Returns **no identified record** — only counts — which is why it sits behind
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |
 | `/api/v2/content` | GET | LIVE (first v2 route — approved patient-facing strings, read-only) |
 | `/api/v2/persons/resolve` | POST | LIVE (unauthenticated; probable matches queued, never applied) |
-| `/api/v2/persons/{participant_code}` | GET | LIVE (Bearer — decrypts a name and a number) |
-| `/api/v2/persons/matches/queue` | GET | LIVE (Bearer — the human review worklist) |
-| `/api/v2/persons/matches/{match_id}` | POST | LIVE (Bearer — merge or reject one pair) |
-| `/api/v2/persons/merges` | POST | LIVE (Bearer — apply a merge, reversibly) |
-| `/api/v2/persons/merges/{merge_id}` | DELETE | LIVE (Bearer — reverse one) |
+| `/api/v2/persons/{participant_code}` | GET | LIVE (Bearer, `person.read` — decrypts a name and a number; audited) |
+| `/api/v2/persons/matches/queue` | GET | LIVE (Bearer, `person.read` — the human review worklist) |
+| `/api/v2/persons/matches/{match_id}` | POST | LIVE (Bearer, `person.merge` — merge or reject one pair) |
+| `/api/v2/persons/merges` | POST | LIVE (Bearer, `person.merge` — administrator only, audited) |
+| `/api/v2/persons/merges/{merge_id}` | DELETE | LIVE (Bearer, `person.merge` — reverse one, audited) |
 | `/api/v2/consents/permissions` | GET | LIVE (the six permissions, for rendering a consent screen) |
 | `/api/v2/consents/texts/{code}` | GET | LIVE (the approved consent text version; 404 until one exists) |
 | `/api/v2/consents` | POST | LIVE (unauthenticated; all-or-nothing, names the text version shown) |
-| `/api/v2/consents/withdraw` | POST | LIVE (Bearer — the worker-facing opt-out is 1.9) |
-| `/api/v2/persons/{participant_code}/consents` | GET | LIVE (Bearer — standing position plus full history) |
+| `/api/v2/consents/withdraw` | POST | LIVE (Bearer, `consent.write` — audited; the worker-facing opt-out is 1.9) |
+| `/api/v2/persons/{participant_code}/consents` | GET | LIVE (Bearer, `consent.read` — standing position plus full history; audited) |
 | `/api/v2/screenings` | POST | LIVE (the §10.3 pipeline; one result per condition; idempotent) |
 | `/api/v2/referrals/{referral_code}` | GET | LIVE (facility-facing, with contributing reasons) |
 | `/api/v2/referrals/{referral_code}/close` | POST | LIVE (structured outcome — the labelled dataset) |
