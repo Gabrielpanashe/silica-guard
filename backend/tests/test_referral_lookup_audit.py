@@ -47,6 +47,28 @@ def _session(client):
     return next(client.app.dependency_overrides[database.get_db]())
 
 
+class caplog_at:
+    """A tiny log capture, because `caplog` does not see records emitted
+    inside a TestClient request on this setup."""
+
+    def __init__(self, level):
+        self.level = level
+        self.records = []
+
+    def __enter__(self):
+        import logging
+
+        self.handler = logging.Handler(self.level)
+        self.handler.emit = self.records.append
+        self.logger = logging.getLogger("silicaguard.audit")
+        self.logger.addHandler(self.handler)
+        return self.records
+
+    def __exit__(self, *exc):
+        self.logger.removeHandler(self.handler)
+        return False
+
+
 def _rows(client, action=None):
     from db_models import AuditLog
 
@@ -241,6 +263,102 @@ def test_a_v1_miss_is_recorded(client, v1_referral):
     assert client.get("/api/referrals/lookup/NOPE").status_code == 404
     rows = _rows(client, "referral.read")
     assert len(rows) == 1 and rows[0].allowed == 0
+
+
+# ----------------------------------------- the screening submit, the big one
+
+def test_a_screening_submit_is_recorded(client, referral):
+    """**The most important clinical write in the system, and it recorded
+    nothing** until 3 November 2026 while `screening.submit` sat declared in
+    `audit.ACTIONS`. §16.3 is an audit of clinical reads *and writes*."""
+    rows = _rows(client, "screening.submit")
+    assert len(rows) == 1, "the fixture ran one screening"
+    row = rows[0]
+    assert row.allowed == 1
+    assert row.actor_role == "device_unauthenticated"
+    assert row.person_id is not None
+    assert "RED" in (row.details or ""), "the tier reached, so the row is useful"
+
+
+def test_a_replay_records_nothing(client, referral):
+    """A repeat under the same `client_session_uuid` writes no clinical row,
+    so it must write no audit row either — otherwise a flaky network turns one
+    screening into a run of entries that look like several."""
+    from db_models import ScreeningSession
+
+    db = _session(client)
+    uuid_value = db.scalar(select(ScreeningSession.client_session_uuid))
+    person_id = db.scalar(select(ScreeningSession.person_id))
+    db.close()
+
+    before = len(_rows(client, "screening.submit"))
+    response = client.post("/api/v2/screenings", json={
+        "person_id": person_id,
+        "client_session_uuid": uuid_value,
+        "answers": RED,
+    })
+    assert response.status_code == 200 and response.json()["replayed"] is True
+    assert len(_rows(client, "screening.submit")) == before
+
+
+def test_an_incomplete_screening_is_recorded_with_what_was_missing(client, referral):
+    """§13.1: a partially answered instrument produces no tier, and **the
+    answers are still saved**. The row says which questions were missing,
+    which the dashboard's `incomplete_sessions` count cannot."""
+    from db_models import Person
+
+    db = _session(client)
+    person_id = db.scalar(select(Person.id))
+    db.close()
+
+    response = client.post("/api/v2/screenings", json={
+        "person_id": person_id,
+        "client_session_uuid": str(uuid.uuid4()),
+        "answers": {"T1": "some", "T2": "mid"},   # T3 applicable, unanswered
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"]["answers_saved"] is True
+
+    refused = [r for r in _rows(client, "screening.submit") if r.allowed == 0]
+    assert len(refused) == 1
+    assert "T3" in (refused[0].details or "")
+
+
+def test_a_failed_audit_write_does_not_lose_a_screening(client, referral, monkeypatch):
+    """**The one place the best-effort pattern is right**, and the opposite of
+    the rule for a read. By the time the row is written the screening is
+    already committed, and §10.3 says a completed screening is never
+    discarded — so the worker gets his tier and the failure is logged loudly,
+    because losing a log line beats losing a screening or telling a handset
+    that a stored screening failed."""
+    import logging
+
+    from db_models import Person, ScreeningResult
+
+    db = _session(client)
+    person_id = db.scalar(select(Person.id))
+    db.close()
+
+    def explode(*args, **kwargs):
+        raise audit.AuditError("the log refused the row")
+
+    monkeypatch.setattr(audit, "record", explode)
+    with caplog_at(logging.ERROR) as records:
+        response = client.post("/api/v2/screenings", json={
+            "person_id": person_id,
+            "client_session_uuid": str(uuid.uuid4()),
+            "answers": RED,
+        })
+
+    assert response.status_code == 200, "the screening survives"
+    assert response.json()["primary_tier"] == "RED", "and the worker gets his tier"
+    assert any("AUDIT WRITE FAILED" in r.getMessage() for r in records), (
+        "and the failure is loud rather than silent"
+    )
+
+    db = _session(client)
+    assert db.scalars(select(ScreeningResult)).all(), "the results are committed"
+    db.close()
 
 
 # ------------------------------------------------- what the log may not hold

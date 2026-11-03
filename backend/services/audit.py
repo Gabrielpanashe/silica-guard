@@ -34,6 +34,7 @@ answerable without the log itself becoming a second copy of the register.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -42,6 +43,8 @@ from sqlalchemy.orm import Session
 
 from db_models import AuditLog
 from services.authz import Principal
+
+logger = logging.getLogger("silicaguard.audit")
 
 #: Closed verb set, so the log can be queried rather than grepped. A new
 #: action is added here deliberately; `record()` refuses an unknown one,
@@ -100,6 +103,24 @@ MAX_OBJECT_ID = 64
 #: unauthenticated facility caller", not with silence. There is deliberately
 #: no `users` row and no role in `authz.ROLES`: this principal holds no
 #: capability and `require()` can never produce it.
+#: The caller of `POST /api/v2/persons/resolve` and `POST /api/v2/screenings`:
+#: a village health worker's handset, which never logs in, because a screening
+#: must work in a gold-panning area with no dashboard session. Same reasoning
+#: as `FACILITY_LOOKUP` below -- an unauthenticated clinical write has to be
+#: attributable to *something*, and a NULL actor must mean one thing.
+#:
+#: These rows gain a real account at item 1.13's device credential, at which
+#: point this sentinel stops appearing in new ones. The old rows keep it,
+#: which is correct: they record what was true when they were written.
+UNAUTHENTICATED_DEVICE = Principal(
+    user_id=None,
+    email="",
+    role="device_unauthenticated",
+    scope={},
+    legacy=False,
+)
+
+
 FACILITY_LOOKUP = Principal(
     user_id=None,
     email="",
@@ -172,6 +193,36 @@ def record(
     db.add(row)
     db.flush()
     return row
+
+
+def record_best_effort(db: Session, *args, **kwargs) -> None:
+    """Write a row on the caller's session, and swallow a failure.
+
+    For the one case where the clinical record is already committed and the
+    audit row is not: `POST /api/v2/screenings` commits the answers and then
+    the results, so by the time this is called the screening exists. §10.3 --
+    "a completed screening is never discarded" -- then settles the question:
+    the worker must get the tier he was screened for, and losing the log line
+    is strictly better than losing the screening or telling a handset that a
+    stored screening failed.
+
+    The failure is logged at ERROR rather than passed over in silence, because
+    a system that stops auditing screenings has to be noticed. This is NOT the
+    pattern for a read: there, refusing the request is right, since an
+    unaudited read of an identified record is what §16.3 forbids and nothing
+    is lost by refusing it.
+    """
+    try:
+        record(db, *args, **kwargs)
+        db.commit()
+    except Exception:  # noqa: BLE001 - see the docstring
+        db.rollback()
+        logger.exception(
+            "AUDIT WRITE FAILED for an already-committed clinical record. The "
+            "record stands; the log line is missing. §16.3 expects every "
+            "clinical write to be audited, so this needs investigating rather "
+            "than retrying."
+        )
 
 
 def record_refusal(

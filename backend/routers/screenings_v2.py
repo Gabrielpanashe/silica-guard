@@ -46,6 +46,7 @@ from models_v2 import (
     ScreeningOutcomeOut,
     ScreeningSubmitIn,
 )
+from routers.auth import request_id
 from services import audit, crypto, referrals_v2, screening_v2
 from services.consent import ConsentMissing
 from services.identity import IdentityError
@@ -111,7 +112,11 @@ def _outcome_out(outcome: screening_v2.Outcome) -> ScreeningOutcomeOut:
 
 
 @router.post("/screenings", response_model=ScreeningOutcomeOut)
-def submit_screening(payload: ScreeningSubmitIn, db: Session = Depends(get_db)):
+def submit_screening(
+    payload: ScreeningSubmitIn,
+    db: Session = Depends(get_db),
+    rid: str = Depends(request_id),
+):
     """Run the §10.3 pipeline and return one result per condition.
 
     A repeat submission with the same `client_session_uuid` returns the first
@@ -119,6 +124,14 @@ def submit_screening(payload: ScreeningSubmitIn, db: Session = Depends(get_db)):
     fix for the 23 August duplicate-screening incident, where a model-flakiness
     window produced eighteen rows for one miner because every retry created a
     fresh screening.
+
+    **Unauthenticated and audited.** The handset never logs in -- a screening
+    must work in a gold-panning area with no dashboard session -- so the row
+    names `audit.UNAUTHENTICATED_DEVICE` rather than leaving the actor NULL,
+    which would be indistinguishable from a route that forgot its principal.
+    This is the most important clinical write in the system and it was
+    recording nothing until 3 November 2026, while `screening.submit` sat
+    declared in `audit.ACTIONS`.
     """
     if not crypto.keys_configured():
         raise HTTPException(
@@ -170,6 +183,19 @@ def submit_screening(payload: ScreeningSubmitIn, db: Session = Depends(get_db)):
         # The answers ARE saved. The response says so and names the session,
         # because the caller must complete that session rather than resubmit
         # under the same idempotency key.
+        #
+        # Recorded with `allowed=False`, not because anybody was refused, but
+        # because a session that produced no tier is the §13.1 outcome most
+        # worth being able to count: a channel generating many of them has a
+        # usability problem, and the dashboard's `incomplete_sessions` shows
+        # the total while this shows which questions were missing.
+        audit.record_refusal(
+            audit.UNAUTHENTICATED_DEVICE, "screening.submit",
+            object_type="screening_session", object_id=exc.session_id,
+            person_id=payload.person_id, request_id=rid,
+            details={"reason": "incomplete", "missing": exc.missing,
+                     "channel": payload.channel},
+        )
         raise HTTPException(
             status_code=400,
             detail={
@@ -180,7 +206,32 @@ def submit_screening(payload: ScreeningSubmitIn, db: Session = Depends(get_db)):
             },
         )
     except (IdentityError, ScreeningError, InstrumentError, ReferralError) as exc:
+        audit.record_refusal(
+            audit.UNAUTHENTICATED_DEVICE, "screening.submit",
+            object_type="screening_session", person_id=payload.person_id,
+            request_id=rid,
+            details={"reason": type(exc).__name__, "channel": payload.channel},
+        )
         raise HTTPException(status_code=400, detail=str(exc))
+
+    # **Best effort, and only here.** The screening is already committed by
+    # the time `screen()` returns, so this cannot lose it -- and §10.3's "a
+    # completed screening is never discarded" settles what to do if the log
+    # write fails: keep the screening, log the failure loudly, give the worker
+    # his tier. A replay writes no row, because it changed nothing.
+    if not outcome.replayed:
+        audit.record_best_effort(
+            db, audit.UNAUTHENTICATED_DEVICE, "screening.submit",
+            object_type="screening_session", object_id=outcome.session_id,
+            person_id=outcome.person_id, request_id=rid,
+            details={
+                "channel": payload.channel,
+                "primary_tier": outcome.primary_tier,
+                "conditions": len(outcome.results),
+                "referrals": len(outcome.referrals),
+                "instrument": f"{outcome.instrument_code}v{outcome.instrument_version}",
+            },
+        )
 
     return _outcome_out(outcome)
 
