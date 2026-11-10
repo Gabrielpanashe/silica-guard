@@ -79,7 +79,8 @@ def send_referral_alert_email(
 
     if not api_key or not recipient:
         logger.warning(
-            "RESEND_API_KEY/EMAIL_TO (or EMAIL_ADDRESS) not set — skipping referral alert email"
+            "RESEND_API_KEY/EMAIL_TO (or EMAIL_ADDRESS) not set — skipping "
+            "referral alert email (worker_id=%s)", worker_id,
         )
         _log_notification(worker_id, "referral_email", body, "skipped", channel="email")
         return False
@@ -100,7 +101,13 @@ def send_referral_alert_email(
             timeout=_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
-        logger.info("Referral alert email sent via Resend: %s", response.text)
+        # Not `response.text`: a provider's response body is not a safe
+        # thing to put in a log line, and the id is the only part worth
+        # keeping anyway.
+        logger.info(
+            "Referral alert email accepted by Resend (worker_id=%s, HTTP %s)",
+            worker_id, response.status_code,
+        )
         _log_notification(worker_id, "referral_email", body, "sent", channel="email")
         return True
     except Exception:
