@@ -48,7 +48,33 @@ HOSPITAL_INFO_EN = (
 _AT_SMS_URL = "https://api.sandbox.africastalking.com/version1/messaging"
 
 
-def _send_sms(to: str, message: str) -> bool:
+def _reference(worker_id: int, template: str) -> str:
+    """What goes in the log in place of a telephone number.
+
+    An integer key and a template name: enough to answer "did this worker's
+    RED result get out?" from the log alone, and nothing a leaked log file
+    could be used to contact anybody with. `CLAUDE.md`: no personal data in
+    a log line.
+    """
+    return f"worker={worker_id} template={template}"
+
+
+def _send_sms(to: str, message: str, reference: str = "unreferenced") -> bool:
+    """Send one SMS. `reference` is what appears in the log instead of the
+    number -- pass `worker=<id> template=<name>`, never a telephone number.
+
+    **No personal data in a log line** (`CLAUDE.md`), and this function broke
+    that rule three ways until 10 November 2026: it logged the recipient's
+    number on success, logged it again on failure, and logged the gateway's
+    whole response body, which carries `SMSMessageData.Recipients[].number`
+    -- so stripping `to` alone would have left the number in the log anyway,
+    arriving from the provider instead of from us.
+
+    `docs/IMPLEMENTATION_PLAN.md` §9 called this "a one-line fix that should
+    not wait for Phase Two". It was three lines in two files, and the
+    response-body one is the line that mattered most, because it is the one
+    nobody would think to look for.
+    """
     headers = {
         "apiKey": os.getenv("AT_API_KEY"),
         "Content-Type": "application/x-www-form-urlencoded",
@@ -62,10 +88,18 @@ def _send_sms(to: str, message: str) -> bool:
     try:
         response = httpx.post(_AT_SMS_URL, headers=headers, data=data, timeout=10)
         response.raise_for_status()
-        logger.info("SMS to %s: %s", to, response.text)
+        # The gateway's status code and the message size, and nothing the
+        # response body says: it names the recipient.
+        logger.info(
+            "SMS accepted by the gateway (%s, HTTP %s, %d chars)",
+            reference, response.status_code, len(message),
+        )
         return True
     except Exception:
-        logger.exception("Failed to send SMS to %s", to)
+        # `logger.exception` includes the traceback, and an httpx error's
+        # string form can carry the request URL but not the form body, so the
+        # number does not reach the log through it either.
+        logger.exception("SMS send FAILED (%s)", reference)
         return False
 
 
@@ -116,7 +150,7 @@ def send_miner_result(
         f"{HOSPITAL_INFO_EN}\n"
         "Show this message to the nurse when you arrive."
     )
-    ok = _send_sms(phone_number, body)
+    ok = _send_sms(phone_number, body, _reference(worker_id, "miner_result"))
     _log_notification(worker_id, "miner_result", body, "sent" if ok else "failed")
     return ok
 
@@ -131,7 +165,7 @@ def send_screening_result_sms(worker_id: int, phone_number: str, tier: str, shon
     at. Added 7 August 2026 so every tier gets an SMS, per CLAUDE.md's
     project identity: "Everyone receives their result... by SMS.\""""
     body = f"SilicaGuard: {shona_message}"
-    ok = _send_sms(phone_number, body)
+    ok = _send_sms(phone_number, body, _reference(worker_id, "screening_result"))
     _log_notification(worker_id, "screening_result", body, "sent" if ok else "failed")
     return ok
 
@@ -164,7 +198,7 @@ def send_hospital_prealert(
         )
         _log_notification(worker_id, "hospital_prealert", body, "skipped")
         return False
-    ok = _send_sms(nurse_phone, body)
+    ok = _send_sms(nurse_phone, body, _reference(worker_id, "hospital_prealert"))
     _log_notification(worker_id, "hospital_prealert", body, "sent" if ok else "failed")
     return ok
 
@@ -183,7 +217,7 @@ def send_referral_reminder(worker_id: int, phone_number: str, tier: str, stage: 
         "should visit the hospital soon. "
         f"{HOSPITAL_INFO_EN} Show your referral message to the nurse."
     )
-    ok = _send_sms(phone_number, body)
+    ok = _send_sms(phone_number, body, _reference(worker_id, "referral_reminder"))
     _log_notification(worker_id, "referral_reminder", body, "sent" if ok else "failed")
     return ok
 
@@ -205,7 +239,7 @@ def send_referral_escalation(worker_id: int, miner_name: str, phone_number: str,
         )
         _log_notification(worker_id, "referral_escalation", body, "skipped")
         return False
-    ok = _send_sms(nurse_phone, body)
+    ok = _send_sms(nurse_phone, body, _reference(worker_id, "referral_escalation"))
     _log_notification(worker_id, "referral_escalation", body, "sent" if ok else "failed")
     return ok
 
@@ -224,8 +258,8 @@ def send_outreach_announcement(
         f"SilicaGuard screening at {site} {when} ({scheduled_date}). "
         "Come for your free lung health check and education session."
     )
-    ok = _send_sms(phone_number, body)
     template = f"outreach_announcement_{stage}"
+    ok = _send_sms(phone_number, body, _reference(worker_id, template))
     _log_notification(worker_id, template, body, "sent" if ok else "failed")
     return ok
 
@@ -244,6 +278,6 @@ def send_education_tip(worker_id: int, phone_number: str, topic_key: str, messag
     trail shows exactly which of the six topics went out, not just that
     "an education SMS" was sent."""
     body = f"SilicaGuard: {message_shona}"
-    ok = _send_sms(phone_number, body)
+    ok = _send_sms(phone_number, body, _reference(worker_id, f"teach_mode_tip_{topic_key}"))
     _log_notification(worker_id, f"teach_mode_tip_{topic_key}", body, "sent" if ok else "failed")
     return ok
