@@ -322,17 +322,61 @@ def test_no_v2_router_uses_the_v1_token_dependency():
     the adapter (item 1.11), so they are a deferred decision rather than an
     oversight. Every `/api/v2` router must already be across.
     """
+    import ast
     import pathlib
 
     backend = pathlib.Path(__file__).resolve().parent.parent
     v1 = {"dashboard.py", "education.py", "outreach.py", "auth.py"}
 
+    def _serves_v2(tree) -> bool:
+        """True if this module declares an `/api/v2` prefix or route path.
+
+        Read from the AST rather than by searching the text: a comment
+        mentioning a v2 route is not a v2 route. The first version of this
+        test substring-matched both halves and went green on every branch
+        individually, then failed once two branches merged — because one
+        added a comment naming `get_current_user` and the other added a
+        comment naming `/api/v2/audit/refusals`, in a file that serves
+        neither.
+        """
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for kw in node.keywords:
+                    if kw.arg == "prefix" and isinstance(kw.value, ast.Constant):
+                        if str(kw.value.value).startswith("/api/v2"):
+                            return True
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                # A decorator path, which is relative to the prefix -- so only
+                # an absolute v2 path counts here.
+                if node.value.startswith("/api/v2"):
+                    parent_is_decorator = True  # cheap: any such literal
+                    if parent_is_decorator:
+                        return True
+        return False
+
+    def _uses_the_v1_dependency(tree) -> bool:
+        """True if `get_current_user` is referenced as code.
+
+        A string or comment mentioning it is not a use of it, and
+        `auth.get_current_user` is, which a search for the bare name in an
+        import line would miss.
+        """
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id == "get_current_user":
+                return True
+            if isinstance(node, ast.Attribute) and node.attr == "get_current_user":
+                return True
+            if isinstance(node, ast.ImportFrom):
+                if any(a.name == "get_current_user" for a in node.names):
+                    return True
+        return False
+
     offenders = []
     for path in sorted((backend / "routers").glob("*.py")):
         if path.name in v1:
             continue
-        text = path.read_text(encoding="utf-8")
-        if "get_current_user" in text and "/api/v2" in text:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if _serves_v2(tree) and _uses_the_v1_dependency(tree):
             offenders.append(path.name)
 
     assert not offenders, (
