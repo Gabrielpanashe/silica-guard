@@ -25,6 +25,18 @@ Networks terminate a USSD session at around 180 seconds total, each turn well in
 - Make the webhook idempotent — operators and aggregators retry, and a retried callback must not create a second session or screening. **Today**: no idempotency.
 - Define behaviour when the backend is unreachable: a health-gated graceful message rather than a raw network error. **Today**: none.
 
+### The per-turn budget — Built 10 November 2026, and it was being broken
+
+`CLAUDE.md`: **no language-model call inside a USSD session; under 3 s per turn, hard ceiling well under 10 s.** The first half has been enforced since the content store landed — an import-graph assertion in `backend/tests/test_content_runtime_rule.py` proves neither the handler nor its router can reach a model client by any path. **The second half was enforced by nothing.**
+
+The final turn made **three synchronous outbound calls** on the ORANGE/RED path: the miner's result SMS, the hospital pre-alert SMS and the demonstration email, each with a ten-second timeout. Measured against a merely slow gateway — two seconds a call, well inside every one of those timeouts — one turn cost **six seconds**; the worst case is around thirty. Africa's Talking terminates the session at ten.
+
+**What that costs is the one screen that matters.** The screening survives, because it is committed before any send. What the miner loses is the turn that tells him to go to Kwekwe District Hospital within 48 hours — for a RED self-screen, the entire clinical point of the channel. He answers every question and sees an error.
+
+Two docstrings asserted the opposite while it was happening: the handler's said it "must return in milliseconds" and the router's said "no network calls, so this is effectively instant". Both are corrected.
+
+The sending now runs through FastAPI's `BackgroundTasks`, so it happens after the response has gone back to the gateway. **This is the bounded fix, not the durable one** — a background task lives inside the web process, and the free tier can spin that process down. The durable fix is `docs/IMPLEMENTATION_PLAN.md` §9's queued status on `notifications` plus delivery by the scheduler, with receipts, which is Phase Two. Until then the turn is protected and a send that is lost is logged as failed rather than silently dropped.
+
 ### Content constraints — the budget is Built, the strings are Planned
 
 A USSD page holds roughly 182 characters including question, options and navigation hints, in the GSM 7-bit alphabet. Every question in all three languages has a hard character budget; the local-language version is usually the longest. A question that does not fit is rewritten, never truncated at runtime. The Clinical Lead writes against this budget from the first draft; CI checks it.

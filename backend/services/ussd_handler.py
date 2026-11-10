@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 from database import get_fresh_session
 from db_models import Miner, Screening, ScreeningAnswer
 from questions import SCREENING_QUESTIONS
+import functools
+from typing import Callable
+
 from services import notifications
 from services.referrals import create_referral_and_notify
 from services.tier_messages import TIER_MESSAGES
@@ -84,13 +87,74 @@ def _find_or_create_miner(db: Session, phone_number: str) -> int:
     return miner.id
 
 
+def _deliver(
+    screening_id: int,
+    miner_id: int,
+    miner_name: str,
+    mine_site: str | None,
+    phone_number: str,
+    tier: str,
+    shona: str,
+) -> None:
+    """Send what this screening owes the miner and the facility.
+
+    **Opens its own session**, because this runs after the USSD response has
+    gone back to the gateway and the session `_save_screening` used is closed
+    by then. Everything it needs is passed by value for the same reason: an
+    ORM instance loaded on a closed session is a detached row.
+    """
+    db = get_fresh_session()
+    try:
+        if tier in ("ORANGE", "RED"):
+            create_referral_and_notify(
+                db,
+                screening_id=screening_id,
+                miner_id=miner_id,
+                miner_name=miner_name,
+                phone_number=phone_number,
+                mine_site=mine_site,
+                tier=tier,
+                shona_message=shona,
+            )
+        else:
+            # GREEN/YELLOW never get a referral, but the miner only saw this
+            # result once, live, during the USSD session -- send it by SMS
+            # too so it isn't lost the moment the call ends (7 August 2026,
+            # CLAUDE.md: "Everyone receives their result... by SMS").
+            notifications.send_screening_result_sms(miner_id, phone_number, tier, shona)
+    finally:
+        db.close()
+
+
 def _save_screening(
     phone_number: str,
     answers: List[dict],
     tier: str,
     shona: str,
     english: str,
+    defer: Callable[[Callable[[], None]], None] | None = None,
 ) -> None:
+    """Persist the screening, then send -- or hand the sending to `defer`.
+
+    **Why `defer` exists, measured rather than assumed.** On the ORANGE/RED
+    path the sending makes three synchronous outbound calls: the miner's
+    result SMS, the hospital pre-alert SMS and the demonstration email. Each
+    carries a 10-second timeout, so a merely slow gateway costs 6 seconds on
+    one turn and the worst case is around 30. `CLAUDE.md`'s rule is **under
+    3 s per turn, hard ceiling well under 10 s**, and Africa's Talking
+    terminates the session at 10 -- at which point a miner who has just
+    answered every question sees an error instead of "go to Kwekwe District
+    Hospital within 48 hours". The screening survives, because it is committed
+    before any send; what is lost is the one screen that tells him what to do.
+
+    So the router passes FastAPI's `BackgroundTasks.add_task`, which runs
+    after the response has gone back. `defer=None` keeps the old inline
+    behaviour for a caller with no request to hang work off.
+
+    The proper fix is `docs/IMPLEMENTATION_PLAN.md` §9: a `queued` status on
+    `notifications` and delivery by the scheduler, with receipts. This is the
+    bounded version that stops the session being killed in the meantime.
+    """
     # Own session, not threaded in from a caller — handle_ussd() below has
     # no request-scoped Session (it's driven by the Africa's Talking webhook
     # router, not a FastAPI Depends chain), same reasoning as
@@ -123,32 +187,51 @@ def _save_screening(
             )
         db.commit()
 
-        if tier in ("ORANGE", "RED"):
-            miner = db.get(Miner, miner_id)
-            create_referral_and_notify(
-                db,
-                screening_id=screening.id,
-                miner_id=miner_id,
-                miner_name=miner.name,
-                phone_number=phone_number,
-                mine_site=miner.mine_site,
-                tier=tier,
-                shona_message=shona,
-            )
-        else:
-            # GREEN/YELLOW never get a referral, but the miner only saw this
-            # result once, live, during the USSD session — send it by SMS
-            # too so it isn't lost the moment the call ends (7 August 2026,
-            # CLAUDE.md: "Everyone receives their result... by SMS").
-            notifications.send_screening_result_sms(miner_id, phone_number, tier, shona)
+        # Read what the sending needs while the session is open, and pass it
+        # by value: the deferred call runs after this session is closed.
+        miner = db.get(Miner, miner_id)
+        send = functools.partial(
+            _deliver,
+            screening_id=screening.id,
+            miner_id=miner_id,
+            miner_name=miner.name,
+            mine_site=miner.mine_site,
+            phone_number=phone_number,
+            tier=tier,
+            shona=shona,
+        )
     finally:
         db.close()
 
+    # After the commit and outside the session, either way. The screening is
+    # already durable at this point, which is what lets the sending be moved
+    # off the turn at all -- rule 7, fail toward recording.
+    if defer is not None:
+        defer(send)
+    else:
+        send()
 
-def handle_ussd(session_id: str, phone_number: str, text: str) -> str:
-    """Pure decision tree — no AI call, must return in milliseconds per the
-    Africa's Talking 10-second hard limit (non-negotiable rule, see
-    CLAUDE.md)."""
+
+def handle_ussd(
+    session_id: str,
+    phone_number: str,
+    text: str,
+    defer: Callable[[Callable[[], None]], None] | None = None,
+) -> str:
+    """Pure decision tree — no AI call, and no outbound network call on the
+    turn when `defer` is given.
+
+    `CLAUDE.md`: **no language-model call inside a USSD session; under 3 s per
+    turn, hard ceiling well under 10 s.** The first half is enforced by
+    `tests/test_content_runtime_rule.py`'s import graph. The second half was
+    not enforced by anything, and was being broken: the final turn sent two
+    SMS messages and an email synchronously, each with a 10-second timeout.
+    `defer` moves that off the turn — see `_save_screening`.
+
+    The database work stays on the turn, deliberately: §10.7's budget is
+    roughly 150 ms per round trip to Supabase and two or three queries fit
+    with margin, while a gateway round trip does not.
+    """
     session = _sessions.setdefault(session_id, _new_session())
     last_input = text.split("*")[-1] if text else ""
     pending_index = session["pending_index"]
@@ -178,6 +261,6 @@ def handle_ussd(session_id: str, phone_number: str, text: str) -> str:
     answers = session["answers"]
     del _sessions[session_id]
 
-    _save_screening(phone_number, answers, tier, shona, english)
+    _save_screening(phone_number, answers, tier, shona, english, defer=defer)
 
     return f"END {shona}"
