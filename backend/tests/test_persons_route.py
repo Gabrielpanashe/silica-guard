@@ -6,9 +6,14 @@ behaviour already covered in `test_identity.py`:
   * **`POST /persons/resolve` carries no direct identifier in its response.**
     It is unauthenticated, on the same precedent as the screening path, so a
     name or a number in the body would be a public identifier endpoint.
-  * **Every route that returns or changes an identifier needs a token.** The
-    person lookup decrypts a name and a number; merge and unmerge change who
-    a clinical history belongs to.
+  * **Every route that returns or changes an identifier needs a capability**,
+    not merely a token. The person lookup decrypts a name and a number and
+    needs `person.read`; merge, unmerge and the queued-match decision change
+    who a clinical history belongs to and need `person.merge`, which the
+    administrator role alone holds. `_auth` is the prototype `hospital`
+    account, which holds the first and not the second, so the merge tests
+    below use `_admin` -- the boundary itself is covered in
+    `test_identity_route_authz.py`.
   * **A missing identity key is a retryable 503, not a 500.** The screening is
     already on the handset and must not be thrown away because the server is
     misconfigured (rule 7).
@@ -19,14 +24,53 @@ import pytest
 from services import crypto
 
 
-def _login(client, email="hospital@silicaguard.health", password="hospital123"):
-    return client.post(
+def _login(client, email, password="password123"):
+    response = client.post(
         "/api/auth/login", json={"email": email, "password": password}
-    ).json()["access_token"]
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
+
+
+def _account(client, role, email):
+    """A real `users` row in `role`.
+
+    **Real accounts rather than the prototype ones**, because the prototype
+    credentials self-disarm the moment a real user exists -- the fuse in
+    `services/authz.any_user_exists`. A file that needs two different roles
+    therefore cannot use them at all, and these tests need two: `person.read`
+    to look a person up and `person.merge` to join two records.
+    """
+    from sqlalchemy import select
+
+    import database
+    from db_models import Facility, User
+    from services import authz
+
+    db = next(client.app.dependency_overrides[database.get_db]())
+    if not db.scalar(select(User).where(User.email == email)):
+        facility = db.scalar(select(Facility))
+        if facility is None:
+            facility = Facility(name="Test District Hospital", level="district")
+            db.add(facility)
+            db.flush()
+        scope = {"facility_id": facility.id} if role == "facility_user" else {}
+        authz.create_user(db, email, "password123", role, **scope)
+        db.commit()
+    db.close()
+    return {"Authorization": f"Bearer {_login(client, email)}"}
 
 
 def _auth(client):
-    return {"Authorization": f"Bearer {_login(client)}"}
+    """A facility user: holds `person.read`, not `person.merge`."""
+    return _account(client, "facility_user", "facility@example.org")
+
+
+def _admin(client):
+    """An administrator, the one role §16.3 trusts with a merge -- and which
+    holds no `person.read`, because "administrative access is not a licence to
+    read records"."""
+    return _account(client, "administrator", "admin@example.org")
 
 
 def _resolve(client, **bundle):
@@ -161,7 +205,6 @@ def test_a_card_printed_before_a_merge_still_works(client):
     """Which is the point of printing one."""
     winner = _resolve(client, name="Tendai Moyo", phone="0771234567").json()
     loser = _resolve(client, name="Tendai Moyo", phone="0789999999").json()
-    headers = _auth(client)
     client.post(
         "/api/v2/persons/merges",
         json={
@@ -169,10 +212,10 @@ def test_a_card_printed_before_a_merge_still_works(client):
             "loser_person_id": loser["person_id"],
             "merged_by": "clerk",
         },
-        headers=headers,
+        headers=_admin(client),
     )
     body = client.get(
-        f"/api/v2/persons/{loser['participant_code']}", headers=headers
+        f"/api/v2/persons/{loser['participant_code']}", headers=_auth(client)
     ).json()
     assert body["person_id"] == winner["person_id"]
 
@@ -199,19 +242,21 @@ def test_the_queue_lists_a_pending_pair_without_identifiers(client):
 def test_deciding_merge_applies_it(client):
     first = _resolve(client, name="Tendai Moyo", phone="0771234567").json()
     second = _resolve(client, name="Tendai Moyo", phone="0771234567").json()
-    headers = _auth(client)
 
     match_id = second["queued_match_ids"][0]
     row = client.post(
         f"/api/v2/persons/matches/{match_id}",
         json={"decision": "merge", "decided_by": "clerk"},
-        headers=headers,
+        headers=_admin(client),
     ).json()
     assert row["status"] == "merged"
 
-    # The loser's card now resolves to the winner.
+    # The loser's card now resolves to the winner. Read with the account that
+    # holds `person.read`: an administrator may merge and may not browse
+    # records, which is §16.3's "administrative access is not a licence to
+    # read records" and not an accident of this test.
     body = client.get(
-        f"/api/v2/persons/{second['participant_code']}", headers=headers
+        f"/api/v2/persons/{second['participant_code']}", headers=_auth(client)
     ).json()
     assert body["person_id"] == first["person_id"]
 
@@ -219,13 +264,13 @@ def test_deciding_merge_applies_it(client):
 def test_deciding_reject_clears_the_queue_without_merging(client):
     first = _resolve(client, name="Tendai Moyo", phone="0771234567").json()
     second = _resolve(client, name="Tendai Moyo", phone="0771234567").json()
-    headers = _auth(client)
 
     client.post(
         f"/api/v2/persons/matches/{second['queued_match_ids'][0]}",
         json={"decision": "reject", "decided_by": "clerk"},
-        headers=headers,
+        headers=_admin(client),
     )
+    headers = _auth(client)
     assert client.get("/api/v2/persons/matches/queue", headers=headers).json() == []
     body = client.get(
         f"/api/v2/persons/{second['participant_code']}", headers=headers
@@ -239,7 +284,7 @@ def test_an_unknown_decision_is_a_400(client):
     response = client.post(
         f"/api/v2/persons/matches/{second['queued_match_ids'][0]}",
         json={"decision": "maybe", "decided_by": "clerk"},
-        headers=_auth(client),
+        headers=_admin(client),
     )
     assert response.status_code == 400
 
@@ -263,7 +308,7 @@ def test_merging_needs_a_token(client):
 def test_a_merge_is_recorded_and_reversible(client):
     winner = _resolve(client, name="Tendai Moyo", phone="0771234567").json()
     loser = _resolve(client, name="Tendai Moyo", phone="0789999999").json()
-    headers = _auth(client)
+    headers = _admin(client)
 
     merged = client.post(
         "/api/v2/persons/merges",
@@ -286,7 +331,7 @@ def test_a_merge_is_recorded_and_reversible(client):
     assert reversed_record["reversed_at"]
 
     body = client.get(
-        f"/api/v2/persons/{loser['participant_code']}", headers=headers
+        f"/api/v2/persons/{loser['participant_code']}", headers=_auth(client)
     ).json()
     assert body["person_id"] == loser["person_id"], "the identity is restored"
 
@@ -300,7 +345,7 @@ def test_merging_a_person_into_themselves_is_a_400(client):
             "loser_person_id": person["person_id"],
             "merged_by": "clerk",
         },
-        headers=_auth(client),
+        headers=_admin(client),
     )
     assert response.status_code == 400
 
@@ -308,7 +353,7 @@ def test_merging_a_person_into_themselves_is_a_400(client):
 def test_unmerging_something_unmerged_is_a_400(client):
     assert (
         client.delete(
-            "/api/v2/persons/merges/999?reversed_by=supervisor", headers=_auth(client)
+            "/api/v2/persons/merges/999?reversed_by=supervisor", headers=_admin(client)
         ).status_code
         == 400
     )
@@ -318,7 +363,6 @@ def test_the_session_count_reflects_a_merge(client):
     """A merge joins the clinical history, which is the reason to do it."""
     winner = _resolve(client, name="Tendai Moyo", phone="0771234567").json()
     loser = _resolve(client, name="Tendai Moyo", phone="0789999999").json()
-    headers = _auth(client)
 
     gen = client.app.dependency_overrides
     from db_models import ScreeningSession
@@ -336,9 +380,9 @@ def test_the_session_count_reflects_a_merge(client):
             "loser_person_id": loser["person_id"],
             "merged_by": "clerk",
         },
-        headers=headers,
+        headers=_admin(client),
     )
     body = client.get(
-        f"/api/v2/persons/{winner['participant_code']}", headers=headers
+        f"/api/v2/persons/{winner['participant_code']}", headers=_auth(client)
     ).json()
     assert body["session_count"] == 1
