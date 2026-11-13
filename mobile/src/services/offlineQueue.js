@@ -17,26 +17,134 @@
 // ─────────────────────────────────────────────────────────────
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+import * as Crypto from 'expo-crypto';
 import { resolveMinerId, submitScreening } from './api';
+import { seal, open, isSealed, keyToHex, keyFromHex, KEY_BYTES } from './queueCrypto';
 
-const STORAGE_KEY = 'sg_pending_screenings';
+// ─────────────────────────────────────────────────────────────
+//  Encryption at rest (docs/STACK.md: queued clinical data on a device that
+//  can be lost must be encrypted).
+//
+//  The queue is one AES-256-GCM blob (queueCrypto.js) in AsyncStorage. The
+//  32-byte key lives in expo-secure-store (Android Keystore), never next to
+//  the data. Rules this file keeps, because a screening is never discarded:
+//
+//   - A blob that cannot be decrypted is quarantined under another key, never
+//     overwritten or deleted. It is not "an empty queue".
+//   - Old plaintext entries from before this change are migrated, and the
+//     plaintext copy is removed only after the encrypted one reads back.
+//   - If secure storage is unavailable, entries are held in memory for the
+//     session rather than written in plaintext. That survives navigation, not
+//     an app restart — a stated gap, not a silent one.
+// ─────────────────────────────────────────────────────────────
 
-async function readQueue() {
+const STORAGE_KEY = 'sg_pending_screenings_enc'; // sealed blob
+const LEGACY_KEY = 'sg_pending_screenings'; // plaintext, pre-encryption builds
+const QUARANTINE_PREFIX = 'sg_pending_screenings_unreadable_';
+const KEY_ALIAS = 'sg_queue_key';
+
+let memoryQueue = []; // used only while secure storage is unavailable
+
+async function secureAvailable() {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return await SecureStore.isAvailableAsync();
   } catch {
-    return []; // corrupt/unavailable storage — fail empty, never crash a screen over this
+    return false;
+  }
+}
+
+/** Returns the key, creating it when `create` is set. null = no usable key. */
+async function getKey(create) {
+  if (!(await secureAvailable())) return null;
+  try {
+    const hex = await SecureStore.getItemAsync(KEY_ALIAS);
+    if (hex) return keyFromHex(hex);
+    if (!create) return null;
+    const key = Crypto.getRandomBytes(KEY_BYTES);
+    await SecureStore.setItemAsync(KEY_ALIAS, keyToHex(key));
+    // Read back: a key we cannot read again would encrypt data we can never open.
+    if ((await SecureStore.getItemAsync(KEY_ALIAS)) !== keyToHex(key)) return null;
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+async function quarantine(raw) {
+  try {
+    await AsyncStorage.setItem(`${QUARANTINE_PREFIX}${Date.now()}`, raw);
+    return true;
+  } catch {
+    return false; // caller must then leave the original blob where it is
+  }
+}
+
+function parseLegacy(raw) {
+  try {
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
 async function writeQueue(queue) {
-  try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
-  } catch {
-    // Best-effort — if storage itself is unavailable there's nothing more
-    // to do here; the caller already has the result on screen either way.
+  const key = await getKey(true);
+  if (!key) {
+    memoryQueue = queue;
+    return false;
   }
+  try {
+    await AsyncStorage.setItem(STORAGE_KEY, seal(key, queue, Crypto.getRandomBytes));
+    memoryQueue = [];
+    return true;
+  } catch {
+    memoryQueue = queue;
+    return false;
+  }
+}
+
+async function readQueue() {
+  let entries = [];
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    if (raw && isSealed(raw)) {
+      const key = await getKey(false);
+      try {
+        if (!key) throw new Error('no key');
+        entries = open(key, raw);
+      } catch {
+        // Wrong key, missing key or tampered: keep the bytes, start a fresh queue.
+        if (await quarantine(raw)) await AsyncStorage.removeItem(STORAGE_KEY);
+      }
+    }
+  } catch {
+    // Storage itself unavailable — fall through to whatever is in memory.
+  }
+
+  // Entries from builds before encryption existed: move them across.
+  try {
+    const legacyRaw = await AsyncStorage.getItem(LEGACY_KEY);
+    if (legacyRaw) {
+      const legacy = parseLegacy(legacyRaw);
+      const merged = [...legacy, ...entries];
+      if (await writeQueue(merged)) {
+        const key = await getKey(false);
+        const back = key && (await AsyncStorage.getItem(STORAGE_KEY));
+        if (key && back && open(key, back).length === merged.length) {
+          await AsyncStorage.removeItem(LEGACY_KEY);
+        }
+        entries = merged;
+      } else {
+        entries = merged; // not encrypted yet, plaintext copy stays for the next try
+      }
+    }
+  } catch {
+    // Leave the legacy copy where it is; nothing is lost.
+  }
+
+  return [...entries, ...memoryQueue.filter((m) => !entries.some((e) => e.id === m.id))];
 }
 
 /** Every screening currently waiting to sync, oldest first. */
