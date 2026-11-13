@@ -15,7 +15,7 @@
 | Mobile | React Native + Expo, Android | Takudzwa | Standalone build for the field. Developer tooling is not a field dependency. | Expo Go today; EAS config added 18 Sep |
 | Mobile storage | **Encrypted** local storage with an offline queue | Takudzwa | Queued clinical data on a device that can be lost in a mining compound must be encrypted. | AsyncStorage queue, **unencrypted** |
 | Dashboard | Static markup, vanilla script, charting and mapping libraries | Takudzwa | No build step. Deliberately simple so it cannot rot. | Built — Chart.js, Leaflet |
-| Website | Single static page on free static hosting | Takudzwa | Deliberately minimal (master document §24.1). | **Planned** — Phase Zero, week 1 |
+| Website | Single static page on free static hosting | Takudzwa | Deliberately minimal (master document §24.1). | **In progress** — draft page on `fe/website`; not deployed (no domain, email or photographs yet) |
 | Messaging and USSD | Africa's Talking, REST interface | Panashe | REST rather than the vendor SDK (certificate failure on Windows). **Delivery-receipt callbacks required.** | REST built; receipts **not** captured; **sandbox endpoint** |
 | Transactional email | Hosted email API | Panashe | Outbound SMTP is blocked on the hosting tier. | Built — Resend |
 | Model access | Gemini, **version pinned** | Panashe | Never a moving alias. Aggregate narrative and reviewed drafting only. Deterministic fallback mandatory. | `gemini-3.1-flash-lite`; still on the clinical path (see `ARCHITECTURE.md`) |
@@ -55,7 +55,7 @@ Every service needs an account, an owner and a recovery path. **Nothing is regis
 | `backend/tests/` | Test suite mirroring the service structure. | Built — 19 files |
 | `mobile/` | React Native application: screens, components, context, services including the offline queue. | Built |
 | `dashboard/` | Static dashboard and the open referral-lookup page. | Built |
-| `website/` | The single-page public site. | **Planned** |
+| `website/` | The single-page public site. | **In progress** — draft, not deployed |
 | `clinical/` | Instrument specifications by version, as reviewable source, plus the migration that loads each version. Owned by Gabriel. | **Planned** |
 | `content/` | Patient-facing strings by message code and language, with the character-set validator applied in CI. | **Planned** |
 | `diagrams/` | Diagram source files, regenerated rather than hand-edited. | Placeholder only |
