@@ -13,7 +13,7 @@
 | Backend hosting | Managed container hosting | Panashe | **Paid tier before any demonstration or pilot.** Free-tier spin-down produces visible cold starts. | Render free tier |
 | Task scheduling | In-process scheduler | Panashe | Jobs idempotent. Disabled under test. | Built — APScheduler, three jobs |
 | Mobile | React Native + Expo, Android | Takudzwa | Standalone build for the field. Developer tooling is not a field dependency. | Expo Go today; EAS config added 18 Sep |
-| Mobile storage | **Encrypted** local storage with an offline queue | Takudzwa | Queued clinical data on a device that can be lost in a mining compound must be encrypted. | AsyncStorage queue, **unencrypted** |
+| Mobile storage | **Encrypted** local storage with an offline queue | Takudzwa | Queued clinical data on a device that can be lost in a mining compound must be encrypted. | AES-256-GCM queue, key in the Android Keystore (`expo-secure-store`) — **built, not yet verified on a device** |
 | Dashboard | Static markup, vanilla script, charting and mapping libraries | Takudzwa | No build step. Deliberately simple so it cannot rot. | Built — Chart.js, Leaflet |
 | Website | Single static page on free static hosting | Takudzwa | Deliberately minimal (master document §24.1). | **In progress** — draft page on `fe/website`; not deployed (no domain, email or photographs yet) |
 | Messaging and USSD | Africa's Talking, REST interface | Panashe | REST rather than the vendor SDK (certificate failure on Windows). **Delivery-receipt callbacks required.** | REST built; receipts **not** captured; **sandbox endpoint** |
