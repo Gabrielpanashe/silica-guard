@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SilicaGuard — Screen. Track. Follow Through.</title>
+<meta name="description" content="SilicaGuard is an occupational lung health screening and referral system for Zimbabwe's artisanal and small scale miners. It supports screening and referral and does not diagnose.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Crect width='22' height='22' rx='5' fill='%23102A72'/%3E%3Cpath d='M11 18.5s6-3 6-7.5V5.8L11 3.5 5 5.8V11c0 4.5 6 7.5 6 7.5Z' fill='none' stroke='white' stroke-width='1.6' stroke-linejoin='round'/%3E%3Cpath d='M7.5 11h1.8l.8-1.5 1.6 3 .8-1.5h2' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<!--
+  Master Reference §24.1: a single static page, styles inline, no CMS, no framework,
+  no build step, no web fonts. It is a credibility anchor, not a marketing asset.
+
+  Every figure on this page is from docs/FIGURES.md (Appendix B). Do not add one that is not.
+  Excluded by §24.1 and §23.5: claimed partnerships, pricing, formal sector or construction
+  language, diagnostic claims, unverified figures, any login or live demo.
+
+  Palette is master document §2.6 (navy 102A72, green 07966F). A palette change is pending a
+  team decision; if it is agreed, only the three brand tokens in :root change.
+-->
+<style>
+  :root {
+    --navy: #102A72;
+    --green: #07966F;
+    --green-text: #06735A; /* brand green darkened to pass WCAG AA (5.8:1) for text and buttons; --green alone is 3.75:1 */
+    --ice: #F2F6FC;
+    --ink: #14213D;
+    --muted: #4A5670;
+    --line: #DCE3EF;
+    --white: #FFFFFF;
+    --max: 68rem;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--white);
+    color: var(--ink);
+    font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  a { color: var(--navy); }
+  .skip { position: absolute; left: -999px; top: 0; background: var(--white); color: var(--navy); padding: .5rem .9rem; z-index: 10; }
+  .skip:focus { left: 1rem; }
+  a:focus-visible { outline: 3px solid var(--green); outline-offset: 2px; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1rem; }
+  section { padding: 3.5rem 0; }
+  section:nth-of-type(even) { background: var(--ice); }
+  h1, h2, h3 { color: var(--navy); line-height: 1.2; margin: 0 0 .75rem; }
+  h2 { font-size: 1.6rem; }
+  h3 { font-size: 1.1rem; }
+  p { margin: 0 0 1rem; max-width: 46rem; }
+  .eyebrow { color: var(--green-text); font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .5rem; }
+
+  /* Header */
+  header { background: var(--navy); color: var(--white); }
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 1rem; }
+  .brand { display: flex; align-items: center; gap: .6rem; color: var(--white); text-decoration: none; font-weight: 700; font-size: 1.1rem; }
+  .brand svg { width: 30px; height: 30px; flex: none; }
+  nav a { color: #D6DEF2; text-decoration: none; margin-left: 1.1rem; font-size: .95rem; }
+  nav a:hover { color: var(--white); }
+
+  /* Hero */
+  .hero { background: var(--navy); color: var(--white); padding: 2rem 0 2.75rem; }
+  .hero-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 3rem; align-items: center; }
+  .hero h1 { color: var(--white); font-size: clamp(2.2rem, 6vw, 3.4rem); margin-bottom: .35rem; }
+  .motto { color: #7FE0C0; font-weight: 700; font-size: 1.2rem; margin-bottom: 1.25rem; }
+  .hero p.lead { font-size: 1.15rem; color: #E4E9F6; }
+  .notdx { display: inline-block; margin: .5rem 0 0; padding: .6rem .9rem; border-left: 4px solid var(--green); background: rgba(255,255,255,.08); color: var(--white); font-size: .98rem; }
+
+  /* Hero flow: an illustration of the path, not data */
+  .flow { list-style: none; margin: 0; padding: 1.25rem; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); border-radius: 14px; }
+  .flow li { position: relative; display: flex; gap: .85rem; align-items: flex-start; padding: .7rem .2rem; }
+  .flow li + li::before { content: ""; position: absolute; left: 1.2rem; top: -.55rem; height: .9rem; border-left: 2px dashed rgba(127,224,192,.6); }
+  .flow .ico { flex: none; width: 2.4rem; height: 2.4rem; border-radius: 10px; background: rgba(127,224,192,.14); display: flex; align-items: center; justify-content: center; }
+  .flow .ico svg { width: 1.3rem; height: 1.3rem; fill: none; stroke: #7FE0C0; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .flow b { display: block; color: var(--white); font-size: 1rem; line-height: 1.3; }
+  .flow span { color: #B9C5E4; font-size: .88rem; line-height: 1.4; }
+  .flow .or { display: block; padding: 0 0 0 3.25rem; color: #7FE0C0; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+  /* Figures */
+  .figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 1rem; margin: 1.75rem 0 1rem; }
+  .fig { background: var(--white); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.2rem; }
+  .fig b { display: block; color: var(--navy); font-size: 1.9rem; line-height: 1.1; margin-bottom: .35rem; }
+  .fig span { color: var(--muted); font-size: .95rem; }
+  .fig sup, p sup { font-size: .7em; }
+  .fig sup a, p sup a { text-decoration: none; color: var(--green-text); font-weight: 700; }
+
+  /* How it works */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1.25rem; margin-top: 1.5rem; }
+  .step { background: var(--white); border: 1px solid var(--line); border-top: 4px solid var(--green); border-radius: 10px; padding: 1.25rem; }
+  .step .n { color: var(--green-text); font-weight: 800; font-size: .85rem; letter-spacing: .06em; }
+  .step p { color: var(--muted); font-size: .98rem; margin: 0; }
+
+  /* Status */
+  .status { display: flex; gap: .9rem; align-items: flex-start; background: var(--white); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.25rem; max-width: 46rem; }
+  .status .dot { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--green); margin-top: .5rem; }
+  .status p { margin: 0; }
+
+  /* Team */
+  .team { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 15rem)); gap: 1.25rem; margin-top: 1.5rem; }
+  .person { text-align: left; }
+  .photo { width: 100%; aspect-ratio: 1 / 1; border-radius: 10px; background: var(--ice); border: 1px solid var(--line); object-fit: cover; display: flex; align-items: center; justify-content: center; color: var(--navy); font-size: 2.4rem; font-weight: 700; margin-bottom: .75rem; }
+  .person h3 { margin-bottom: .15rem; }
+  .person p { color: var(--muted); font-size: .95rem; margin: 0; }
+
+  /* Contact */
+  .contact a.mail { display: inline-block; margin-top: .25rem; padding: .75rem 1.2rem; background: var(--green-text); color: var(--white); text-decoration: none; font-weight: 700; border-radius: 8px; }
+  .contact a.mail:hover { background: var(--navy); }
+
+  /* Sources and footer */
+  .sources ol { margin: 0; padding-left: 1.25rem; color: var(--muted); font-size: .9rem; max-width: 52rem; }
+  .sources li { margin-bottom: .35rem; }
+  footer { background: var(--navy); color: #C9D3EC; font-size: .9rem; padding: 1.5rem 0; }
+  footer p { margin: 0 0 .35rem; max-width: none; }
+
+  @media (max-width: 56rem) {
+    .hero-grid { grid-template-columns: 1fr; }
+    .flow { display: none; } /* "How it works" carries the same content below */
+  }
+  @media (max-width: 40rem) {
+    nav { display: none; }
+    section { padding: 2.5rem 0; }
+  }
+  @media print {
+    header, nav, .contact a.mail { background: none !important; color: var(--ink) !important; }
+    .hero { background: none; color: var(--ink); }
+    .hero h1, .hero p.lead, .notdx { color: var(--ink); }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#problem">Skip to content</a>
+
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="#top" aria-label="SilicaGuard, back to top">
+      <svg viewBox="0 0 22 22" aria-hidden="true"><path d="M11 20.17s7.33-3.67 7.33-9.17V4.58L11 1.83 3.67 4.58V11c0 5.5 7.33 9.17 7.33 9.17Z" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/><path d="M6.88 11h2.29l.92-1.83 1.83 3.66.92-1.83h2.29" fill="none" stroke="#7FE0C0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      SilicaGuard
+    </a>
+    <nav aria-label="Sections">
+      <a href="#problem">The problem</a>
+      <a href="#how">How it works</a>
+      <a href="#team">Team</a>
+      <a href="#contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <div class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <h1>SilicaGuard</h1>
+        <div class="motto">Screen. Track. Follow Through.</div>
+        <p class="lead">An occupational lung health screening and referral system for Zimbabwe's artisanal and small scale miners, built so that a miner found at risk actually reaches a hospital.</p>
+        <p class="notdx"><strong>SilicaGuard supports screening and referral. It does not diagnose.</strong> Diagnosis is made at a health facility, by clinicians.</p>
+      </div>
+      <ol class="flow" aria-label="The path from screening to hospital">
+        <li>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></span>
+          <div><b>Screened at the mine site</b><span>By a village health worker, offline</span></div>
+        </li>
+        <li style="padding-top:0">
+          <span class="or">or</span>
+        </li>
+        <li style="padding-top:0">
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 7h4M10 11h1M13 11h1M10 14h1M13 14h1"/></svg></span>
+          <div><b>Self screened by USSD</b><span>From any handset, no internet</span></div>
+        </li>
+        <li>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg></span>
+          <div><b>Risk level from clinical rules</b><span>The same rules on every channel</span></div>
+        </li>
+        <li>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12M13 7l5 5-5 5"/></svg></span>
+          <div><b>Referred to a named facility</b><span>With a deadline, reminders and a referral code</span></div>
+        </li>
+        <li>
+          <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+          <div><b>Attendance confirmed</b><span>Hospital staff enter the code</span></div>
+        </li>
+      </ol>
+    </div>
+  </div>
+
+  <section id="problem">
+    <div class="wrap">
+      <div class="eyebrow">The problem</div>
+      <h2>A large workforce that no health system follows up</h2>
+      <p>More than 500,000 people work in artisanal and small scale mining in Zimbabwe, producing approximately 75 percent of the country's gold in 2025.<sup><a href="#s1">1</a>,<a href="#s2">2</a></sup> In a study of 3,821 of these miners, approximately 19 percent had silicosis, and tuberculosis rates in this population have been reported at 39 times the national average.<sup><a href="#s3">3</a>,<a href="#s4">4</a></sup> The country has two dedicated occupational health clinics, at Gweru and Gwanda.<sup><a href="#s5">5</a></sup> The most recent screening programme reached 10,668 miners over three years and saw 73 percent of those needing follow up complete it, and then it ended when its funding did in 2024.<sup><a href="#s6">6</a></sup></p>
+
+      <div class="figs">
+        <div class="fig"><b>500,000+</b><span>artisanal and small scale miners in Zimbabwe<sup><a href="#s1">1</a></sup></span></div>
+        <div class="fig"><b>~19%</b><span>silicosis prevalence in a sample of 3,821 miners<sup><a href="#s3">3</a></sup></span></div>
+        <div class="fig"><b>39&times;</b><span>the national tuberculosis rate<sup><a href="#s4">4</a></sup></span></div>
+        <div class="fig"><b>73%</b><span>of miners needing follow up completed it in the last programme<sup><a href="#s6">6</a></sup></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="eyebrow">How it works</div>
+      <h2>Two ways in, one set of clinical rules, and a referral that is followed through</h2>
+      <p>Both ways of screening produce the same risk level from the same transparent clinical rules. The measure SilicaGuard is judged on is whether referred miners reach a facility.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">01</div>
+          <h3>Screening at the mine site</h3>
+          <p>A village health worker runs a short structured screening on an Android phone at the mine site. It works fully offline and synchronises when a connection is available.</p>
+        </div>
+        <div class="step">
+          <div class="n">02</div>
+          <h3>Self screening by USSD</h3>
+          <p>A miner who misses the visit can screen themselves over USSD from any handset, with no smartphone and no internet. The service is built; a shortcode has not yet been allocated.</p>
+        </div>
+        <div class="step">
+          <div class="n">03</div>
+          <h3>Referral, followed through</h3>
+          <p>A miner at higher risk is referred to a named facility with a deadline, reminders and a short referral code. Hospital staff enter the code to confirm attendance, so completion is measured rather than assumed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="status">
+    <div class="wrap">
+      <div class="eyebrow">Where we are</div>
+      <h2>Status</h2>
+      <div class="status">
+        <span class="dot" aria-hidden="true"></span>
+        <p>SilicaGuard won the Cimas Healthathon 3.0 in August 2026. A pilot is in preparation, subject to ethics approval. No miner has been screened with SilicaGuard yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="team">
+    <div class="wrap">
+      <div class="eyebrow">Team</div>
+      <h2>The people building it</h2>
+      <!-- §24.1 requires real photographs. Replace each .photo div with
+           <img class="photo" src="team-NAME.jpg" alt="Photograph of NAME"> before launch. -->
+      <div class="team">
+        <div class="person">
+          <div class="photo" aria-hidden="true">PC</div>
+          <h3>Panashe M. Chandiwana</h3>
+          <p>Team Leader and Founder. Backend and Artificial Intelligence Engineer.</p>
+        </div>
+        <div class="person">
+          <div class="photo" aria-hidden="true">G</div>
+          <h3>Gabriel</h3>
+          <p>Clinical Lead.</p>
+        </div>
+        <div class="person">
+          <div class="photo" aria-hidden="true">T</div>
+          <h3>Takudzwa</h3>
+          <p>Mobile, Web and Design Engineer.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" class="contact">
+    <div class="wrap">
+      <div class="eyebrow">For institutions</div>
+      <h2>Contact</h2>
+      <p>We would welcome contact from ministries, hospitals, district health teams and research institutions working on occupational health in mining communities, whether to understand the approach, to review the clinical instrument, or to discuss evaluation.</p>
+      <!-- The dedicated SilicaGuard address does not exist yet (domain not purchased). Set it here
+           and in the href once it does. Do not publish this page until then. -->
+      <a class="mail" href="mailto:CONTACT_EMAIL_TBD">CONTACT_EMAIL_TBD</a>
+    </div>
+  </section>
+
+  <section id="sources" class="sources">
+    <div class="wrap">
+      <h2>Sources</h2>
+      <ol>
+        <li id="s1">Sector estimates of the artisanal and small scale mining workforce in Zimbabwe.</li>
+        <li id="s2">Fidelity Gold Refinery: 34.9 of 46.7 tonnes of 2025 gold output from artisanal and small scale producers.</li>
+        <li id="s3">Moyo and colleagues, <cite>International Journal of Environmental Research and Public Health</cite>, 2022.</li>
+        <li id="s4"><cite>International Journal of Environmental Research and Public Health</cite>, 2024.</li>
+        <li id="s5">National facility record.</li>
+        <li id="s6">Kunda Nqob'iTB, published programme report.</li>
+      </ol>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>SilicaGuard</strong> — Screen. Track. Follow Through.</p>
+    <p>SilicaGuard supports screening and referral. It does not diagnose, treat or replace clinical judgement.</p>
+  </div>
+</footer>
+
+</body>
+</html>
