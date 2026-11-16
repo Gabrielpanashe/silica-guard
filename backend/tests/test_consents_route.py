@@ -21,14 +21,41 @@ from db_models import Message, MessageText
 from services import consent
 
 
-def _login(client, email="hospital@silicaguard.health", password="hospital123"):
-    return client.post(
-        "/api/auth/login", json={"email": email, "password": password}
-    ).json()["access_token"]
+def _account(client, role, email):
+    """A real `users` row in `role`.
+
+    **Real accounts rather than the prototype ones**: the prototype
+    credentials self-disarm the moment a real user exists (the fuse in
+    `authz.any_user_exists`), so a file needing two roles cannot use them. And
+    this file needs two -- `consent.read` to read a worker's standing position
+    and `person.merge` to join two records -- because §16.3 does not give one
+    role both.
+    """
+    from sqlalchemy import select
+
+    from db_models import User
+    from services import authz
+
+    db = _session(client)
+    if not db.scalar(select(User).where(User.email == email)):
+        scope = {"site_ids": [1]} if role == "village_health_worker" else {}
+        authz.create_user(db, email, "password123", role, **scope)
+        db.commit()
+    db.close()
+    token = client.post("/api/auth/login", json={
+        "email": email, "password": "password123"}).json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _auth(client):
-    return {"Authorization": f"Bearer {_login(client)}"}
+    """A village health worker: §16.3 gives this role `consent.read`, because
+    they are who has to know whether the worker in front of them agreed."""
+    return _account(client, "village_health_worker", "vhw@example.org")
+
+
+def _admin(client):
+    """An administrator, the one role trusted with a merge."""
+    return _account(client, "administrator", "admin@example.org")
 
 
 def _session(client):
@@ -384,7 +411,6 @@ def test_consent_follows_a_merge(client):
     winner = _person(client, phone="0771234567")
     loser = _person(client, phone="0789999999")
     text_id = _consent_text(client)
-    headers = _auth(client)
 
     client.post(
         "/api/v2/consents",
@@ -401,11 +427,12 @@ def test_consent_follows_a_merge(client):
             "loser_person_id": loser["person_id"],
             "merged_by": "clerk",
         },
-        headers=headers,
+        headers=_admin(client),
     )
 
     body = client.get(
-        f"/api/v2/persons/{winner['participant_code']}/consents", headers=headers
+        f"/api/v2/persons/{winner['participant_code']}/consents",
+        headers=_auth(client),
     ).json()
     assert body["may_screen"] is True
     assert body["may_keep_longitudinal_record"] is True

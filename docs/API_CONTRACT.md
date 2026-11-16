@@ -380,6 +380,18 @@ Fires the hospital referral-alert email (`services/email_notifications.py`, Rese
 
 **Errors**: `404` unknown phone, or the worker has no referral on record.
 
+### Every referral-code lookup is audited — LIVE 2 November 2026
+
+Applies to all four unauthenticated referral-code routes: `GET /api/referrals/lookup/{code}`, `POST /api/referrals/lookup/{code}/confirm-attendance`, and the v2 pair `GET /api/v2/referrals/{code}` and `POST /api/v2/referrals/{code}/close`.
+
+They have no login by design — hospital staff have no dashboard account — and the v1 lookup returns a name and a mine site against a six-character code, which makes this the most exposed identified-data surface in the system. §16.3 requires every clinical read and write to be recorded, and these four were the only ones escaping it.
+
+A hit writes an `allowed=True` row. An unknown code, a repeat attendance confirmation and a rejected outcome each write `allowed=False`, so a walk through the code space appears as a run of refusals in `GET /api/v2/audit/refusals` rather than as nothing at all. The actor is recorded as `facility_lookup_unauthenticated` rather than left empty, because a NULL actor must mean one thing; that role holds no capability and `require()` can never produce it.
+
+**No response shape changes.** Two behaviours do: a read that cannot be recorded returns an error rather than being served quietly, because an unauthenticated read of an identified record that leaves no trace is what §16.3 forbids; and a log failure on the *miss* path still returns a clean `404`, so the log's state cannot be probed by watching status codes.
+
+Rate limiting and lockout are Phase Two (`docs/SECURITY.md`). This is detection without prevention, deliberately — and until they exist an unauthenticated caller can grow the audit table one row per attempt, which the rate limit is what bounds.
+
 ---
 
 ## Outreach
@@ -609,17 +621,19 @@ At least one of `participant_code`, `national_id`, `name` or `phone` is required
 
 `503` means the server's identity keys are not configured. Nothing was saved; it is retryable, and the mobile offline queue should treat it that way rather than discarding the screening.
 
-**`GET /api/v2/persons/{participant_code}`** — Bearer
+**`GET /api/v2/persons/{participant_code}`** — Bearer, `person.read`
 
 The person behind a card, following any merge — so a card printed before a merge still works. Returns `name` and `phone` decrypted, plus `age_band`, `sex`, `language`, `provisional`, `provisional_reason`, `has_national_id` (whether one was given, never the number), `session_count` and `merged_into_person_id`.
 
 Bearer-protected deliberately: public, this would let anyone walk a six-character code space and harvest names and telephone numbers. **The consequence is a real gap** — the VHW application has no login, so it cannot yet show "is this the right person?" at the next outreach. It needs a device credential (item 1.13), and that flow waits for it.
 
-**`GET /api/v2/persons/matches/queue?limit=50`** — Bearer
+**Needs `person.read`, which four roles do not hold** (built 2 November 2026; before that any authenticated account reached it). A national stakeholder is refused "any identified record", a researcher "direct identifiers and the re-identification key", a programme sponsor individual results under §14.4, and a district coordinator identified records outside their district — so all four get a `403`. A village health worker, a facility user and both prototype accounts do hold it. **Every read writes an audit row** keyed to the `person_id`, and an unknown participant code writes an `allowed=False` one, because this code space is as walkable as a referral code's.
+
+**`GET /api/v2/persons/matches/queue?limit=50`** — Bearer, `person.read`
 
 Probable matches awaiting a human decision — §8.2's "never merged automatically", as a worklist. Each row carries both participant codes, the `score`, the `reasons`, the `status` and `created_at`. No name and no number: a reviewer opens each side by code.
 
-**`POST /api/v2/persons/matches/{match_id}`** — Bearer
+**`POST /api/v2/persons/matches/{match_id}`** — Bearer, `person.merge`
 
 ```json
 {"decision": "merge", "decided_by": "sister.moyo"}
@@ -627,7 +641,7 @@ Probable matches awaiting a human decision — §8.2's "never merged automatical
 
 `merge` applies it with the queued evidence attached, so the reason the reviewer was shown the pair becomes the reason recorded against the merge. `reject` is **recorded, not discarded**: "reviewed, and they are different people" has to survive, or the same pair is queued again at the next screening. A decided row cannot be decided twice.
 
-**`POST /api/v2/persons/merges`** — Bearer
+**`POST /api/v2/persons/merges`** — Bearer, `person.merge`
 
 ```json
 {"winner_person_id": 12, "loser_person_id": 41, "merged_by": "sister.moyo", "reason": "presented the same card"}
@@ -635,11 +649,13 @@ Probable matches awaiting a human decision — §8.2's "never merged automatical
 
 Contacts and sessions move to the winner; the winner inherits only what it was missing and **overwrites nothing**. The losing record is kept and flagged, never deleted. Merging a person into themselves, or chaining a merge onto an already-merged record, is a `400`.
 
-**`DELETE /api/v2/persons/merges/{merge_id}?reversed_by=supervisor`** — Bearer
+**`DELETE /api/v2/persons/merges/{merge_id}?reversed_by=supervisor`** — Bearer, `person.merge`
 
 Reverses a merge, keeping both the merge and the reversal in the audit. **Contacts and sessions are not moved back** — which rows belonged to which record before the merge is not recoverable from the surviving data, so the reversal restores the two identities and a health worker reassigns the encounters.
 
-**Today any dashboard login can merge two people.** There are two flat accounts; a merge is a clinical safety event and belongs to one named role. Item 1.13 scopes it.
+**A merge needs `person.merge`, which the administrator role alone holds** (built 2 November 2026). A merge joins two clinical histories, and a wrong one attributes a worker's deterioration to somebody else, so `ARCHITECTURE.md` calls it a clinical safety event belonging to one named role; until this landed any authenticated login could do it. The queued-match decision needs the same capability, because applying one is the same act whatever the route is called, and a rejection is the same decision in the other direction.
+
+Each of the three writes an audit row — `person.merge`, `person.unmerge`, `person.match_decide` — on success and on refusal. **Two facts are recorded, not one**: the payload's `merged_by` names the clinician who *judged* two records to be one person, and the audit row names the *account* that submitted it. One answers "who decided this?", the other "who did it?". `GET /api/v2/audit/persons/{id}` is where both surface, and it returned an empty list before these rows existed.
 
 ### Consent — `/api/v2/consents` — LIVE
 
@@ -714,7 +730,7 @@ Response (also returned by withdraw and by the per-person read):
 
 Unauthenticated on the same precedent as the screening path — a consent screen is part of a screening, and the VHW application never logs in. Requiring a token for consent while screening itself is open would be incoherent.
 
-**`POST /api/v2/consents/withdraw`** — Bearer
+**`POST /api/v2/consents/withdraw`** — Bearer, `consent.write`
 
 ```json
 {"person_id": 41, "permission": "education_broadcast", "withdrawn_by": "supervisor"}
@@ -724,9 +740,11 @@ The original row is **kept and stamped**, never deleted: §14.3 requires the wit
 
 **Bearer-protected, and that is a named gap.** A worker's own withdrawal should not need a token, but an open endpoint keyed on a person id would let anyone stop anyone's referral reminders — a harm to the person it pretends to serve. The worker-facing route is the USSD and SMS opt-out, which reaches the same service function server-side through the gateway, and it lands with item 1.9. Until then withdrawal is staff-operated and §14.2's "working and permanent opt out" is unfinished.
 
-**`GET /api/v2/persons/{participant_code}/consents`** — Bearer
+**`GET /api/v2/persons/{participant_code}/consents`** — Bearer, `consent.read`
 
 Everything recorded for one person, by the code on their card. Follows a merge, so a decision recorded against a record that later lost a merge is still found — a worker's decision must not be lost because a clerk joined two records.
+
+**Both need a capability, not merely a token** (built 3 November 2026; before that any authenticated account reached them). §16.3 gives `consent.read` and `consent.write` to the village health worker — the person who has to know whether the worker in front of them agreed to be screened — so every other role gets a `403`. Each writes an audit row, and **a withdrawal especially**: §14.3 requires the withdrawal mechanism to be *demonstrable*, and "granted, then withdrawn on this date" is a different story from "never granted".
 
 ### Screening — `POST /api/v2/screenings` — LIVE
 
@@ -756,6 +774,10 @@ Master Reference §10.3. **The deterministic cascade is the tier of record. No m
 `answers` maps question code to the recorded value. **An explicit unknown or refused option belongs here too**: the engine derives `unknown` from the instrument rather than from absence (§12.2 item 10), because an unanswered red-flag question must never read as a negative.
 
 `instrument_code` may be omitted only when the database holds exactly one instrument. An instrument is chosen deliberately, never guessed.
+
+`channel` must be `"APP"` or `"USSD"` (case-insensitive); anything else is a **`400`, refused before the session row exists**. The channel decides which questions this screening was required to answer — §13.1 lets the Clinical Lead define a shorter USSD subset as data, because a long instrument plus consent does not fit a 180-second session — so an unrecognised channel has no defined subset and would be handed every unlimited question and none of the limited ones: a silently different instrument, scored without complaint. Nothing is lost by refusing, because nothing has been written yet and a client sends a constant. This is the one channel problem that cannot be made safe by recording it. **Added 2 November 2026**; previously an unknown value was scored.
+
+**Channel equivalence is a law, not a convention.** For a fixed set of answers the result does not depend on the channel — asserted over every answer the instrument offers in `backend/tests/test_channel_equivalence.py`, through the engine and through this route, including provenance. The subset changes which questions are asked and nothing else.
 
 **Response**
 
@@ -795,6 +817,10 @@ Master Reference §10.3. **The deterministic cascade is the tier of record. No m
 `scored_tier` is the tier *before* deterioration escalation and overrides, so the cascade is auditable step by step rather than only at its end.
 
 `longitudinal_linked: false` means the worker declined retention (§14.2), so no previous session was linked and no deterioration comparison was possible. **The screening still happened and the result is still real** — it simply has no history attached.
+
+**Every submission is audited** (built 3 November 2026; before that this route, the most important clinical write in the system, recorded nothing while `screening.submit` sat declared in the audit's action set). The row names the session, the person, the channel, the tier reached, the conditions assessed, the referrals raised and the instrument version — never an answer, a name or a number. The actor is `device_unauthenticated`, because the handset has no login and a NULL actor must mean one thing; it gains a real account at item 1.13's device credential. A **replay writes no row**, matching the clinical behaviour: a flaky network must not turn one screening into a run of entries that look like several. An **incomplete session writes an `allowed=False` row naming the missing questions**, which the dashboard's `incomplete_sessions` count cannot tell you.
+
+**A failed audit write does not fail this request**, and this is the only route where that is true. By the time the row is written the screening is committed, and §10.3's "a completed screening is never discarded" settles it: the worker gets his tier and the failure is logged at ERROR. Everywhere else — every read of an identified record — a failed audit write refuses the request, because nothing is lost by refusing and an unaudited read is what §16.3 forbids.
 
 `replayed: true` means this submission matched an existing `client_session_uuid`. **Nothing was written.** The response is the stored result of the first session, read from the rows rather than re-classified — because the instrument may have been superseded between the submission and the retry, and a worker must be told what he was told.
 
@@ -1042,16 +1068,16 @@ Returns **no identified record**, which is why it sits behind `aggregate.read` �
 | `/api/dashboard/week` | GET | LIVE (real Population Health Intelligence narrative) |
 | `/api/v2/content` | GET | LIVE (first v2 route — approved patient-facing strings, read-only) |
 | `/api/v2/persons/resolve` | POST | LIVE (unauthenticated; probable matches queued, never applied) |
-| `/api/v2/persons/{participant_code}` | GET | LIVE (Bearer — decrypts a name and a number) |
-| `/api/v2/persons/matches/queue` | GET | LIVE (Bearer — the human review worklist) |
-| `/api/v2/persons/matches/{match_id}` | POST | LIVE (Bearer — merge or reject one pair) |
-| `/api/v2/persons/merges` | POST | LIVE (Bearer — apply a merge, reversibly) |
-| `/api/v2/persons/merges/{merge_id}` | DELETE | LIVE (Bearer — reverse one) |
+| `/api/v2/persons/{participant_code}` | GET | LIVE (Bearer, `person.read` — decrypts a name and a number; audited) |
+| `/api/v2/persons/matches/queue` | GET | LIVE (Bearer, `person.read` — the human review worklist) |
+| `/api/v2/persons/matches/{match_id}` | POST | LIVE (Bearer, `person.merge` — merge or reject one pair) |
+| `/api/v2/persons/merges` | POST | LIVE (Bearer, `person.merge` — administrator only, audited) |
+| `/api/v2/persons/merges/{merge_id}` | DELETE | LIVE (Bearer, `person.merge` — reverse one, audited) |
 | `/api/v2/consents/permissions` | GET | LIVE (the six permissions, for rendering a consent screen) |
 | `/api/v2/consents/texts/{code}` | GET | LIVE (the approved consent text version; 404 until one exists) |
 | `/api/v2/consents` | POST | LIVE (unauthenticated; all-or-nothing, names the text version shown) |
-| `/api/v2/consents/withdraw` | POST | LIVE (Bearer — the worker-facing opt-out is 1.9) |
-| `/api/v2/persons/{participant_code}/consents` | GET | LIVE (Bearer — standing position plus full history) |
+| `/api/v2/consents/withdraw` | POST | LIVE (Bearer, `consent.write` — audited; the worker-facing opt-out is 1.9) |
+| `/api/v2/persons/{participant_code}/consents` | GET | LIVE (Bearer, `consent.read` — standing position plus full history; audited) |
 | `/api/v2/screenings` | POST | LIVE (the §10.3 pipeline; one result per condition; idempotent) |
 | `/api/v2/referrals/{referral_code}` | GET | LIVE (facility-facing, with contributing reasons) |
 | `/api/v2/referrals/{referral_code}/close` | POST | LIVE (structured outcome — the labelled dataset) |
