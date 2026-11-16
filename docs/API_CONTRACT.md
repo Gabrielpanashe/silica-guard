@@ -330,6 +330,33 @@ Valid statuses: `open`, `pre_alerted`, `reminded`, `attended`, `closed`, `escala
 
 **Errors**: `401` missing/invalid token; `404` unknown referral; `422` invalid status value.
 
+### The v1 adapter — built and dormant, 16 November 2026
+
+`docs/IMPLEMENTATION_PLAN.md` items 1.9 and 1.11. `POST /api/screen` will stop calling a language model and run the §10.3 deterministic pipeline instead, answering in **this same response shape** so no client changes on the day. It is built and switched off; while it is off, every v1 route behaves exactly as documented above.
+
+**Why it is one switch rather than a rollout.** §7 step 3: the route changes classifier at the same moment as every other caller, so there is never a window in which two clients get two classifiers — which is two instruments in the field at once, not a cautious release. There is deliberately **no environment variable**: a flag that turns a clinical classifier on and off per deployment is a flag that gets set differently in two places.
+
+**Three conditions gate the switch**, all read from the database, and `GET /api/health?recheck=1` reports them:
+
+| Condition | Owner |
+|---|---|
+| An approved instrument is loaded | Clinical Lead, §12.5 |
+| Each of the ten v1 question codes maps to one of its questions | Backend — one edit, once the codes exist |
+| Approved result text exists for all four tiers in English **and Shona** | Clinical Lead, item 1.6b |
+
+The third is not a formality: `explanation_shona` is a required, non-null string in this shape, so a worker is given a Shona explanation today. §8.4 forbids translating one at runtime, and `render()` falls back to English and says so — which the readiness check treats as missing text, because English in the Shona field is a silent language failure.
+
+**Two requirements belong to the mobile application, and are refused rather than waited for:**
+
+- **`participant_code` is now an optional field on `POST /api/screen`** (additive; it breaks no client today) and becomes **required** the moment the adapter is active. `identity.resolve()` is deterministic only on a participant code or a hashed national identity number; a name-and-number bundle queues a probable match and never applies it (§8.2), so without the code the route would create a new person on every screening and attach the result to somebody other than whoever consented. Items 1.13 and 1.14.
+- **Consent** must be recorded for that person. The pipeline hard-gates on it (§14.2). Item 1.8.
+
+Because both are refusals and not fallbacks, **the application has to ship them before the mapping is filled in.** That ordering is the one piece of release coordination this design makes explicit, and it is why the Week 10 roadmap line is not a backend-only item.
+
+**One thing the switch fixes quietly.** The request sends `answer_score` per answer, so today the handset decides the clinical weight of an answer and an old build can carry an old weighting into a new tier. The adapter discards it and scores from the instrument (§8.3).
+
+---
+
 ### `GET /api/referrals/lookup/{code}` — LIVE
 
 Master doc v6.0 Section 1.1/16.6 (14 August 2026, built 15 August). No auth: hospital staff have no login, same deliberate precedent as `POST /api/screen` and `GET /api/workers/{phone}`. `{code}` is the short human-readable code generated at referral creation (`SG-4K7Q` style — `SG-` + 4 chars from an alphabet excluding `0/O/1/I`), sent to the miner by SMS (`services.notifications.send_miner_result`) and included in the facility pre-alert (`send_hospital_prealert`).

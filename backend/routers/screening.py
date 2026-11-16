@@ -1,14 +1,14 @@
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database import format_datetime, get_db
 from db_models import Miner, OutreachVisit, Screening, ScreeningAnswer
 from models import DeteriorationResult, ScreeningCreate, ScreeningResult
-from services import notifications
+from services import identity, notifications, v1_compat
 from services.advice_engine import personalised_advice_line
 from services.ai_risk_engine import assess_risk
 from services.deterioration import compare_to_previous, escalate_tier_if_worsened
@@ -25,11 +25,138 @@ router = APIRouter(prefix="/api", tags=["screening"])
 # 2026 (previously also had POST /api/miners).
 
 
+def _screen_via_v2(db: Session, payload: ScreeningCreate, miner: Miner) -> ScreeningResult:
+    """Run the deterministic pipeline and answer in the v1 shape.
+
+    **No delete-on-failure block, and it is not an omission.**
+    `docs/IMPLEMENTATION_PLAN.md` §7 step 6: that block exists because the v1
+    path persists answers, then makes an external call, then persists a tier
+    — so a failed model call left a row with a NULL tier that nothing would
+    ever complete. Between persisting answers and persisting results here
+    there is **no external call**, so there is nothing for it to guard; and
+    `client_session_uuid` handles the retry case it was compensating for,
+    which is the 23 August incident where eighteen rows accumulated for one
+    miner.
+
+    A screening that cannot be completed keeps its answers and says so,
+    rather than being deleted — rule 7 in the direction the master document
+    means it.
+    """
+    import uuid
+
+    from services import screening_v2
+    from services.consent import ConsentMissing
+    from services.identity import IdentityBundle
+    from services.screening_v2 import IncompleteScreening, ScreeningError
+
+    # **Refused, not fallen back from.** §7 step 3 forbids running the new
+    # engine for the requests that look ready and the old one for the rest:
+    # that is two instruments in the field at once. So the client must send a
+    # participant code before the adapter is switched on, and a request
+    # without one fails loudly.
+    if not payload.participant_code:
+        raise HTTPException(status_code=400, detail=(
+            "participant_code is required: identity can only be resolved "
+            "deterministically from the code on the worker's card. A name "
+            "and a number queue a probable match rather than applying it "
+            "(§8.2), which would create a new person for every screening."
+        ))
+
+    resolution = identity.resolve(
+        db,
+        IdentityBundle(
+            participant_code=payload.participant_code,
+            name=miner.name, phone=miner.phone, site_text=miner.mine_site,
+        ),
+        channel=payload.channel or "APP",
+    )
+
+    try:
+        outcome = screening_v2.screen(db, screening_v2.ScreeningRequest(
+            person_id=resolution.person_id,
+            client_session_uuid=str(uuid.uuid4()),
+            answers=v1_compat.to_v2_answers(payload.answers),
+            channel=payload.channel or "APP",
+            screened_by=payload.screened_by,
+            site_text=miner.mine_site,
+            outreach_visit_id=payload.outreach_visit_id,
+            offline=bool(payload.offline_fallback_used),
+        ))
+    except ConsentMissing as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IncompleteScreening as exc:
+        raise HTTPException(status_code=400, detail={
+            "message": str(exc), "session_id": exc.session_id,
+            "missing": exc.missing, "answers_saved": True,
+        })
+    except ScreeningError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    referral = outcome.referrals[0] if outcome.referrals else None
+    return ScreeningResult(
+        tier=outcome.primary_tier,
+        confidence=1.0,
+        # Kept by name for the mobile ResultScreen and populated from the
+        # content store, never from model output (§8.4). `readiness()` has
+        # already established that approved text exists in both languages,
+        # which is why these cannot be None here -- the v1 contract declares
+        # them non-null and a worker is given the Shona one.
+        explanation_english=v1_compat.result_text(db, outcome.primary_tier, "en"),
+        explanation_shona=v1_compat.result_text(db, outcome.primary_tier, "sn"),
+        contributing_factors=v1_compat.contributing_factors(outcome.results),
+        advice_line=None,
+        previous_screening_id=None,
+        provisional=bool(payload.offline_fallback_used),
+        deterioration=DeteriorationResult(
+            # The v1 field names a v1 screening id, and a v2 session has
+            # none: the comparison was against a `screening_sessions` row.
+            # Left null rather than filled with an id from a different
+            # table, which would resolve to the wrong screening.
+            compared_to_screening_id=None,
+            changed=any(
+                r.deterioration and r.deterioration.changed for r in outcome.results
+            ),
+            summary=next(
+                (r.deterioration.summary for r in outcome.results
+                 if r.deterioration and r.deterioration.summary), None
+            ),
+        ),
+        referral_code=referral.referral_code if referral else None,
+        facility_name=referral.facility if referral else None,
+        deadline=referral.deadline if referral else None,
+    )
+
+
 @router.post("/screen", response_model=ScreeningResult)
-def screen_miner(payload: ScreeningCreate, db: Session = Depends(get_db)):
+def screen_miner(
+    payload: ScreeningCreate,
+    db: Session = Depends(get_db),
+    x_silicaguard_client: str | None = Header(default=None),
+):
+    """Screen a worker.
+
+    **The adapter is here and dormant.** `docs/IMPLEMENTATION_PLAN.md` §7
+    step 3 is explicit that this route switches to the deterministic engine
+    at the same moment as every other caller, so that there is never a window
+    in which two clients get two classifiers — a per-client rollout of a
+    clinical classifier is two instruments in the field at once.
+
+    `services/v1_compat.readiness()` holds the conditions and reports which
+    are unmet; `GET /api/health` shows them from outside. Until all are met
+    this route behaves exactly as it has, including the model call, so the
+    demonstration is unaffected. When they are met it runs the §10.3 pipeline
+    and maps the result back into this same response shape, so no client has
+    to change on the day.
+    """
+    v1_compat.log_client(x_silicaguard_client, "POST /api/screen")
+
     miner = db.get(Miner, payload.miner_id)
     if miner is None:
         raise HTTPException(status_code=404, detail="Miner not found")
+
+    ready = v1_compat.readiness(db)
+    if ready.active:  # pragma: no cover - covered with an injected readiness
+        return _screen_via_v2(db, payload, miner)
 
     # Outreach Planner (5 August 2026): link this screening to a visit for
     # live screened_count tracking + the post-visit report. Explicit id is

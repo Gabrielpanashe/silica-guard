@@ -51,6 +51,14 @@ class ScreeningCreate(BaseModel):
     screened_by: Optional[str] = None
     offline_fallback_used: bool = False
     outreach_visit_id: Optional[int] = None
+    #: The code on the worker's card. **Optional in the shape and required
+    #: by the adapter**: `identity.resolve()` is deterministic only on a
+    #: participant code or a hashed national identity number, and a
+    #: name-and-number bundle queues a probable match rather than applying
+    #: it (§8.2) -- so without this the v1 route would create a new person on
+    #: every screening. Optional here so that adding it breaks no client
+    #: today; refused by `POST /api/screen` once the adapter is active.
+    participant_code: Optional[str] = None
 
 
 class DeteriorationResult(BaseModel):
