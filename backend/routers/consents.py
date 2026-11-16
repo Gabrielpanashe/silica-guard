@@ -34,8 +34,9 @@ from models_v2 import (
     ConsentWithdrawIn,
     PermissionOut,
 )
-from routers.auth import get_current_user
-from services import consent, identity
+from routers.auth import request_id, require
+from services import audit, consent, identity
+from services.authz import Principal
 from services.consent import ConsentError
 
 router = APIRouter(prefix="/api/v2", tags=["consent"])
@@ -136,7 +137,8 @@ def record_consent(payload: ConsentDecisionsIn, db: Session = Depends(get_db)):
 def withdraw_consent(
     payload: ConsentWithdrawIn,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    principal: Principal = Depends(require("consent.write")),
+    rid: str = Depends(request_id),
 ):
     """Withdraw a standing grant.
 
@@ -152,7 +154,23 @@ def withdraw_consent(
             db, payload.person_id, payload.permission, withdrawn_by=payload.withdrawn_by
         )
     except ConsentError as exc:
+        audit.record_refusal(
+            principal, "consent.withdraw", object_type="person",
+            object_id=payload.person_id, person_id=payload.person_id,
+            request_id=rid, details={"permission": payload.permission},
+        )
         raise HTTPException(status_code=400, detail=str(exc))
+    # §14.3 requires the withdrawal mechanism to be demonstrable, which means
+    # a withdrawal has to be as recoverable from the log as a grant: "granted,
+    # then withdrawn on this date" is a different story from "never granted",
+    # and the audit is where an ethics committee reads it.
+    audit.record(
+        db, principal, "consent.withdraw", object_type="person",
+        object_id=payload.person_id, person_id=payload.person_id,
+        request_id=rid,
+        details={"permission": payload.permission,
+                 "withdrawn_by": payload.withdrawn_by},
+    )
     db.commit()
     return _summary(db, payload.person_id)
 
@@ -176,16 +194,33 @@ def _summary(db: Session, person_id: int) -> ConsentSummaryOut:
 def get_person_consents(
     participant_code: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    principal: Principal = Depends(require("consent.read")),
+    rid: str = Depends(request_id),
 ):
     """Everything recorded for one person, by the code on their card.
 
-    Bearer-protected because it is about a named individual. Follows a merge,
-    so consent recorded against a record that later lost a merge is still
-    found — a worker's decision must not be lost because a clerk joined two
-    records.
+    **`consent.read`, and audited.** It is about a named individual, so a
+    token alone is not the boundary: §16.3's table gives this capability to
+    the village health worker, who is the person who has to know whether a
+    worker in front of them agreed to be screened. Until 3 November 2026 this
+    used the plain token dependency, so any authenticated role reached it and
+    no row was written.
+
+    Follows a merge, so consent recorded against a record that later lost a
+    merge is still found — a worker's decision must not be lost because a
+    clerk joined two records.
     """
     person = identity.find_by_participant_code(db, participant_code)
     if person is None:
+        audit.record_refusal(
+            principal, "consent.read", object_type="person",
+            object_id=participant_code, request_id=rid,
+            details={"reason": "unknown participant code"},
+        )
         raise HTTPException(status_code=404, detail="No person with that participant code")
+    audit.record(
+        db, principal, "consent.read", object_type="person",
+        object_id=person.participant_code, person_id=person.id, request_id=rid,
+    )
+    db.commit()
     return _summary(db, person.id)

@@ -50,8 +50,9 @@ from models_v2 import (
     QueuedMatchOut,
     ResolutionOut,
 )
-from routers.auth import get_current_user
-from services import crypto, identity
+from routers.auth import request_id, require
+from services import audit, crypto, identity
+from services.authz import Principal
 from services.identity import IdentityBundle, IdentityError
 
 router = APIRouter(prefix="/api/v2", tags=["identity"])
@@ -124,7 +125,20 @@ def _keys_or_503():
 def resolve_person(payload: IdentityBundleIn, db: Session = Depends(get_db)):
     """§8.2's matching order. Always returns a person a screening can be
     written against: a probable match is queued for a human, never applied,
-    and never blocks the screening."""
+    and never blocks the screening.
+
+    **Unauthenticated, and that stays**: the village health worker's
+    application never logs in, and a screening must work in a gold-panning
+    area with no dashboard session. Same deliberate precedent as
+    `POST /api/screen` and `POST /api/v2/screenings`.
+
+    **Not yet audited**, and it should be: this route creates a person, a
+    participant code and a contact row, which is a clinical write by a caller
+    with no account -- exactly the case §16.3's audit exists for. It needs an
+    unauthenticated-device sentinel in the same shape as the one
+    `be/audit-referral-lookup` introduces for the hospital lookup, so it lands
+    with that rather than being duplicated here.
+    """
     _keys_or_503()
     try:
         resolution = identity.resolve(db, _bundle(payload), channel=payload.channel)
@@ -158,13 +172,15 @@ def resolve_person(payload: IdentityBundleIn, db: Session = Depends(get_db)):
 def list_pending_matches(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    principal: Principal = Depends(require("person.read")),
+    rid: str = Depends(request_id),
 ):
     """Probable matches awaiting a human decision — §8.2's "never merged
     automatically", as a worklist.
 
     No name or number: a reviewer opens each side by participant code, so the
-    list itself carries no direct identifier.
+    list itself carries no direct identifier -- but a participant code is a
+    pointer to a person, so this needs `person.read` like any other.
     """
     out: list[QueuedMatchOut] = []
     for row in identity.pending_matches(db, limit=limit):
@@ -183,6 +199,9 @@ def list_pending_matches(
                 created_at=format_datetime(row.created_at),
             )
         )
+    audit.record(db, principal, "person.read", object_type="match_queue",
+                 request_id=rid, details={"queued": len(out)})
+    db.commit()
     return out
 
 
@@ -190,18 +209,41 @@ def list_pending_matches(
 def get_person(
     participant_code: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    principal: Principal = Depends(require("person.read")),
+    rid: str = Depends(request_id),
 ):
     """The card in the worker's pocket, resolved to the surviving record.
 
     Follows a merge rather than returning a dead row, so a card printed before
     a merge still works -- which is the point of printing one.
+
+    **`person.read`, and audited.** This route decrypts a name and a telephone
+    number, which is the definition of an identified record, and §16.3 refuses
+    one outright to a national stakeholder, a researcher and a programme
+    sponsor while requiring that every read be recorded. Until 2 November 2026
+    this used the plain token dependency, so any authenticated role reached it
+    and no row was written -- which also meant `GET /api/v2/audit/persons/
+    {id}`, the route that answers "who has read my record?", answered an
+    empty list however many people had.
     """
     _keys_or_503()
     person = identity.find_by_participant_code(db, participant_code)
     if person is None:
+        # Recorded as a refusal: the participant-code space is the same
+        # six-character alphabet as a referral code, and a walk through it is
+        # what this row makes visible.
+        audit.record_refusal(
+            principal, "person.read", object_type="person",
+            object_id=participant_code, request_id=rid,
+            details={"reason": "unknown participant code"},
+        )
         raise HTTPException(status_code=404, detail="No person with that participant code")
-    return _person_out(db, person, include_identifiers=True)
+    out = _person_out(db, person, include_identifiers=True)
+    audit.record(db, principal, "person.read", object_type="person",
+                 object_id=person.participant_code, person_id=person.id,
+                 request_id=rid, details={"identifiers": True})
+    db.commit()
+    return out
 
 
 @router.post("/persons/matches/{match_id}", response_model=QueuedMatchOut)
@@ -209,16 +251,35 @@ def decide_match(
     match_id: int,
     payload: MatchDecisionIn,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    principal: Principal = Depends(require("person.merge")),
+    rid: str = Depends(request_id),
 ):
     """Apply or reject one queued pair. A rejection is recorded rather than
-    discarded, or the same pair returns at the next screening."""
+    discarded, or the same pair returns at the next screening.
+
+    **`person.merge`**, not `person.read`: applying a decision here joins two
+    clinical histories, which is the same act as a merge whatever the route is
+    called. A rejection is the same decision in the other direction and is
+    just as worth recording -- the pair stays separate because somebody judged
+    that it should.
+    """
     try:
         row = identity.decide_match(
             db, match_id, decision=payload.decision, decided_by=payload.decided_by
         )
     except IdentityError as exc:
+        audit.record_refusal(
+            principal, "person.match_decide", object_type="person_match",
+            object_id=match_id, request_id=rid, details={"reason": "rejected"},
+        )
         raise HTTPException(status_code=400, detail=str(exc))
+    audit.record(
+        db, principal, "person.match_decide", object_type="person_match",
+        object_id=row.id, person_id=row.incoming_person_id, request_id=rid,
+        details={"decision": payload.decision,
+                 "candidate_person_id": row.candidate_person_id,
+                 "decided_by": payload.decided_by},
+    )
     db.commit()
     db.refresh(row)
 
@@ -253,10 +314,25 @@ def _merge_out(record: PersonMerge) -> MergeOut:
 def merge_persons(
     payload: MergeIn,
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    principal: Principal = Depends(require("person.merge")),
+    rid: str = Depends(request_id),
 ):
     """Apply a merge a human decided on. The losing record is kept and
-    flagged, never deleted, so this is reversible from the first day."""
+    flagged, never deleted, so this is reversible from the first day.
+
+    **`person.merge`, which only the administrator role holds.** A merge is a
+    clinical safety event -- it joins two clinical histories, and a wrong one
+    attributes a worker's deterioration to somebody else -- so `ARCHITECTURE.
+    md` says it belongs to one named role. Until 2 November 2026 any
+    authenticated login could do it, which that file recorded as a gap
+    explained by there being only two flat accounts; the accounts are no
+    longer the reason, and this route is.
+
+    `payload.merged_by` stays, because it names the clinician who *decided*
+    the two records are one person, which is not the same as the account that
+    submitted it. The audit row records the account. Both are needed: one
+    answers "who judged this?", the other "who did it?".
+    """
     try:
         record = identity.merge(
             db,
@@ -266,7 +342,19 @@ def merge_persons(
             evidence={"reason": payload.reason} if payload.reason else {},
         )
     except IdentityError as exc:
+        audit.record_refusal(
+            principal, "person.merge", object_type="person",
+            object_id=payload.winner_person_id, request_id=rid,
+            details={"reason": "rejected", "loser_person_id": payload.loser_person_id},
+        )
         raise HTTPException(status_code=400, detail=str(exc))
+    audit.record(
+        db, principal, "person.merge", object_type="person",
+        object_id=record.winner_person_id, person_id=record.winner_person_id,
+        request_id=rid,
+        details={"loser_person_id": record.loser_person_id,
+                 "merge_id": record.id, "decided_by": payload.merged_by},
+    )
     db.commit()
     db.refresh(record)
     return _merge_out(record)
@@ -277,7 +365,8 @@ def unmerge_persons(
     merge_id: int,
     reversed_by: str = Query(..., min_length=2),
     db: Session = Depends(get_db),
-    _user: dict = Depends(get_current_user),
+    principal: Principal = Depends(require("person.merge")),
+    rid: str = Depends(request_id),
 ):
     """Undo a merge. Both the merge and the reversal stay in the audit.
 
@@ -289,7 +378,18 @@ def unmerge_persons(
     try:
         record = identity.unmerge(db, merge_id, reversed_by=reversed_by)
     except IdentityError as exc:
+        audit.record_refusal(
+            principal, "person.unmerge", object_type="person_merge",
+            object_id=merge_id, request_id=rid, details={"reason": "rejected"},
+        )
         raise HTTPException(status_code=400, detail=str(exc))
+    audit.record(
+        db, principal, "person.unmerge", object_type="person_merge",
+        object_id=record.id, person_id=record.winner_person_id,
+        request_id=rid,
+        details={"loser_person_id": record.loser_person_id,
+                 "decided_by": reversed_by},
+    )
     db.commit()
     db.refresh(record)
     return _merge_out(record)
