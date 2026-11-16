@@ -203,9 +203,17 @@ def test_missing_shona_text_blocks_the_adapter(client):
 # --------------------------------------------------------- the dormant path
 
 def test_the_live_route_is_unchanged_while_dormant(client):
-    """The demonstration must be unaffected. The route still answers, still
-    produces a tier, and `tests/test_screening.py` — twenty-five tests
-    written against today's behaviour — still passes untouched."""
+    """The demonstration must be unaffected: the route still calls the model
+    and still answers in the same shape.
+
+    **The model call is patched, as every other test of this route does.**
+    The first version of this test called the real one, which passed locally
+    because a developer `.env` holds a key and failed in CI, which has none —
+    an environment-dependent test, and the kind that reads as evidence while
+    proving only that somebody's machine was configured.
+    """
+    from unittest.mock import patch
+
     from db_models import Miner
 
     db = _session(client)
@@ -215,13 +223,24 @@ def test_the_live_route_is_unchanged_while_dormant(client):
     miner_id = miner.id
     db.close()
 
-    response = client.post("/api/screen", json={
-        "miner_id": miner_id, "channel": "APP", "screened_by": "sister.moyo",
-        "answers": [{"question_code": "COUGH_DURATION", "question_text": "?",
-                     "answer_value": "none", "answer_score": 0}],
-    })
+    with patch("routers.screening.assess_risk", return_value={
+        "tier": "YELLOW", "confidence": 0.82,
+        "contributing_factors": ["test factor"],
+        "explanation_english": "test explanation",
+    }) as called:
+        response = client.post("/api/screen", json={
+            "miner_id": miner_id, "channel": "APP", "screened_by": "sister.moyo",
+            "answers": [{"question_code": "COUGH_DURATION", "question_text": "?",
+                         "answer_value": "none", "answer_score": 0}],
+        })
+
     assert response.status_code == 200, response.text
     assert response.json()["tier"] in ("GREEN", "YELLOW", "ORANGE", "RED")
+    assert called.called, (
+        "while dormant the route must still go through the model path -- if "
+        "it stopped, the adapter has taken over without its conditions being "
+        "met, which is the one thing the gate exists to prevent"
+    )
 
 
 def test_health_reports_the_adapter_and_what_it_waits_on(client):
