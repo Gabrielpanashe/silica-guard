@@ -36,6 +36,23 @@ SCHEMA_PATH = CLINICAL / "instrument.schema.json"
 # one (§4.3, §9.1), and this is the ordering that claim is checked against.
 TIER_ORDER = ["GREEN", "YELLOW", "ORANGE", "RED"]
 
+# The channels that exist. Read from the schema's own enum below when it
+# loads, so this literal is only the fallback for a run without the schema
+# file -- the authority is `clinical/instrument.schema.json`, and the runtime
+# copy is `services.rules_engine.CHANNELS`. This script imports nothing from
+# `backend/` on purpose: it validates `clinical/` and must run wherever those
+# files are, with yaml and jsonschema and nothing else.
+CHANNELS = ["app", "ussd"]
+
+
+def _schema_channels(schema: dict | None) -> list[str]:
+    """The `channels` enum from the schema, or the fallback above."""
+    try:
+        enum = schema["$defs"]["question"]["properties"]["channels"]["items"]["enum"]
+        return list(enum) if enum else list(CHANNELS)
+    except (TypeError, KeyError):
+        return list(CHANNELS)
+
 
 def _fail(problems: list[str], where: str, message: str) -> None:
     problems.append(f"{where}: {message}")
@@ -208,6 +225,82 @@ def validate_file(path: Path, schema: dict | None) -> list[str]:
                     for v in node.get("in") or []:
                         if v not in offered:
                             _fail(problems, where, f"tests {node['answer']} == {v!r}, which that question does not offer")
+
+    # ---- channel equivalence, at authoring time --------------------------
+    # A rule may only reference a question every channel asks. Both failure
+    # modes are silent and they are opposite, which is why the message names
+    # which one the author has:
+    #
+    #   `unknown: Q` on a question this channel never asks fires on EVERY
+    #   session on that channel, because the engine derives `unknown` from
+    #   "no answer recorded" and a question that was never asked has none.
+    #   Direction-safe -- it raises a tier -- and operationally useless: every
+    #   USSD screening would come out ORANGE and nobody would notice until a
+    #   field pilot.
+    #
+    #   `answer`/`score`/`count` on one this channel never asks can never
+    #   match on that channel, so the rule is quietly absent there and the
+    #   tier is under-reported. That one is NOT direction-safe.
+    #
+    # Either way the two channels classify the same worker differently, which
+    # principle 4 forbids. The fix is the Clinical Lead's: widen the
+    # question's `channels`, or drop the rule. The grammar has no way to scope
+    # a rule to a channel, deliberately -- a channel-specific clinical rule is
+    # a second instrument wearing one version number.
+    all_channels = set(_schema_channels(schema))
+    channel_limited = {
+        code: set(q["channels"]) for code, q in questions.items()
+        if q.get("channels") is not None
+    }
+    if channel_limited:
+        for kind in ("tier_rules", "safety_rules"):
+            for i, rule in enumerate(doc.get(kind) or []):
+                if not isinstance(rule, dict) or "predicate" not in rule:
+                    continue
+                ident = rule.get("code") or f"{rule.get('condition', 'all')}/{rule.get('tier') or rule.get('forces_tier')}"
+                where = f"{rel} {kind}[{i}] ({ident})"
+                for _, node in _walk_predicate(rule["predicate"], where):
+                    if not isinstance(node, dict):
+                        continue
+                    for key in ("unknown", "answer"):
+                        ref = node.get(key)
+                        if not isinstance(ref, str) or ref not in channel_limited:
+                            continue
+                        absent = sorted(all_channels - channel_limited[ref])
+                        if not absent:
+                            continue
+                        consequence = (
+                            f"so this rule fires on EVERY {'/'.join(absent)} "
+                            f"session, because a question that was never asked "
+                            f"has no answer"
+                            if key == "unknown" else
+                            f"so this rule can never match on "
+                            f"{'/'.join(absent)} and the tier is under-reported "
+                            f"there"
+                        )
+                        _fail(problems, where,
+                              f"references question {ref}, which is not asked on "
+                              f"{'/'.join(absent)} — {consequence}. Widen {ref}'s "
+                              f"channels or drop the rule; the two channels must "
+                              f"classify the same worker identically.")
+        # The same trap one level down: a question asked on every channel whose
+        # branching depends on one that is not. The branch is then unreachable
+        # on that channel, so the question is silently never asked there.
+        for code, q in questions.items():
+            if not q.get("branching") or code in channel_limited:
+                continue
+            refs, _ = _referenced_codes(q["branching"], f"{rel} question {code} branching")
+            for ref in sorted(refs):
+                if ref not in channel_limited:
+                    continue
+                absent = sorted(all_channels - channel_limited[ref])
+                if absent:
+                    _fail(problems, f"{rel} question {code}",
+                          f"is asked on every channel but its branching depends "
+                          f"on {ref}, which is not asked on {'/'.join(absent)}, "
+                          f"so {code} can never be reached there. Either limit "
+                          f"{code} to the same channels as {ref} or branch on a "
+                          f"question every channel asks.")
 
     # Every condition needs a reachable baseline, or a screening can produce
     # no tier at all for it.
