@@ -208,6 +208,28 @@ def health(recheck: bool = False):
             body["schema_missing"] = {
                 table: columns for table, columns in sorted(gaps.items())
             }
+    # Additive, 16 November 2026. The v1 adapter (items 1.9 and 1.11) is
+    # built and dormant, and what it is waiting for is not visible from
+    # outside -- the same class of problem as `schema`, which was added
+    # because "the database is up" and "the database matches the code" were
+    # indistinguishable. Reported on `?recheck=1` only: it reads the
+    # instrument and the content store, which is more work than an endpoint
+    # that wakes a sleeping instance should do on every call.
+    if reachable and recheck:
+        try:
+            from database import get_fresh_session
+            from services import v1_compat
+
+            session = get_fresh_session()
+            try:
+                ready = v1_compat.readiness(session)
+                body["v1_adapter"] = "active" if ready.active else "dormant"
+                if ready.blockers:
+                    body["v1_adapter_waiting_on"] = list(ready.blockers)
+            finally:
+                session.close()
+        except Exception:  # noqa: BLE001 - never fail the health check
+            logger.exception("Could not compute the v1 adapter's readiness")
     return body
 
 
