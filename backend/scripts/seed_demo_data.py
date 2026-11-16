@@ -42,6 +42,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _demo_guard import refuse_unless_local  # noqa: E402
 
 from dotenv import load_dotenv  # noqa: E402
 
@@ -215,6 +218,12 @@ def _insert_referral(
 
 
 def seed() -> None:
+    # Before the first delete, not after. This script empties every table it
+    # owns, there is no staging, and a developer's backend/.env holds
+    # production's URL -- so one run with the wrong file loaded deletes the
+    # demonstration history the team presents against, and after the pilot
+    # starts it would delete real screenings.
+    refuse_unless_local("seed_demo_data.py")
     init_db()
     db = get_fresh_session()
     try:
