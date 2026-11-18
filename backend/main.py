@@ -37,6 +37,7 @@ from routers import (
 from services.db_keepalive import run_scheduled_keepalive
 from services.outreach import run_scheduled_outreach
 from services.referral_cascade import run_scheduled_cascade
+from services.referral_cascade_v2 import run_scheduled as run_scheduled_cascade_v2
 
 logger = logging.getLogger("silicaguard.main")
 
@@ -117,6 +118,14 @@ async def lifespan(app: FastAPI):
         interval = int(os.getenv("SCHEDULER_INTERVAL_MINUTES", "10"))
         scheduler = BackgroundScheduler()
         scheduler.add_job(run_scheduled_cascade, "interval", minutes=interval, id="referral_cascade")
+        # Referrals keyed to a result are chased by their own job. Two jobs
+        # rather than one function handling both shapes, because the two
+        # compute their timing from different places: v1 from hardcoded
+        # windows, v2 from the referral window the instrument states.
+        scheduler.add_job(
+            run_scheduled_cascade_v2, "interval", minutes=interval,
+            id="referral_cascade_v2",
+        )
         # Outreach Planner's 3-day/1-day announcement + report-ready cadence —
         # a second job on the SAME scheduler instance/interval, not a second
         # scheduler (see services/outreach.py).

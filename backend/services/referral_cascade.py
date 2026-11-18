@@ -94,6 +94,25 @@ def process_due_referrals(db: Session, now: Optional[datetime] = None) -> None:
     for referral_id in referral_ids:
         try:
             referral = db.get(Referral, referral_id)
+
+            # A referral keyed to a result belongs to
+            # `services/referral_cascade_v2.py`. Skipped deliberately and
+            # said out loud, because what happened before this check was
+            # worse than a skip: `referral.screening` is None on a v2 row,
+            # so `screening.tier` raised AttributeError, the per-row handler
+            # below caught it, logged a failure and moved on -- every tick,
+            # permanently. The referral never reminded, never escalated and
+            # passed its deadline with nothing to show but a repeating
+            # exception, which is the metric this system is judged on going
+            # quietly unmeasured. Defensive error handling turning a loud
+            # failure into a silent one.
+            if referral.result_id is not None:
+                logger.debug(
+                    "referral id=%s is keyed to a result; the v2 cascade owns it",
+                    referral_id,
+                )
+                continue
+
             screening = referral.screening
             miner = referral.miner
             action = next_cascade_action(
